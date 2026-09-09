@@ -9,10 +9,17 @@ import {
   Moon, 
   Database,
   Menu,
-  X
+  X,
+  LogOut,
+  User,
+  ShieldCheck,
+  Store,
+  Package,
+  ChevronDown
 } from 'lucide-react';
 import { useTheme } from '@/components/theme/ThemeContext';
 import { useNavigation } from './NavigationContext';
+import { useAuth } from '@/components/auth/AuthContext';
 
 export function Navbar() {
   const router = useRouter();
@@ -21,9 +28,23 @@ export function Navbar() {
   const currentRegion = searchParams.get('region') || 'ALL';
   const { theme, toggleTheme } = useTheme();
   const { isMobileOpen, toggleMobile } = useNavigation();
+  const { user, logout } = useAuth();
 
   const [currentTime, setCurrentTime] = useState<string>('');
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
   const isSyncingRef = useRef(false);
+
+  // Close profile dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
+        setIsProfileOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // 1. Clock timer
   useEffect(() => {
@@ -208,9 +229,65 @@ export function Navbar() {
           )}
         </button>
 
-        {/* Google User Avatar Circle */}
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#137333] text-white text-xs font-bold shadow-sm" title="Pengguna Asset Control">
-          CA
+        {/* Google User Avatar Circle & Profile Dropdown */}
+        <div className="relative" ref={profileRef}>
+          <button
+            onClick={() => setIsProfileOpen(!isProfileOpen)}
+            className="flex items-center gap-1.5 p-1 rounded-full hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] transition-colors"
+            title="Profil Pengguna & Logout"
+          >
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#137333] text-white text-xs font-bold shadow-sm ring-2 ring-transparent hover:ring-emerald-500/50 transition-all">
+              {user?.full_name 
+                ? user.full_name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase() 
+                : 'CA'}
+            </div>
+            <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
+          </button>
+
+          {isProfileOpen && (
+            <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-4 space-y-3 z-50 animate-fadeIn">
+              <div className="flex items-start gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-bold flex items-center justify-center text-sm shrink-0">
+                  {user?.full_name 
+                    ? user.full_name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase() 
+                    : 'CA'}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                    {user?.full_name || 'Pengguna Dashboard'}
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                    {user?.email || 'user@coffee-arabica.co.id'}
+                  </div>
+                  <div className="mt-1">
+                    <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                      {user?.role || 'Staff Logistik'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {user?.outlet_assigned && (
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-600 dark:text-slate-300">
+                  <Store className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span className="truncate">Penugasan: <strong>{user.outlet_assigned}</strong></span>
+                </div>
+              )}
+
+              <div className="pt-1">
+                <button
+                  onClick={() => {
+                    setIsProfileOpen(false);
+                    logout();
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 text-xs font-bold transition"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Keluar / Logout</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </header>

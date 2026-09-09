@@ -17,10 +17,12 @@ import {
   RefreshCw,
   ChevronDown,
   Activity,
-  Printer
+  Printer,
+  LogOut
 } from 'lucide-react';
 
 import { useNavigation } from './NavigationContext';
+import { useAuth } from '@/components/auth/AuthContext';
 
 interface SubMenuItem {
   name: string;
@@ -40,6 +42,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { isMobileOpen, closeMobile } = useNavigation();
+  const { user, logout } = useAuth();
   const regionQuery = searchParams.get('region') ? `?region=${searchParams.get('region')}` : '';
 
   const menuGroups: MenuGroup[] = [
@@ -225,6 +228,36 @@ export function Sidebar() {
               <span>Sinkronisasi Google Sheets</span>
             </Link>
           </div>
+
+          {/* 4. Active User Card & Logout */}
+          {user && (
+            <div className="pt-2 border-t border-[#e0e2ec] dark:border-[#444746]">
+              <div className="p-2.5 rounded-2xl bg-white dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-[#0b57d0] text-white font-bold flex items-center justify-center text-xs shrink-0">
+                    {user.full_name ? user.full_name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase() : 'CA'}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
+                      {user.full_name}
+                    </div>
+                    <div className="text-[10px] text-[#747775] dark:text-[#8e918f] truncate">
+                      {user.role}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={logout}
+                  title="Keluar / Logout"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </nav>
       </aside>
     </>
