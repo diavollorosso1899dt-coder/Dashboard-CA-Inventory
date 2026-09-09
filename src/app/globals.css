@@ -1,0 +1,301 @@
+@import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Google+Sans+Text:wght@400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Google Material 3 (M3) Design System Tokens */
+:root {
+  --google-font: 'Google Sans', 'Google Sans Text', Roboto, -apple-system, BlinkMacSystemFont, sans-serif;
+  
+  /* Google M3 Light Theme */
+  --background: #f8fafd;
+  --foreground: #1f1f1f;
+  --card: #ffffff;
+  --card-foreground: #1f1f1f;
+  --card-subtle: #f0f4f9;
+  --surface-container-high: #e9eef6;
+  --border: #e0e2ec;
+  
+  /* Google Brand Colors */
+  --google-blue: #0b57d0;
+  --google-blue-container: #d3e3fd;
+  --google-blue-on-container: #041e49;
+  
+  --google-green: #137333;
+  --google-green-container: #c4eed0;
+  --google-green-on-container: #072711;
+  
+  --google-yellow: #b06000;
+  --google-yellow-container: #feeed9;
+  --google-yellow-on-container: #2e1500;
+  
+  --google-red: #b3261e;
+  --google-red-container: #f9dedc;
+  --google-red-on-container: #410e0b;
+  
+  --primary: #0b57d0;
+  --primary-foreground: #ffffff;
+  --muted: #444746;
+  --muted-foreground: #747775;
+  --input-bg: #f0f4f9;
+  --input-border: #747775;
+  --nav-bg: #ffffff;
+  --sidebar-bg: #f8fafd;
+}
+
+html.dark {
+  /* Google M3 Dark Theme */
+  --background: #131314;
+  --foreground: #e3e3e3;
+  --card: #1e1f20;
+  --card-foreground: #e3e3e3;
+  --card-subtle: #282a2c;
+  --surface-container-high: #333537;
+  --border: #444746;
+  
+  /* Google Brand Colors Dark */
+  --google-blue: #a8c7fa;
+  --google-blue-container: #004a77;
+  --google-blue-on-container: #c2e7ff;
+  
+  --google-green: #6dd58c;
+  --google-green-container: #0f5223;
+  --google-green-on-container: #c4eed0;
+  
+  --google-yellow: #ffb951;
+  --google-yellow-container: #4a2800;
+  --google-yellow-on-container: #feeed9;
+  
+  --google-red: #f2b8b5;
+  --google-red-container: #601410;
+  --google-red-on-container: #f9dedc;
+  
+  --primary: #a8c7fa;
+  --primary-foreground: #041e49;
+  --muted: #c4c7c5;
+  --muted-foreground: #8e918f;
+  --input-bg: #1e1f20;
+  --input-border: #444746;
+  --nav-bg: #1e1f20;
+  --sidebar-bg: #131314;
+}
+
+body {
+  color: var(--foreground);
+  background-color: var(--background);
+  font-family: var(--google-font);
+  min-height: 100vh;
+  transition: background-color 0.2s ease, color 0.2s ease;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Google-style Smooth Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c4c7c5;
+  border-radius: 9999px;
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: #444746;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8e918f;
+}
+
+/* Google Material 3 Elevated Card Panel */
+.panel-card {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem; /* 16px Google M3 standard */
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.1), 0 1px 3px 1px rgba(60, 64, 67, 0.05);
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+html.dark .panel-card {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.4);
+}
+
+.panel-card-hover {
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.panel-card-hover:hover {
+  border-color: var(--google-blue);
+  box-shadow: 0 2px 6px 2px rgba(60, 64, 67, 0.15);
+}
+
+/* Google Material 3 Status Badges */
+.badge-complete {
+  background-color: #e6f4ea;
+  color: #137333;
+  border: 1px solid #ceead6;
+}
+
+html.dark .badge-complete {
+  background-color: rgba(15, 82, 35, 0.5);
+  color: #6dd58c;
+  border: 1px solid rgba(109, 213, 140, 0.3);
+}
+
+.badge-in-progress {
+  background-color: #fef7e0;
+  color: #b06000;
+  border: 1px solid #feeed9;
+}
+
+html.dark .badge-in-progress {
+  background-color: rgba(74, 40, 0, 0.5);
+  color: #ffb951;
+  border: 1px solid rgba(255, 185, 81, 0.3);
+}
+
+.badge-alert {
+  background-color: #fce8e6;
+  color: #c5221f;
+  border: 1px solid #fad2cf;
+}
+
+html.dark .badge-alert {
+  background-color: rgba(96, 20, 16, 0.5);
+  color: #f2b8b5;
+  border: 1px solid rgba(242, 184, 181, 0.3);
+}
+
+.badge-info {
+  background-color: #e8f0fe;
+  color: #1a73e8;
+  border: 1px solid #d2e3fc;
+}
+
+html.dark .badge-info {
+  background-color: rgba(0, 74, 119, 0.5);
+  color: #a8c7fa;
+  border: 1px solid rgba(168, 199, 250, 0.3);
+}
+
+.badge-neutral {
+  background-color: #f1f3f4;
+  color: #5f6368;
+  border: 1px solid #dadce0;
+}
+
+html.dark .badge-neutral {
+  background-color: #282a2c;
+  color: #c4c7c5;
+  border: 1px solid #444746;
+}
+
+/* Google Accessible Focus Rings */
+*:focus-visible {
+  outline: 2px solid var(--google-blue);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   Print Media Styles: Pure BAST Document Printing (A4 Format)
+   ========================================================================== */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 15mm 12mm;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 10pt !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    min-height: auto !important;
+  }
+
+  /* Hide background layout elements */
+  header,
+  nav,
+  aside,
+  main,
+  .print-hidden,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Ensure only the printable BAST document is visible and fills the page */
+  .bast-modal-backdrop {
+    position: static !important;
+    display: block !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    box-shadow: none !important;
+    border: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .bast-modal-card {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  #bast-printable-area {
+    display: block !important;
+    width: 100% !important;
+    overflow: visible !important;
+    max-height: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Table formatting for standard print */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tfoot {
+    display: table-footer-group;
+  }
+
+  th, td {
+    border-color: #000000 !important;
+    color: #000000 !important;
+  }
+}
