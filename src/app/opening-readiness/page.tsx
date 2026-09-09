@@ -29,16 +29,24 @@ export default async function OpeningReadinessPage({ searchParams }: PageProps) 
   return (
     <div className="space-y-6 pb-12">
       {/* Google M3 Header */}
-      <div className="border-b border-[#e0e2ec] dark:border-[#444746] pb-4">
-        <div className="flex items-center gap-2">
-          <Store className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-          <h1 className="text-xl md:text-2xl font-bold text-[#1f1f1f] dark:text-[#e3e3e3] tracking-tight">
-            Kesiapan Opening Outlet Baru
-          </h1>
+      <div className="border-b border-[#e0e2ec] dark:border-[#444746] pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <Store className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+            <h1 className="text-xl md:text-2xl font-bold text-[#1f1f1f] dark:text-[#e3e3e3] tracking-tight">
+              Kesiapan Opening Outlet Baru
+            </h1>
+          </div>
+          <p className="text-xs sm:text-sm text-[#444746] dark:text-[#c4c7c5] mt-1">
+            Pelacakan kelengkapan barang dan aset per cabang menjelang target tanggal pembukaan.
+          </p>
         </div>
-        <p className="text-xs sm:text-sm text-[#444746] dark:text-[#c4c7c5] mt-1">
-          Pelacakan kelengkapan barang dan aset per cabang menjelang target tanggal pembukaan.
-        </p>
+        <a
+          href="/outlets"
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
+        >
+          Kelola Master Outlet &rarr;
+        </a>
       </div>
 
       {/* Branch Cards Grid */}

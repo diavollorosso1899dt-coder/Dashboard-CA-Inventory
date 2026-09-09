@@ -1,63 +1,108 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { 
   LayoutDashboard, 
-  Store, 
-  Clock, 
-  TableProperties, 
-  RefreshCw
+  Layers,
+  ArrowRightLeft,
+  PlusCircle,
+  Truck,
+  FileCheck2,
+  Clock,
+  RotateCcw,
+  Users,
+  Store,
+  RefreshCw,
+  ChevronDown,
+  Activity,
+  Printer
 } from 'lucide-react';
 
 import { useNavigation } from './NavigationContext';
 
-interface NavItem {
+interface SubMenuItem {
   name: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
-  description: string;
+  badge?: string;
 }
 
-const navItems: NavItem[] = [
-  {
-    name: 'Ringkasan Eksekutif',
-    href: '/',
-    icon: LayoutDashboard,
-    description: 'Statistik & jadwal opening outlet',
-  },
-  {
-    name: 'Kesiapan Outlet Baru',
-    href: '/opening-readiness',
-    icon: Store,
-    description: 'Progres kelengkapan aset per cabang',
-  },
-  {
-    name: 'SLA & Lead Time',
-    href: '/sla-analytics',
-    icon: Clock,
-    description: 'Analisis durasi waktu pengadaan',
-  },
-  {
-    name: 'Pelacakan & Editor Aset',
-    href: '/asset-tracker',
-    icon: TableProperties,
-    description: 'Master data, No RAB, dan status',
-  },
-  {
-    name: 'Sinkronisasi Database',
-    href: '/sync',
-    icon: RefreshCw,
-    description: 'Sinkronisasi Google Sheets',
-  },
-];
+interface MenuGroup {
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
+  color: string;
+  items: SubMenuItem[];
+}
 
 export function Sidebar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { isMobileOpen, closeMobile } = useNavigation();
   const regionQuery = searchParams.get('region') ? `?region=${searchParams.get('region')}` : '';
+
+  const menuGroups: MenuGroup[] = [
+    {
+      title: 'Monitoring',
+      icon: Layers,
+      color: 'text-purple-600 dark:text-purple-400',
+      items: [
+        { name: 'Daftar Aset', href: '/monitoring/assets', icon: Layers },
+        { name: 'Transfer Aset', href: '/monitoring/transfer', icon: ArrowRightLeft },
+        { name: 'Input Aset Baru', href: '/monitoring/input', icon: PlusCircle },
+      ],
+    },
+    {
+      title: 'Distribusi',
+      icon: Truck,
+      color: 'text-blue-600 dark:text-blue-400',
+      items: [
+        { name: 'Kelola RO', href: '/distribution/ro', icon: FileCheck2 },
+        { name: 'Surat Jalan (SJ)', href: '/distribution/surat-jalan', icon: Printer },
+        { name: 'Riwayat SJ', href: '/distribution/surat-jalan/history', icon: Truck },
+        { name: 'Monitoring SLA', href: '/distribution/sla', icon: Clock },
+      ],
+    },
+    {
+      title: 'Disposisi',
+      icon: RotateCcw,
+      color: 'text-emerald-600 dark:text-emerald-400',
+      items: [
+        { name: 'Form Pengembalian', href: '/disposition/return-form', icon: PlusCircle },
+        { name: 'Monitoring Status', href: '/disposition/status', icon: Activity },
+      ],
+    },
+    {
+      title: 'Pengguna & Outlet',
+      icon: Users,
+      color: 'text-amber-600 dark:text-amber-400',
+      items: [
+        { name: 'Kelola User', href: '/users', icon: Users },
+        { name: 'Daftar Outlet', href: '/outlets', icon: Store },
+      ],
+    },
+  ];
+
+  // Auto expand groups that contain the active route
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
+    Monitoring: true,
+    Distribusi: true,
+    Disposisi: true,
+    'Pengguna & Outlet': true,
+  });
+
+  useEffect(() => {
+    menuGroups.forEach((group) => {
+      if (group.items.some((it) => pathname === it.href || pathname.startsWith(it.href))) {
+        setOpenGroups((prev) => ({ ...prev, [group.title]: true }));
+      }
+    });
+  }, [pathname]);
+
+  const toggleGroup = (title: string) => {
+    setOpenGroups((prev) => ({ ...prev, [title]: !prev[title] }));
+  };
 
   return (
     <>
@@ -76,44 +121,110 @@ export function Sidebar() {
           isMobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
-        <div className="mb-2 px-3 pt-1">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5]">
-            Menu Utama
-          </span>
-        </div>
+        <nav className="flex-1 space-y-3 overflow-y-auto pr-1">
+          {/* 1. Main Dashboard Link */}
+          <div>
+            <Link
+              href={`/${regionQuery}`}
+              onClick={closeMobile}
+              className={`flex items-center gap-3 rounded-full px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                pathname === '/'
+                  ? 'bg-[#c2e7ff] text-[#001d35] dark:bg-[#004a77] dark:text-[#c2e7ff] shadow-sm'
+                  : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white'
+              }`}
+            >
+              <LayoutDashboard className="h-4 w-4 shrink-0 text-[#0b57d0] dark:text-[#a8c7fa]" />
+              <span>Ringkasan Eksekutif</span>
+            </Link>
+          </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto">
-          {navItems.map((item) => {
-            const isActive = pathname === item.href;
-            const Icon = item.icon;
+          {/* 2. Accordion Groups from Mind Map */}
+          {menuGroups.map((group) => {
+            const isOpen = openGroups[group.title] ?? true;
+            const GroupIcon = group.icon;
+            const hasActiveChild = group.items.some(
+              (it) => pathname === it.href || pathname.startsWith(it.href)
+            );
 
             return (
-              <Link
-                key={item.href}
-                href={`${item.href}${regionQuery}`}
-                onClick={closeMobile}
-                className={`group flex items-center gap-3 rounded-full px-4 py-2.5 text-xs transition-all ${
-                  isActive
-                    ? 'bg-[#c2e7ff] text-[#001d35] font-semibold dark:bg-[#004a77] dark:text-[#c2e7ff] shadow-sm'
-                    : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white'
-                }`}
-              >
-                <Icon
-                  className={`h-4 w-4 shrink-0 transition-colors ${
-                    isActive
-                      ? 'text-[#001d35] dark:text-[#c2e7ff]'
-                      : 'text-[#444746] dark:text-[#c4c7c5] group-hover:text-[#1f1f1f] dark:group-hover:text-white'
+              <div key={group.title} className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.title)}
+                  className={`flex w-full items-center justify-between px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors rounded-lg ${
+                    hasActiveChild
+                      ? 'text-[#0b57d0] dark:text-[#a8c7fa]'
+                      : 'text-[#747775] dark:text-[#8e918f] hover:text-[#1f1f1f] dark:hover:text-white'
                   }`}
-                />
-                <div className="truncate">
-                  <div className="font-medium truncate">{item.name}</div>
-                  <div className="text-[10px] text-[#747775] dark:text-[#8e918f] truncate">
-                    {item.description}
+                >
+                  <div className="flex items-center gap-2">
+                    <GroupIcon className={`h-3.5 w-3.5 ${group.color}`} />
+                    <span>{group.title}</span>
                   </div>
-                </div>
-              </Link>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                      isOpen ? 'rotate-0' : '-rotate-90'
+                    }`}
+                  />
+                </button>
+
+                {isOpen && (
+                  <div className="space-y-0.5 pl-2 border-l border-[#e0e2ec] dark:border-[#444746] ml-2">
+                    {group.items.map((item) => {
+                      const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+                      const Icon = item.icon;
+
+                      return (
+                        <Link
+                          key={item.href}
+                          href={`${item.href}${regionQuery}`}
+                          onClick={closeMobile}
+                          className={`group flex items-center justify-between rounded-full px-3 py-2 text-xs transition-all ${
+                            isActive
+                              ? 'bg-[#c2e7ff] text-[#001d35] font-semibold dark:bg-[#004a77] dark:text-[#c2e7ff] shadow-xs'
+                              : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 truncate">
+                            <Icon
+                              className={`h-3.5 w-3.5 shrink-0 transition-colors ${
+                                isActive
+                                  ? 'text-[#001d35] dark:text-[#c2e7ff]'
+                                  : 'text-[#747775] dark:text-[#8e918f] group-hover:text-[#1f1f1f] dark:group-hover:text-white'
+                              }`}
+                            />
+                            <span className="truncate">{item.name}</span>
+                          </div>
+
+                          {item.badge && (
+                            <span className="rounded-full bg-[#e8f0fe] dark:bg-[#004a77] px-2 py-0.5 text-[10px] font-bold text-[#0b57d0] dark:text-[#c2e7ff]">
+                              {item.badge}
+                            </span>
+                          )}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
+
+          {/* 3. Sistem & Integrasi */}
+          <div className="pt-2 border-t border-[#e0e2ec] dark:border-[#444746]">
+            <Link
+              href={`/sync${regionQuery}`}
+              onClick={closeMobile}
+              className={`flex items-center gap-3 rounded-full px-3.5 py-2 text-xs font-semibold transition-all ${
+                pathname === '/sync'
+                  ? 'bg-[#c2e7ff] text-[#001d35] dark:bg-[#004a77] dark:text-[#c2e7ff] shadow-sm'
+                  : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white'
+              }`}
+            >
+              <RefreshCw className="h-3.5 w-3.5 text-[#747775] dark:text-[#8e918f]" />
+              <span>Sinkronisasi Google Sheets</span>
+            </Link>
+          </div>
         </nav>
       </aside>
     </>

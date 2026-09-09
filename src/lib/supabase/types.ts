@@ -146,3 +146,179 @@ export interface AssetFilterState {
   sortBy: keyof AssetRequest | 'opening_days_left';
   sortOrder: 'asc' | 'desc';
 }
+
+// ==========================================
+// 1. PENGGUNA & OUTLET TYPES
+// ==========================================
+export type UserRole = 'super_user' | 'user' | 'outlet_manager' | 'Super User' | 'User' | 'User Outlet Manager';
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  branch_name?: string;
+  outlet_assigned?: string;
+  phone?: string;
+  is_active?: boolean;
+  created_at: string;
+}
+
+export type OutletStatus = 'ACTIVE' | 'OPENING_SOON' | 'RENOVATION' | 'CLOSED' | 'Aktif' | 'Persiapan Buka' | 'Renovasi' | 'Tutup';
+
+export interface Outlet {
+  id: string;
+  branch_name: string;
+  nama?: string;
+  region: 'JABODETABEK' | 'KALBAR' | 'JABO';
+  target_opening_date?: string | null;
+  target_opening?: string | null;
+  status: OutletStatus;
+  address?: string;
+  alamat?: string;
+  pic_name?: string;
+  pic_nama?: string;
+  pic_phone?: string;
+  telepon?: string;
+  notes?: string;
+  created_at: string;
+}
+
+// ==========================================
+// 2. MONITORING: TRANSFER ASET TYPES
+// ==========================================
+export type TransferStatus = 'DRAFT' | 'IN_TRANSIT' | 'RECEIVED' | 'CANCELLED';
+
+export interface TransferItem {
+  id: string;
+  item_name: string;
+  specification?: string;
+  quantity: number;
+  condition: 'BAIK' | 'PERLU_PERBAIKAN' | 'BEKAS_LAYAK';
+}
+
+export interface AssetTransfer {
+  id: string;
+  transfer_number: string;
+  from_location: string;
+  to_location: string;
+  transfer_date: string;
+  status: TransferStatus;
+  sender_pic: string;
+  receiver_pic?: string;
+  items: TransferItem[];
+  notes?: string;
+  created_at: string;
+}
+
+// ==========================================
+// 3. DISTRIBUSI: RO & SURAT JALAN TYPES
+// ==========================================
+export type ROStatus = 'PENDING' | 'APPROVED' | 'IN_DELIVERY' | 'COMPLETED' | 'REJECTED';
+
+export interface ROItem {
+  id: string;
+  asset_request_id?: string;
+  item_name: string;
+  specification?: string;
+  quantity_ordered: number;
+  quantity_fulfilled: number;
+  stock_source: 'GUDANG_SCGA' | 'PR_VENDOR';
+}
+
+export interface RequestOrder {
+  id: string;
+  ro_number: string;
+  branch_name: string;
+  region: 'JABODETABEK' | 'KALBAR';
+  requester_name: string;
+  request_date: string;
+  target_delivery_date?: string;
+  status: ROStatus;
+  items: ROItem[];
+  notes?: string;
+  created_at: string;
+}
+
+export type SJStatus = 'SHIPPED' | 'DELIVERED' | 'Diproses' | 'Dalam Pengiriman' | 'Selesai' | 'Dibatalkan';
+
+export interface SJItem {
+  id?: string;
+  item_name?: string;
+  nama_barang?: string;
+  specification?: string;
+  quantity?: number;
+  qty?: number;
+  unit?: string;
+  satuan?: string;
+  notes?: string;
+  catatan?: string;
+}
+
+export interface SuratJalan {
+  id: string;
+  sj_number?: string;
+  nomor_sj?: string;
+  ro_id?: string;
+  ro_number?: string;
+  ro_nomor?: string;
+  branch_name?: string;
+  tujuan_outlet_nama?: string;
+  region?: 'JABODETABEK' | 'KALBAR' | 'JABO';
+  delivery_date?: string;
+  tanggal_kirim?: string;
+  driver_name?: string;
+  driver_nama?: string;
+  driver_phone?: string;
+  vehicle_number?: string;
+  kendaraan_plat?: string;
+  expedition?: string;
+  ekspedisi?: string;
+  sender_name?: string;
+  pengirim_nama?: string;
+  receiver_name?: string;
+  penerima_nama?: string;
+  status: SJStatus;
+  received_at?: string | null;
+  items: SJItem[];
+  notes?: string;
+  catatan?: string;
+  created_at: string;
+}
+
+// ==========================================
+// 4. DISPOSISI: PENGEMBALIAN ASET TYPES
+// ==========================================
+export type DispositionStatus = 'DIAJUKAN' | 'DISETUJUI' | 'DITOLAK' | 'DITERIMA_GUDANG' | 'SCRAP' | 'Diajukan' | 'Disetujui' | 'Ditolak' | 'Diterima Gudang' | 'Di-Scrap';
+export type DispositionCondition = 'RUSAK_RINGAN' | 'RUSAK_BERAT' | 'TIDAK_LAYAK' | 'EX_OUTLET' | 'Rusak Ringan' | 'Rusak Berat' | 'Tidak Layak Pakai' | 'Kelebihan Unit';
+
+export interface DispositionItem {
+  id: string;
+  item_name: string;
+  quantity: number;
+  condition: DispositionCondition;
+  reason: string;
+  photo_url?: string;
+}
+
+export interface DispositionRequest {
+  id: string;
+  disposition_number?: string;
+  branch_name?: string;
+  outlet_nama?: string;
+  region?: 'JABODETABEK' | 'KALBAR' | 'JABO';
+  requester_name?: string;
+  diajukan_oleh?: string;
+  submission_date?: string;
+  status: DispositionStatus;
+  approval_notes?: string;
+  catatan_admin?: string;
+  approved_by?: string;
+  items?: DispositionItem[];
+  kode_aset?: string;
+  nama_aset?: string;
+  kondisi?: string;
+  alasan?: string;
+  foto_url?: string;
+  created_at: string;
+}

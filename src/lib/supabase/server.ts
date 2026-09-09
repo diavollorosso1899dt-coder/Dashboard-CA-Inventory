@@ -1,5 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
-import { AssetRequest, DashboardMetrics, BranchOpeningSummary, SyncLog, RegionType } from './types';
+import { 
+  AssetRequest, 
+  DashboardMetrics, 
+  BranchOpeningSummary, 
+  SyncLog, 
+  RegionType,
+  UserProfile,
+  Outlet,
+  AssetTransfer,
+  RequestOrder,
+  SuratJalan,
+  DispositionRequest
+} from './types';
 import { fetchAllSheetsData } from '../sync/sheet-fetcher';
 import { getDaysRemaining } from '../utils/date-formatter';
 
@@ -68,6 +80,12 @@ declare global {
     lastContentHash: string | null;
     syncLogs: SyncLog[];
     manualEdits: Map<string, Partial<AssetRequest>>;
+    outlets: Outlet[];
+    users: UserProfile[];
+    transfers: AssetTransfer[];
+    requestOrders: RequestOrder[];
+    suratJalan: SuratJalan[];
+    dispositions: DispositionRequest[];
   } | undefined;
 }
 
@@ -78,6 +96,175 @@ if (!global.__LOCAL_ASSET_CACHE__) {
     lastContentHash: null,
     syncLogs: [],
     manualEdits: new Map(),
+    outlets: [
+      {
+        id: 'out-1',
+        branch_name: 'Mie Ayam Muntjul Karawang',
+        region: 'JABODETABEK',
+        target_opening_date: '2026-04-02',
+        status: 'OPENING_SOON',
+        address: 'Jl. Ahmad Yani No. 45, Karawang Barat',
+        pic_name: 'Budi Santoso',
+        pic_phone: '081234567890',
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: 'out-2',
+        branch_name: 'Sop Mak Garang Kisamaun',
+        region: 'JABODETABEK',
+        target_opening_date: '2026-01-19',
+        status: 'ACTIVE',
+        address: 'Jl. Kisamaun No. 88, Tangerang',
+        pic_name: 'Ahmad Dani',
+        pic_phone: '081298765432',
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: 'out-3',
+        branch_name: 'Warung Nini Karawang',
+        region: 'JABODETABEK',
+        target_opening_date: '2026-04-02',
+        status: 'OPENING_SOON',
+        address: 'Jl. Tuparev No. 12, Karawang',
+        pic_name: 'Siti Aminah',
+        pic_phone: '085712345678',
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: 'out-4',
+        branch_name: 'Ayam Goreng Makmur',
+        region: 'KALBAR',
+        target_opening_date: '2026-05-15',
+        status: 'ACTIVE',
+        address: 'Jl. Gajah Mada No. 102, Pontianak',
+        pic_name: 'Heru Wijaya',
+        pic_phone: '081345678901',
+        created_at: new Date().toISOString(),
+      }
+    ],
+    users: [
+      {
+        id: 'usr-1',
+        email: 'admin@assetcontrol.com',
+        full_name: 'Super Administrator CA',
+        role: 'super_user',
+        is_active: true,
+        phone: '081122334455',
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: 'usr-2',
+        email: 'staff.scga@assetcontrol.com',
+        full_name: 'Staff Logistik & Pengadaan',
+        role: 'user',
+        is_active: true,
+        phone: '081199887766',
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: 'usr-3',
+        email: 'outlet.karawang@assetcontrol.com',
+        full_name: 'Manager Mie Ayam Karawang',
+        role: 'outlet_manager',
+        branch_name: 'Mie Ayam Muntjul Karawang',
+        is_active: true,
+        phone: '081234567890',
+        created_at: new Date().toISOString(),
+      }
+    ],
+    transfers: [
+      {
+        id: 'trf-1',
+        transfer_number: 'TRF/CA/2026/03/001',
+        from_location: 'Gudang Pusat SCGA',
+        to_location: 'Mie Ayam Muntjul Karawang',
+        transfer_date: '2026-03-08',
+        status: 'IN_TRANSIT',
+        sender_pic: 'Staff Logistik SCGA',
+        receiver_pic: 'Budi Santoso',
+        notes: 'Pengiriman batch 1 meja kursi dan chiller dapur',
+        items: [
+          { id: 'ti-1', item_name: 'Meja Lesehan Kayu', quantity: 6, condition: 'BAIK' },
+          { id: 'ti-2', item_name: 'Kursi Kayu Panjang', quantity: 40, condition: 'BAIK' },
+        ],
+        created_at: new Date().toISOString(),
+      }
+    ],
+    requestOrders: [
+      {
+        id: 'ro-1',
+        ro_number: 'RO-CA-2026-0042',
+        branch_name: 'Mie Ayam Muntjul Karawang',
+        region: 'JABODETABEK',
+        requester_name: 'Mutia Kulsum (BusDev)',
+        request_date: '2026-03-01',
+        target_delivery_date: '2026-03-25',
+        status: 'APPROVED',
+        notes: 'Permohonan aset kelengkapan opening outlet April 2026',
+        items: [
+          { id: 'roi-1', item_name: 'Meja Lesehan', quantity_ordered: 6, quantity_fulfilled: 6, stock_source: 'GUDANG_SCGA' },
+          { id: 'roi-2', item_name: 'Kursi Kayu', quantity_ordered: 40, quantity_fulfilled: 40, stock_source: 'GUDANG_SCGA' },
+          { id: 'roi-3', item_name: 'Exhaust Hood Stainless 2M', quantity_ordered: 1, quantity_fulfilled: 0, stock_source: 'PR_VENDOR' },
+        ],
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: 'ro-2',
+        ro_number: 'RO-CA-2026-0043',
+        branch_name: 'Warung Nini Karawang',
+        region: 'JABODETABEK',
+        requester_name: 'Siti Aminah',
+        request_date: '2026-03-05',
+        target_delivery_date: '2026-03-28',
+        status: 'PENDING',
+        notes: 'Penambahan chiller undercounter dan blender komersial',
+        items: [
+          { id: 'roi-4', item_name: 'Undercounter Chiller 2 Pintu', quantity_ordered: 1, quantity_fulfilled: 0, stock_source: 'PR_VENDOR' },
+        ],
+        created_at: new Date().toISOString(),
+      }
+    ],
+    suratJalan: [
+      {
+        id: 'sj-1',
+        sj_number: 'SJ/SCGA/2026/03/0088',
+        ro_id: 'ro-1',
+        ro_number: 'RO-CA-2026-0042',
+        branch_name: 'Mie Ayam Muntjul Karawang',
+        region: 'JABODETABEK',
+        delivery_date: '2026-03-08',
+        driver_name: 'Suryanto',
+        driver_phone: '081399887711',
+        vehicle_number: 'B 9482 SXZ',
+        expedition: 'Armada Internal SCGA',
+        sender_name: 'Staff SCGA Warehouse',
+        receiver_name: 'Budi Santoso (Outlet Manager)',
+        status: 'SHIPPED',
+        notes: 'Harap periksa kondisi fisik kayu dan segel sebelum menandatangani',
+        items: [
+          { id: 'sji-1', item_name: 'Meja Lesehan Jepara (120x70x35)', quantity: 6, unit: 'Unit', notes: 'Bahan mahoni jati muda' },
+          { id: 'sji-2', item_name: 'Kursi Kayu Panjang (4 Orang)', quantity: 40, unit: 'Unit', notes: 'Finishing natural doff' }
+        ],
+        created_at: new Date().toISOString(),
+      }
+    ],
+    dispositions: [
+      {
+        id: 'disp-1',
+        disposition_number: 'DISP/CA/2026/02/0014',
+        branch_name: 'Sop Mak Garang Kisamaun',
+        region: 'JABODETABEK',
+        requester_name: 'Ahmad Dani',
+        submission_date: '2026-02-28',
+        status: 'DISETUJUI',
+        approval_notes: 'Disetujui untuk dikembalikan ke Gudang SCGA untuk servis kompresor',
+        approved_by: 'Super Administrator CA',
+        items: [
+          { id: 'di-1', item_name: 'Blender Komersial Heavy Duty', quantity: 1, condition: 'RUSAK_RINGAN', reason: 'Motor overheating setelah pemakaian 8 bulan' }
+        ],
+        created_at: new Date().toISOString(),
+      }
+    ]
   };
 }
 
@@ -632,4 +819,376 @@ export async function getBranchOpeningSummaries(region: RegionType = 'ALL'): Pro
     if (b.days_until_opening !== null) return 1;
     return b.total_items_needed - a.total_items_needed;
   });
+}
+
+// ==============================================================================
+// 1. PENGGUNA & OUTLET CRUD
+// ==============================================================================
+export async function getOutlets(): Promise<Outlet[]> {
+  const admin = getAdminClient();
+  if (admin && isSupabaseHealthy) {
+    const { data, error } = await admin.from('outlets').select('*').order('branch_name');
+    if (!error && data && data.length > 0) return data as Outlet[];
+  }
+  return cache.outlets || [];
+}
+
+export async function saveOutlet(outletData: Partial<Outlet>): Promise<Outlet> {
+  const admin = getAdminClient();
+  const outlet: Outlet = {
+    id: outletData.id || `out-${Date.now()}`,
+    branch_name: outletData.branch_name || 'Outlet Baru',
+    region: outletData.region || 'JABODETABEK',
+    target_opening_date: outletData.target_opening_date || null,
+    status: outletData.status || 'ACTIVE',
+    address: outletData.address || '',
+    pic_name: outletData.pic_name || '',
+    pic_phone: outletData.pic_phone || '',
+    notes: outletData.notes || '',
+    created_at: outletData.created_at || new Date().toISOString(),
+  };
+
+  if (admin && isSupabaseHealthy) {
+    try {
+      const { data, error } = await admin.from('outlets').upsert(outlet).select().single();
+      if (!error && data) return data as Outlet;
+    } catch {}
+  }
+
+  const idx = cache.outlets.findIndex((o) => o.id === outlet.id);
+  if (idx !== -1) {
+    cache.outlets[idx] = outlet;
+  } else {
+    cache.outlets.push(outlet);
+  }
+  return outlet;
+}
+
+export async function getUserProfiles(): Promise<UserProfile[]> {
+  const admin = getAdminClient();
+  if (admin && isSupabaseHealthy) {
+    const { data, error } = await admin.from('user_profiles').select('*').order('full_name');
+    if (!error && data && data.length > 0) return data as UserProfile[];
+  }
+  return cache.users || [];
+}
+
+export async function saveUserProfile(userData: Partial<UserProfile>): Promise<UserProfile> {
+  const admin = getAdminClient();
+  const user: UserProfile = {
+    id: userData.id || `usr-${Date.now()}`,
+    email: userData.email || '',
+    full_name: userData.full_name || 'User',
+    role: userData.role || 'user',
+    branch_name: userData.branch_name,
+    phone: userData.phone,
+    is_active: userData.is_active ?? true,
+    created_at: userData.created_at || new Date().toISOString(),
+  };
+
+  if (admin && isSupabaseHealthy) {
+    try {
+      const { data, error } = await admin.from('user_profiles').upsert(user).select().single();
+      if (!error && data) return data as UserProfile;
+    } catch {}
+  }
+
+  const idx = cache.users.findIndex((u) => u.id === user.id);
+  if (idx !== -1) {
+    cache.users[idx] = user;
+  } else {
+    cache.users.push(user);
+  }
+  return user;
+}
+
+// ==============================================================================
+// 2. MONITORING: TRANSFER ASET & INPUT ASET
+// ==============================================================================
+export async function getAssetTransfers(): Promise<AssetTransfer[]> {
+  const admin = getAdminClient();
+  if (admin && isSupabaseHealthy) {
+    const { data, error } = await admin.from('asset_transfers').select('*').order('transfer_date', { ascending: false });
+    if (!error && data && data.length > 0) return data as AssetTransfer[];
+  }
+  return cache.transfers || [];
+}
+
+export async function createAssetTransfer(payload: Partial<AssetTransfer>): Promise<AssetTransfer> {
+  const admin = getAdminClient();
+  const transfer: AssetTransfer = {
+    id: payload.id || `trf-${Date.now()}`,
+    transfer_number: payload.transfer_number || `TRF/CA/${new Date().getFullYear()}/${Date.now().toString().slice(-4)}`,
+    from_location: payload.from_location || 'Gudang Pusat SCGA',
+    to_location: payload.to_location || 'Outlet',
+    transfer_date: payload.transfer_date || new Date().toISOString().split('T')[0],
+    status: payload.status || 'IN_TRANSIT',
+    sender_pic: payload.sender_pic || 'Staff SCGA',
+    receiver_pic: payload.receiver_pic,
+    items: payload.items || [],
+    notes: payload.notes,
+    created_at: new Date().toISOString(),
+  };
+
+  if (admin && isSupabaseHealthy) {
+    try {
+      const { data, error } = await admin.from('asset_transfers').insert(transfer).select().single();
+      if (!error && data) return data as AssetTransfer;
+    } catch {}
+  }
+
+  cache.transfers.unshift(transfer);
+  return transfer;
+}
+
+export async function createAssetRequest(payload: Partial<AssetRequest>): Promise<AssetRequest> {
+  const newAsset: AssetRequest = {
+    id: `custom-${Date.now()}`,
+    external_id: `CUSTOM-${Date.now()}`,
+    region: payload.region || 'JABODETABEK',
+    sheet_row_index: 0,
+    order_datetime: payload.order_datetime || new Date().toISOString(),
+    requester_name: payload.requester_name || 'Staff User',
+    requester_division: payload.requester_division || 'BusDev',
+    category: payload.category || 'New Outlet JABO',
+    branch_name: payload.branch_name || 'Tanpa Nama Outlet',
+    classification: payload.classification || 'General',
+    item_name: payload.item_name || 'Item Baru',
+    system_item_name: payload.system_item_name || payload.item_name || 'Item Baru',
+    specification: payload.specification || '',
+    photo_url: payload.photo_url || null,
+    quantity_needed: payload.quantity_needed || 1,
+    rab_number: payload.rab_number || '',
+    rab_link: payload.rab_link || '',
+    rab_price: payload.rab_price || 0,
+    rab_total: (payload.rab_price || 0) * (payload.quantity_needed || 1),
+    acc_kadiv_request: payload.acc_kadiv_request ?? true,
+    stock_status: payload.stock_status || 'Not Ready (Stok Kosong)',
+    quantity_stock_allocated: payload.quantity_stock_allocated || 0,
+    quantity_pr: payload.quantity_pr || 0,
+    opening_date: payload.opening_date || null,
+    pr_datetime: null,
+    is_direct_shipment: payload.is_direct_shipment ?? false,
+    po_date: null,
+    order_type: payload.order_type || 'OFFLINE',
+    vendor_name: payload.vendor_name || '',
+    initial_price: payload.initial_price || 0,
+    deal_price: payload.deal_price || 0,
+    realized_price: payload.realized_price || 0,
+    negotiation_proof: null,
+    acc_kadiv_procurement: false,
+    procurement_status: payload.procurement_status || 'proses',
+    item_delivery_status: payload.item_delivery_status || 'On Proses PR',
+    received_date: null,
+    lead_time_days: 0,
+    pic_receiver: payload.pic_receiver || '',
+    notes: payload.notes || '',
+    is_manually_edited: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const admin = getAdminClient();
+  if (admin && isSupabaseHealthy) {
+    try {
+      const { data, error } = await admin.from('asset_requests').insert(newAsset).select().single();
+      if (!error && data) {
+        cache.items.unshift(data as AssetRequest);
+        return data as AssetRequest;
+      }
+    } catch {}
+  }
+
+  cache.items.unshift(newAsset);
+  return newAsset;
+}
+
+// ==============================================================================
+// 3. DISTRIBUSI: RO (REQUEST ORDER) & SURAT JALAN (SJ)
+// ==============================================================================
+export async function getRequestOrders(): Promise<RequestOrder[]> {
+  const admin = getAdminClient();
+  if (admin && isSupabaseHealthy) {
+    const { data, error } = await admin.from('request_orders').select('*').order('request_date', { ascending: false });
+    if (!error && data && data.length > 0) return data as RequestOrder[];
+  }
+  return cache.requestOrders || [];
+}
+
+export async function createRequestOrder(payload: Partial<RequestOrder>): Promise<RequestOrder> {
+  const admin = getAdminClient();
+  const ro: RequestOrder = {
+    id: payload.id || `ro-${Date.now()}`,
+    ro_number: payload.ro_number || `RO-CA-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
+    branch_name: payload.branch_name || 'Outlet',
+    region: payload.region || 'JABODETABEK',
+    requester_name: payload.requester_name || 'User Tim Pusat',
+    request_date: payload.request_date || new Date().toISOString().split('T')[0],
+    target_delivery_date: payload.target_delivery_date,
+    status: payload.status || 'PENDING',
+    items: payload.items || [],
+    notes: payload.notes,
+    created_at: new Date().toISOString(),
+  };
+
+  if (admin && isSupabaseHealthy) {
+    try {
+      const { data, error } = await admin.from('request_orders').insert(ro).select().single();
+      if (!error && data) return data as RequestOrder;
+    } catch {}
+  }
+
+  cache.requestOrders.unshift(ro);
+  return ro;
+}
+
+export async function updateRequestOrderStatus(id: string, status: RequestOrder['status']): Promise<boolean> {
+  const admin = getAdminClient();
+  if (admin && isSupabaseHealthy) {
+    try {
+      await admin.from('request_orders').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+    } catch {}
+  }
+
+  const idx = cache.requestOrders.findIndex((r) => r.id === id);
+  if (idx !== -1) {
+    cache.requestOrders[idx].status = status;
+    return true;
+  }
+  return false;
+}
+
+export async function getSuratJalanList(): Promise<SuratJalan[]> {
+  const admin = getAdminClient();
+  if (admin && isSupabaseHealthy) {
+    const { data, error } = await admin.from('surat_jalan').select('*').order('delivery_date', { ascending: false });
+    if (!error && data && data.length > 0) return data as SuratJalan[];
+  }
+  return cache.suratJalan || [];
+}
+
+export async function getSuratJalanById(id: string): Promise<SuratJalan | null> {
+  const all = await getSuratJalanList();
+  return all.find((sj) => sj.id === id || sj.sj_number === id) || null;
+}
+
+export async function createSuratJalan(payload: Partial<SuratJalan>): Promise<SuratJalan> {
+  const admin = getAdminClient();
+  const sj: SuratJalan = {
+    id: payload.id || `sj-${Date.now()}`,
+    sj_number: payload.sj_number || `SJ/SCGA/${new Date().getFullYear()}/${new Date().getMonth() + 1}/${Date.now().toString().slice(-4)}`,
+    ro_id: payload.ro_id,
+    ro_number: payload.ro_number,
+    branch_name: payload.branch_name || 'Outlet Tujuan',
+    region: payload.region || 'JABODETABEK',
+    delivery_date: payload.delivery_date || new Date().toISOString().split('T')[0],
+    driver_name: payload.driver_name || 'Driver Pengantar',
+    driver_phone: payload.driver_phone,
+    vehicle_number: payload.vehicle_number || 'B 1234 SCG',
+    expedition: payload.expedition || 'Armada Internal SCGA',
+    sender_name: payload.sender_name || 'Staff Gudang SCGA',
+    receiver_name: payload.receiver_name,
+    status: payload.status || 'SHIPPED',
+    items: payload.items || [],
+    notes: payload.notes,
+    created_at: new Date().toISOString(),
+  };
+
+  if (admin && isSupabaseHealthy) {
+    try {
+      const { data, error } = await admin.from('surat_jalan').insert(sj).select().single();
+      if (!error && data) return data as SuratJalan;
+    } catch {}
+  }
+
+  cache.suratJalan.unshift(sj);
+  return sj;
+}
+
+export async function updateSuratJalanStatus(id: string, status: 'SHIPPED' | 'DELIVERED', receiverName?: string): Promise<boolean> {
+  const admin = getAdminClient();
+  const updateData: any = { status, updated_at: new Date().toISOString() };
+  if (receiverName) updateData.receiver_name = receiverName;
+  if (status === 'DELIVERED') updateData.received_at = new Date().toISOString();
+
+  if (admin && isSupabaseHealthy) {
+    try {
+      await admin.from('surat_jalan').update(updateData).eq('id', id);
+    } catch {}
+  }
+
+  const idx = cache.suratJalan.findIndex((sj) => sj.id === id);
+  if (idx !== -1) {
+    cache.suratJalan[idx].status = status;
+    if (receiverName) cache.suratJalan[idx].receiver_name = receiverName;
+    if (status === 'DELIVERED') cache.suratJalan[idx].received_at = new Date().toISOString();
+    return true;
+  }
+  return false;
+}
+
+// ==============================================================================
+// 4. DISPOSISI: PENGEMBALIAN ASET
+// ==============================================================================
+export async function getDispositionRequests(): Promise<DispositionRequest[]> {
+  const admin = getAdminClient();
+  if (admin && isSupabaseHealthy) {
+    const { data, error } = await admin.from('disposition_requests').select('*').order('submission_date', { ascending: false });
+    if (!error && data && data.length > 0) return data as DispositionRequest[];
+  }
+  return cache.dispositions || [];
+}
+
+export async function createDispositionRequest(payload: Partial<DispositionRequest>): Promise<DispositionRequest> {
+  const admin = getAdminClient();
+  const disp: DispositionRequest = {
+    id: payload.id || `disp-${Date.now()}`,
+    disposition_number: payload.disposition_number || `DISP/CA/${new Date().getFullYear()}/${Date.now().toString().slice(-4)}`,
+    branch_name: payload.branch_name || 'Outlet',
+    region: payload.region || 'JABODETABEK',
+    requester_name: payload.requester_name || 'Outlet Manager',
+    submission_date: payload.submission_date || new Date().toISOString().split('T')[0],
+    status: payload.status || 'DIAJUKAN',
+    items: payload.items || [],
+    approval_notes: payload.approval_notes,
+    approved_by: payload.approved_by,
+    created_at: new Date().toISOString(),
+  };
+
+  if (admin && isSupabaseHealthy) {
+    try {
+      const { data, error } = await admin.from('disposition_requests').insert(disp).select().single();
+      if (!error && data) return data as DispositionRequest;
+    } catch {}
+  }
+
+  cache.dispositions.unshift(disp);
+  return disp;
+}
+
+export async function updateDispositionStatus(
+  id: string, 
+  status: DispositionRequest['status'], 
+  approvalNotes?: string,
+  approvedBy?: string
+): Promise<boolean> {
+  const admin = getAdminClient();
+  const updateData: any = { status, updated_at: new Date().toISOString() };
+  if (approvalNotes) updateData.approval_notes = approvalNotes;
+  if (approvedBy) updateData.approved_by = approvedBy;
+
+  if (admin && isSupabaseHealthy) {
+    try {
+      await admin.from('disposition_requests').update(updateData).eq('id', id);
+    } catch {}
+  }
+
+  const idx = cache.dispositions.findIndex((d) => d.id === id);
+  if (idx !== -1) {
+    cache.dispositions[idx].status = status;
+    if (approvalNotes) cache.dispositions[idx].approval_notes = approvalNotes;
+    if (approvedBy) cache.dispositions[idx].approved_by = approvedBy;
+    return true;
+  }
+  return false;
 }

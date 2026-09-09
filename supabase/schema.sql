@@ -133,3 +133,114 @@ SELECT
 FROM public.asset_requests
 WHERE branch_name IS NOT NULL AND branch_name != ''
 GROUP BY branch_name, region;
+
+-- ==============================================================================
+-- 8. Table: user_profiles (Manajemen Pengguna & Peran)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.user_profiles (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email TEXT UNIQUE NOT NULL,
+    full_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user', -- 'super_user' | 'user' | 'outlet_manager'
+    branch_name TEXT,
+    phone TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==============================================================================
+-- 9. Table: outlets (Master Data Cabang & Outlet)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.outlets (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    branch_name TEXT UNIQUE NOT NULL,
+    region TEXT NOT NULL DEFAULT 'JABODETABEK', -- 'JABODETABEK' | 'KALBAR'
+    target_opening_date DATE,
+    status TEXT NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE' | 'OPENING_SOON' | 'RENOVATION' | 'CLOSED'
+    address TEXT,
+    pic_name TEXT,
+    pic_phone TEXT,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==============================================================================
+-- 10. Table: asset_transfers & items (Transfer Aset Antar Lokasi)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.asset_transfers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    transfer_number TEXT UNIQUE NOT NULL,
+    from_location TEXT NOT NULL,
+    to_location TEXT NOT NULL,
+    transfer_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    status TEXT NOT NULL DEFAULT 'IN_TRANSIT', -- 'DRAFT' | 'IN_TRANSIT' | 'RECEIVED' | 'CANCELLED'
+    sender_pic TEXT NOT NULL,
+    receiver_pic TEXT,
+    items JSONB NOT NULL DEFAULT '[]'::jsonb,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==============================================================================
+-- 11. Table: request_orders (Kelola RO Distribusi)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.request_orders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    ro_number TEXT UNIQUE NOT NULL,
+    branch_name TEXT NOT NULL,
+    region TEXT NOT NULL DEFAULT 'JABODETABEK',
+    requester_name TEXT NOT NULL,
+    request_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    target_delivery_date DATE,
+    status TEXT NOT NULL DEFAULT 'PENDING', -- 'PENDING' | 'APPROVED' | 'IN_DELIVERY' | 'COMPLETED' | 'REJECTED'
+    items JSONB NOT NULL DEFAULT '[]'::jsonb,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==============================================================================
+-- 12. Table: surat_jalan (Surat Jalan Distribusi & Logistik)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.surat_jalan (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    sj_number TEXT UNIQUE NOT NULL,
+    ro_id UUID REFERENCES public.request_orders(id) ON DELETE SET NULL,
+    ro_number TEXT,
+    branch_name TEXT NOT NULL,
+    region TEXT NOT NULL DEFAULT 'JABODETABEK',
+    delivery_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    driver_name TEXT NOT NULL,
+    driver_phone TEXT,
+    vehicle_number TEXT NOT NULL,
+    expedition TEXT NOT NULL DEFAULT 'Internal SCGA',
+    sender_name TEXT NOT NULL,
+    receiver_name TEXT,
+    status TEXT NOT NULL DEFAULT 'SHIPPED', -- 'SHIPPED' | 'DELIVERED'
+    received_at TIMESTAMPTZ,
+    items JSONB NOT NULL DEFAULT '[]'::jsonb,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==============================================================================
+-- 13. Table: disposition_requests (Pengembalian & Disposisi Aset)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.disposition_requests (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    disposition_number TEXT UNIQUE NOT NULL,
+    branch_name TEXT NOT NULL,
+    region TEXT NOT NULL DEFAULT 'JABODETABEK',
+    requester_name TEXT NOT NULL,
+    submission_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    status TEXT NOT NULL DEFAULT 'DIAJUKAN', -- 'DIAJUKAN' | 'DISETUJUI' | 'DITOLAK' | 'DITERIMA_GUDANG' | 'SCRAP'
+    approval_notes TEXT,
+    approved_by TEXT,
+    items JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
