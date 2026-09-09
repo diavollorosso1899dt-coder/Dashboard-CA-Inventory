@@ -1,11 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { Navbar } from '@/components/layout/Navbar';
-import { Sidebar } from '@/components/layout/Sidebar';
 import { ThemeProvider } from '@/components/theme/ThemeContext';
 import { MuiThemeRegistry } from '@/components/theme/MuiThemeRegistry';
-import { Suspense } from 'react';
-
 import { NavigationProvider } from '@/components/layout/NavigationContext';
 import { AuthProvider } from '@/components/auth/AuthContext';
 import { AppShell } from '@/components/layout/AppShell';
@@ -39,6 +35,24 @@ export default function RootLayout({
                   document.documentElement.classList.add('light');
                 }
               } catch (e) {}
+
+              // Auto-recover from stale Webpack chunks after dev restart/rebuild
+              window.addEventListener('error', function(e) {
+                if (e && e.message && (e.message.indexOf('ChunkLoadError') !== -1 || e.message.indexOf('Loading chunk') !== -1)) {
+                  if (!sessionStorage.getItem('chunk_retry')) {
+                    sessionStorage.setItem('chunk_retry', '1');
+                    window.location.reload();
+                  }
+                }
+              });
+              window.addEventListener('unhandledrejection', function(e) {
+                if (e && e.reason && (e.reason.name === 'ChunkLoadError' || (e.reason.message && e.reason.message.indexOf('ChunkLoadError') !== -1))) {
+                  if (!sessionStorage.getItem('chunk_retry')) {
+                    sessionStorage.setItem('chunk_retry', '1');
+                    window.location.reload();
+                  }
+                }
+              });
             `,
           }}
         />
