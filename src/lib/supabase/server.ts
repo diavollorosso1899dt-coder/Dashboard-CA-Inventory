@@ -144,10 +144,19 @@ if (!global.__LOCAL_ASSET_CACHE__) {
     ],
     users: [
       {
+        id: 'usr-superuser',
+        email: 'superuser@coffee-arabica.co.id',
+        full_name: 'Super User (Administrator)',
+        role: 'Super User',
+        is_active: true,
+        phone: '081122334455',
+        created_at: new Date().toISOString(),
+      },
+      {
         id: 'usr-1',
-        email: 'admin@assetcontrol.com',
+        email: 'admin@coffee-arabica.co.id',
         full_name: 'Super Administrator CA',
-        role: 'super_user',
+        role: 'Super User',
         is_active: true,
         phone: '081122334455',
         created_at: new Date().toISOString(),

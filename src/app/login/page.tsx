@@ -88,14 +88,14 @@ export default function LoginPage() {
           <form onSubmit={handleManualLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                Alamat Email
+                Username atau Alamat Email
               </label>
               <div className="relative">
                 <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
-                  type="email"
+                  type="text"
                   required
-                  placeholder="nama@coffee-arabica.co.id"
+                  placeholder="superuser atau nama@coffee-arabica.co.id"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
@@ -108,7 +108,7 @@ export default function LoginPage() {
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
                   Kata Sandi (Password)
                 </label>
-                <span className="text-[11px] text-slate-400">Default: password123</span>
+                <span className="text-[11px] text-slate-400">Superuser: usergacor</span>
               </div>
               <div className="relative">
                 <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -150,7 +150,13 @@ export default function LoginPage() {
             <div className="space-y-2">
               <button
                 type="button"
-                onClick={() => handleQuickLogin('super_user')}
+                onClick={() => {
+                  setEmail('superuser');
+                  setPassword('usergacor');
+                  login('superuser', 'usergacor').then(res => {
+                    if (res.success) router.push('/');
+                  });
+                }}
                 disabled={quickLoading !== null}
                 className="w-full p-2.5 rounded-xl border border-purple-200 dark:border-purple-900/50 bg-purple-50/50 dark:bg-purple-950/30 hover:bg-purple-100 dark:hover:bg-purple-950/60 text-left flex items-center justify-between transition group"
               >
@@ -162,11 +168,13 @@ export default function LoginPage() {
                     <div className="text-xs font-bold text-purple-900 dark:text-purple-300">
                       Super User (Administrator)
                     </div>
-                    <div className="text-[10px] text-slate-500 font-mono">admin@coffee-arabica.co.id</div>
+                    <div className="text-[10px] text-slate-500 font-mono">
+                      User: <strong>superuser</strong> • Pass: <strong>usergacor</strong>
+                    </div>
                   </div>
                 </div>
                 <span className="text-xs text-purple-600 dark:text-purple-400 font-semibold group-hover:translate-x-1 transition-transform">
-                  {quickLoading === 'super_user' ? '...' : 'Masuk →'}
+                  Masuk →
                 </span>
               </button>
 

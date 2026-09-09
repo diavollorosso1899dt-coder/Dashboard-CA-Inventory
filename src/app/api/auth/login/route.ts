@@ -5,21 +5,48 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request) {
   try {
-    const { email, password } = await req.json();
+    const body = await req.json();
+    const loginId = (body.email || body.username || '').trim().toLowerCase();
+    const password = (body.password || '').trim();
 
-    if (!email) {
-      return NextResponse.json({ success: false, error: 'Email wajib diisi' }, { status: 400 });
+    if (!loginId) {
+      return NextResponse.json({ success: false, error: 'Username atau email wajib diisi' }, { status: 400 });
     }
 
-    const profiles = await getUserProfiles();
-    const cleanEmail = email.trim().toLowerCase();
+    // 1. Explicit requested credentials for Superuser
+    if (loginId === 'superuser' || loginId === 'superuser@coffee-arabica.co.id') {
+      if (password !== 'usergacor') {
+        return NextResponse.json(
+          { success: false, error: 'Kata sandi salah. Gunakan password yang benar untuk akun superuser.' },
+          { status: 401 }
+        );
+      }
 
-    // Find user by email
-    const user = profiles.find((p) => p.email.toLowerCase() === cleanEmail);
+      return NextResponse.json({
+        success: true,
+        data: {
+          id: 'usr-superuser',
+          email: 'superuser@coffee-arabica.co.id',
+          full_name: 'Super User (Administrator)',
+          role: 'Super User',
+          outlet_assigned: null,
+          phone: '081122334455',
+          is_active: true,
+        },
+        message: 'Login Super User berhasil',
+      });
+    }
+
+    // 2. Check other registered user profiles
+    const profiles = await getUserProfiles();
+    const user = profiles.find((p) => 
+      p.email.toLowerCase() === loginId || 
+      (p.full_name && p.full_name.toLowerCase().replace(/\s+/g, '') === loginId)
+    );
 
     if (!user) {
       return NextResponse.json(
-        { success: false, error: 'Akun dengan email tersebut tidak ditemukan dalam sistem.' },
+        { success: false, error: 'Akun dengan username/email tersebut tidak ditemukan dalam sistem.' },
         { status: 404 }
       );
     }
@@ -31,7 +58,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // In this internal portal, password validation allows standard default 'password123' or any non-empty password
     if (password && password.length < 4) {
       return NextResponse.json(
         { success: false, error: 'Password minimal 4 karakter.' },
