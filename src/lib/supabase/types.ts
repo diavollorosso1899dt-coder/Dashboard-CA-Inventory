@@ -72,6 +72,7 @@ export interface AssetRequest {
   notes: string;
   
   is_manually_edited: boolean;
+  is_system_transfer?: boolean;
   created_at: string;
   updated_at: string;
 }

@@ -16,7 +16,8 @@ import {
   Clock,
   CheckCircle2,
   RefreshCw,
-  X
+  X,
+  ArrowRightLeft
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import { formatDateTime, formatDateOnly, formatLeadTime } from '@/lib/utils/date-formatter';
@@ -28,7 +29,7 @@ interface AssetDataTableProps {
   regionFilter?: RegionType;
 }
 
-type QuickFilterType = 'ALL' | 'OVERDUE' | 'READY_STOCK' | 'NEED_PR' | 'COMPLETED';
+type QuickFilterType = 'ALL' | 'OVERDUE' | 'READY_STOCK' | 'NEED_PR' | 'COMPLETED' | 'TRANSFER_SYSTEM';
 
 export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: AssetDataTableProps) {
   const [items, setItems] = useState<AssetRequest[]>(initialItems);
@@ -49,6 +50,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [updatingRowId, setUpdatingRowId] = useState<string | null>(null);
+  const [systemTransferIds, setSystemTransferIds] = useState<string[]>([]);
 
   // BAST Modal State
   const [isBastModalOpen, setIsBastModalOpen] = useState(false);
@@ -56,8 +58,27 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
 
   useEffect(() => {
     setItems(initialItems || []);
+    const initialTransferList = (initialItems || [])
+      .filter((i) => i.is_system_transfer)
+      .map((i) => i.id || i.external_id);
+    setSystemTransferIds(initialTransferList);
     setCurrentPage(1);
   }, [initialItems]);
+
+  const handleToggleSystemTransfer = (item: AssetRequest) => {
+    const id = item.id || item.external_id;
+    const isTransfer = systemTransferIds.includes(id) || item.is_system_transfer;
+    let updatedIds: string[];
+    if (isTransfer) {
+      updatedIds = systemTransferIds.filter((i) => i !== id);
+    } else {
+      updatedIds = [...systemTransferIds, id];
+    }
+    setSystemTransferIds(updatedIds);
+    setItems((prev) =>
+      prev.map((it) => ((it.id === id || it.external_id === id) ? { ...it, is_system_transfer: !isTransfer } : it))
+    );
+  };
 
   // Extract unique branches
   const uniqueBranches = useMemo(() => {
@@ -79,6 +100,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
       if (quickFilter === 'READY_STOCK' && (item.quantity_stock_allocated || 0) <= 0) return false;
       if (quickFilter === 'NEED_PR' && (item.quantity_pr || 0) <= 0) return false;
       if (quickFilter === 'COMPLETED' && !(item.item_delivery_status || '').toLowerCase().includes('lengkap')) return false;
+      if (quickFilter === 'TRANSFER_SYSTEM' && !systemTransferIds.includes(item.id || item.external_id) && !item.is_system_transfer) return false;
 
       if (selectedStatus !== 'ALL') {
         const itemStatus = (item.item_delivery_status || '').toLowerCase();
@@ -355,6 +377,17 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
           <CheckCircle2 className="h-3.5 w-3.5 text-[#137333]" />
           Sudah Lengkap
         </button>
+        <button
+          onClick={() => { setQuickFilter('TRANSFER_SYSTEM'); setCurrentPage(1); }}
+          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all ${
+            quickFilter === 'TRANSFER_SYSTEM'
+              ? 'bg-[#c2e7ff] dark:bg-[#004a77] border border-[#0b57d0] dark:border-[#a8c7fa] text-[#001d35] dark:text-[#c2e7ff] shadow-sm'
+              : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/30'
+          }`}
+        >
+          <ArrowRightLeft className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+          Role Transfer ({systemTransferIds.length})
+        </button>
       </div>
 
       {/* 2. Google M3 Search & Filter Card */}
@@ -537,6 +570,17 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
             </button>
             <button
               onClick={() => {
+                const selectedSystemItems = items.filter((i) => selectedIds.includes(i.id || i.external_id));
+                const itemsParam = encodeURIComponent(JSON.stringify(selectedSystemItems.map(i => ({ item_name: i.item_name, quantity: i.quantity_needed }))));
+                window.location.href = `/monitoring/transfer?items=${itemsParam}`;
+              }}
+              className="flex items-center gap-1.5 rounded-full bg-[#6750a4] dark:bg-[#d0bcff] px-3.5 py-1.5 text-xs font-semibold text-white dark:text-[#381e72] hover:bg-[#523b8a] transition-colors shadow-sm"
+            >
+              <ArrowRightLeft className="h-3.5 w-3.5" />
+              Ke Pemantauan Transfer ({selectedIds.length})
+            </button>
+            <button
+              onClick={() => {
                 const firstSelectedItem = items.find((i) => selectedIds.includes(i.id || i.external_id));
                 const branchToUse = firstSelectedItem?.branch_name || (selectedBranch !== 'ALL' ? selectedBranch : uniqueBranches[0]);
                 setBastBranch(branchToUse);
@@ -585,6 +629,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                 <th className="py-3.5 px-3">Target Opening</th>
                 <th className="py-3.5 px-3">Status Stok</th>
                 <th className="py-3.5 px-3">Status Barang</th>
+                <th className="py-3.5 px-3 text-center">Transfer Sistem</th>
                 <th className="py-3.5 px-3 text-center">SLA</th>
                 <th className="py-3.5 px-3 text-right">Aksi</th>
               </tr>
@@ -592,7 +637,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
             <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
               {paginatedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
+                  <td colSpan={12} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
                     Tidak ada data aset yang cocok dengan filter. Coba ubah kata kunci pencarian atau filter wilayah.
                   </td>
                 </tr>
@@ -718,6 +763,35 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                           </select>
                           {isUpdating && <RefreshCw className="h-3 w-3 animate-spin text-[#747775]" />}
                         </div>
+                      </td>
+
+                      {/* 8b. Transfer Sistem Checklist */}
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleSystemTransfer(item);
+                          }}
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold transition-all border ${
+                            systemTransferIds.includes(itemId) || item.is_system_transfer
+                              ? 'border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0] dark:border-[#a8c7fa] dark:bg-[#004a77]/50 dark:text-[#a8c7fa] shadow-xs'
+                              : 'border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] text-[#747775] dark:bg-[#282a2c] dark:text-[#8e918f] hover:bg-[#e0e2ec]'
+                          }`}
+                          title="Centang untuk memasukkan item ini ke Role Transfer Sistem"
+                        >
+                          {systemTransferIds.includes(itemId) || item.is_system_transfer ? (
+                            <>
+                              <CheckSquare className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                              <span>Role Transfer</span>
+                            </>
+                          ) : (
+                            <>
+                              <Square className="h-3.5 w-3.5 text-[#747775]" />
+                              <span>Non Transfer</span>
+                            </>
+                          )}
+                        </button>
                       </td>
 
                       {/* 9. SLA */}

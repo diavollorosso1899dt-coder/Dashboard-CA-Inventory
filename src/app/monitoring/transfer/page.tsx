@@ -18,7 +18,7 @@ export default async function TransferAssetPage() {
         <div className="flex items-center gap-2">
           <ArrowRightLeft className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" />
           <h1 className="text-xl md:text-2xl font-bold text-[#1f1f1f] dark:text-[#e3e3e3] tracking-tight">
-            Monitoring: Transfer Aset Antar Lokasi
+            Pemantauan Transfer Aset
           </h1>
         </div>
         <p className="text-xs sm:text-sm text-[#444746] dark:text-[#c4c7c5] mt-1">

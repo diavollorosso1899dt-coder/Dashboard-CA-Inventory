@@ -52,7 +52,7 @@ export function Sidebar() {
       color: 'text-purple-600 dark:text-purple-400',
       items: [
         { name: 'Daftar Aset', href: '/monitoring/assets', icon: Layers },
-        { name: 'Transfer Aset', href: '/monitoring/transfer', icon: ArrowRightLeft },
+        { name: 'Pemantauan Transfer Aset', href: '/monitoring/transfer', icon: ArrowRightLeft },
         { name: 'Input Aset Baru', href: '/monitoring/input', icon: PlusCircle },
       ],
     },

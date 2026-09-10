@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { 
   ArrowRightLeft, 
   PlusCircle, 
@@ -21,6 +22,7 @@ interface TransferAssetViewProps {
 }
 
 export function TransferAssetView({ initialTransfers, outlets }: TransferAssetViewProps) {
+  const searchParams = useSearchParams();
   const [transfers, setTransfers] = useState<AssetTransfer[]>(initialTransfers);
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -36,6 +38,28 @@ export function TransferAssetView({ initialTransfers, outlets }: TransferAssetVi
   const [itemQty, setItemQty] = useState(1);
   const [itemCondition, setItemCondition] = useState<'BAIK' | 'PERLU_PERBAIKAN' | 'BEKAS_LAYAK'>('BAIK');
   const [itemsList, setItemsList] = useState<Array<{ id: string; item_name: string; quantity: number; condition: 'BAIK' | 'PERLU_PERBAIKAN' | 'BEKAS_LAYAK' }>>([]);
+
+  useEffect(() => {
+    const itemsParam = searchParams.get('items');
+    if (itemsParam) {
+      try {
+        const parsed = JSON.parse(itemsParam);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const importedItems = parsed.map((it: { item_name: string; quantity?: number }, idx: number) => ({
+            id: `ti-imp-${Date.now()}-${idx}`,
+            item_name: it.item_name || 'Item Aset',
+            quantity: Number(it.quantity) || 1,
+            condition: 'BAIK' as const,
+          }));
+          setItemsList(importedItems);
+          setNotes('Diimpor otomatis dari checklist Transfer Sistem Daftar Aset.');
+          setIsModalOpen(true);
+        }
+      } catch (err) {
+        console.error('Failed to parse items param:', err);
+      }
+    }
+  }, [searchParams]);
 
   const handleAddItem = () => {
     if (!itemName.trim()) return;
@@ -124,7 +148,7 @@ export function TransferAssetView({ initialTransfers, outlets }: TransferAssetVi
           className="flex items-center justify-center gap-2 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-4 py-2 text-xs font-semibold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-sm shrink-0"
         >
           <PlusCircle className="h-4 w-4" />
-          <span>Buat Transfer Aset</span>
+          <span>Buat Pemantauan Transfer Aset</span>
         </button>
       </div>
 

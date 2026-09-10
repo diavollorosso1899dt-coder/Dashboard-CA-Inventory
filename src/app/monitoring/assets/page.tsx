@@ -39,7 +39,7 @@ export default async function MonitoringAssetsPage({ searchParams }: PageProps) 
             className="flex items-center gap-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] px-4 py-2 text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c] transition-colors"
           >
             <ArrowRightLeft className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-            <span>Transfer Aset</span>
+            <span>Pemantauan Transfer Aset</span>
           </Link>
           <Link
             href="/monitoring/input"
