@@ -457,6 +457,7 @@ export async function getAssetRequests(options?: {
   branch?: string;
   rabNumber?: string;
   search?: string;
+  isSystemTransfer?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<{ data: AssetRequest[]; total: number; lastSynced: string | null }> {
@@ -477,6 +478,9 @@ export async function getAssetRequests(options?: {
         }
         if (options?.rabNumber) {
           query = query.ilike('rab_number', `%${options.rabNumber}%`);
+        }
+        if (options?.isSystemTransfer) {
+          query = query.eq('is_system_transfer', true);
         }
         if (options?.search) {
           query = query.or(
@@ -524,6 +528,9 @@ export async function getAssetRequests(options?: {
   }
   if (options?.rabNumber) {
     filtered = filtered.filter((r) => r.rab_number.toLowerCase().includes(options.rabNumber!.toLowerCase()));
+  }
+  if (options?.isSystemTransfer) {
+    filtered = filtered.filter((r) => r.is_system_transfer);
   }
   if (options?.search) {
     const q = options.search.toLowerCase();

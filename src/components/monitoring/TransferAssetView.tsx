@@ -14,19 +14,21 @@ import {
   Package, 
   UserCheck 
 } from 'lucide-react';
-import { AssetTransfer, Outlet } from '@/lib/supabase/types';
+import { AssetTransfer, Outlet, AssetRequest } from '@/lib/supabase/types';
 
 interface TransferAssetViewProps {
   initialTransfers: AssetTransfer[];
   outlets: Outlet[];
+  initialAssets?: AssetRequest[];
 }
 
-export function TransferAssetView({ initialTransfers, outlets }: TransferAssetViewProps) {
+export function TransferAssetView({ initialTransfers, outlets, initialAssets = [] }: TransferAssetViewProps) {
   const searchParams = useSearchParams();
   const [transfers, setTransfers] = useState<AssetTransfer[]>(initialTransfers);
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [systemTransferAssets, setSystemTransferAssets] = useState<AssetRequest[]>([]);
 
   // New transfer form state
   const [fromLocation, setFromLocation] = useState('Gudang Pusat SCGA');
@@ -38,6 +40,26 @@ export function TransferAssetView({ initialTransfers, outlets }: TransferAssetVi
   const [itemQty, setItemQty] = useState(1);
   const [itemCondition, setItemCondition] = useState<'BAIK' | 'PERLU_PERBAIKAN' | 'BEKAS_LAYAK'>('BAIK');
   const [itemsList, setItemsList] = useState<Array<{ id: string; item_name: string; quantity: number; condition: 'BAIK' | 'PERLU_PERBAIKAN' | 'BEKAS_LAYAK' }>>([]);
+
+  // Load checklist items from props and localStorage
+  useEffect(() => {
+    let storedIds: string[] = [];
+    try {
+      const saved = localStorage.getItem('ca_system_transfer_ids');
+      if (saved) {
+        storedIds = JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Failed reading system transfer ids in TransferAssetView:', e);
+    }
+
+    const filtered = (initialAssets || []).filter((a) => {
+      const aId = a.id || a.external_id;
+      return Boolean(a.is_system_transfer) || storedIds.includes(aId);
+    });
+
+    setSystemTransferAssets(filtered);
+  }, [initialAssets]);
 
   useEffect(() => {
     const itemsParam = searchParams.get('items');
@@ -60,6 +82,22 @@ export function TransferAssetView({ initialTransfers, outlets }: TransferAssetVi
       }
     }
   }, [searchParams]);
+
+  const handleProcessSystemTransfer = (selected: AssetRequest[]) => {
+    const formattedItems = selected.map((a, idx) => ({
+      id: `ti-sys-${Date.now()}-${idx}`,
+      item_name: a.item_name,
+      quantity: a.quantity_needed || 1,
+      condition: 'BAIK' as const,
+    }));
+
+    setItemsList(formattedItems);
+    if (selected[0]?.branch_name) {
+      setToLocation(selected[0].branch_name);
+    }
+    setNotes(`Dokumen Pemantauan Transfer Aset dibuat dari checklist Role Transfer Sistem (${selected.length} item).`);
+    setIsModalOpen(true);
+  };
 
   const handleAddItem = () => {
     if (!itemName.trim()) return;
@@ -151,6 +189,62 @@ export function TransferAssetView({ initialTransfers, outlets }: TransferAssetVi
           <span>Buat Pemantauan Transfer Aset</span>
         </button>
       </div>
+
+      {/* Panel Aset Masuk Role Transfer Sistem */}
+      {systemTransferAssets.length > 0 && (
+        <div className="panel-card p-4 space-y-3 border-2 border-[#0b57d0]/30 dark:border-[#a8c7fa]/30 bg-[#e8f0fe]/30 dark:bg-[#004a77]/20">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#c2e7ff] dark:border-[#004a77] pb-2.5">
+            <div className="flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-xs font-bold text-white dark:text-[#041e49]">
+                {systemTransferAssets.length}
+              </span>
+              <div>
+                <h3 className="font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-1.5">
+                  <ArrowRightLeft className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                  Aset Masuk Sistem Transfer (Checklist Daftar Aset)
+                </h3>
+                <p className="text-[11px] text-[#444746] dark:text-[#c4c7c5]">
+                  Daftar item aset yang telah dicentang checklist Role Transfer dan siap dibuatkan dokumen mutasi.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => handleProcessSystemTransfer(systemTransferAssets)}
+              className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-4 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-sm self-start sm:self-auto shrink-0"
+            >
+              <ArrowRightLeft className="h-3.5 w-3.5" />
+              Proses Semua ({systemTransferAssets.length} Item)
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-1">
+            {systemTransferAssets.map((asset) => (
+              <div
+                key={asset.id || asset.external_id}
+                className="flex items-center justify-between rounded-xl border border-[#d2e3fc] dark:border-[#004a77] bg-[#ffffff] dark:bg-[#1e1f20] p-3 shadow-xs"
+              >
+                <div className="min-w-0 pr-2">
+                  <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
+                    {asset.item_name}
+                  </div>
+                  <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] truncate">
+                    {asset.branch_name} • <strong className="text-[#0b57d0] dark:text-[#a8c7fa]">{asset.quantity_needed} unit</strong>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => handleProcessSystemTransfer([asset])}
+                  className="rounded-full bg-[#e8f0fe] dark:bg-[#004a77]/50 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white transition-colors shrink-0"
+                  title="Proses transfer untuk item ini saja"
+                >
+                  Proses
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Transfers List Table */}
       <div className="panel-card overflow-hidden">

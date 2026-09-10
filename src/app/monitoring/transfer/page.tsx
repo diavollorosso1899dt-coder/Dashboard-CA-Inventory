@@ -1,14 +1,15 @@
 import React from 'react';
-import { getAssetTransfers, getOutlets } from '@/lib/supabase/server';
+import { getAssetTransfers, getOutlets, getAssetRequests } from '@/lib/supabase/server';
 import { ArrowRightLeft } from 'lucide-react';
 import { TransferAssetView } from '@/components/monitoring/TransferAssetView';
 
 export const dynamic = 'force-dynamic';
 
 export default async function TransferAssetPage() {
-  const [transfers, outlets] = await Promise.all([
+  const [transfers, outlets, assetsRes] = await Promise.all([
     getAssetTransfers(),
     getOutlets(),
+    getAssetRequests({ limit: 1000 }),
   ]);
 
   return (
@@ -26,7 +27,7 @@ export default async function TransferAssetPage() {
         </p>
       </div>
 
-      <TransferAssetView initialTransfers={transfers} outlets={outlets} />
+      <TransferAssetView initialTransfers={transfers} outlets={outlets} initialAssets={assetsRes.data} />
     </div>
   );
 }

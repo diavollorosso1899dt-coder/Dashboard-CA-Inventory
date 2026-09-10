@@ -57,27 +57,71 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   const [bastBranch, setBastBranch] = useState<string>('');
 
   useEffect(() => {
-    setItems(initialItems || []);
-    const initialTransferList = (initialItems || [])
+    let storedIds: string[] = [];
+    try {
+      const saved = localStorage.getItem('ca_system_transfer_ids');
+      if (saved) {
+        storedIds = JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Failed reading localStorage system transfer ids:', e);
+    }
+
+    const itemTransferIds = (initialItems || [])
       .filter((i) => i.is_system_transfer)
       .map((i) => i.id || i.external_id);
-    setSystemTransferIds(initialTransferList);
+
+    const mergedTransferIds = Array.from(new Set([...itemTransferIds, ...storedIds]));
+    setSystemTransferIds(mergedTransferIds);
+
+    const updatedItems = (initialItems || []).map((it) => {
+      const itId = it.id || it.external_id;
+      if (mergedTransferIds.includes(itId)) {
+        return { ...it, is_system_transfer: true };
+      }
+      return it;
+    });
+
+    setItems(updatedItems);
     setCurrentPage(1);
   }, [initialItems]);
 
-  const handleToggleSystemTransfer = (item: AssetRequest) => {
+  const handleToggleSystemTransfer = async (item: AssetRequest) => {
     const id = item.id || item.external_id;
-    const isTransfer = systemTransferIds.includes(id) || item.is_system_transfer;
+    const isCurrentlyTransfer = systemTransferIds.includes(id) || Boolean(item.is_system_transfer);
+    const nextTransferState = !isCurrentlyTransfer;
+
     let updatedIds: string[];
-    if (isTransfer) {
+    if (isCurrentlyTransfer) {
       updatedIds = systemTransferIds.filter((i) => i !== id);
     } else {
-      updatedIds = [...systemTransferIds, id];
+      updatedIds = Array.from(new Set([...systemTransferIds, id]));
     }
+
     setSystemTransferIds(updatedIds);
+
+    try {
+      localStorage.setItem('ca_system_transfer_ids', JSON.stringify(updatedIds));
+    } catch (e) {
+      console.error('Failed saving system transfer ids to localStorage:', e);
+    }
+
     setItems((prev) =>
-      prev.map((it) => ((it.id === id || it.external_id === id) ? { ...it, is_system_transfer: !isTransfer } : it))
+      prev.map((it) => ((it.id === id || it.external_id === id) ? { ...it, is_system_transfer: nextTransferState } : it))
     );
+
+    try {
+      await fetch(`/api/assets/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          is_system_transfer: nextTransferState,
+          is_manually_edited: true,
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to update system transfer on server:', err);
+    }
   };
 
   // Extract unique branches
