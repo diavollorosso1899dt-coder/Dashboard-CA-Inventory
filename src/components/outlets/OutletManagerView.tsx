@@ -73,7 +73,14 @@ export default function OutletManagerView() {
       const res = await fetch('/api/outlets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          branch_name: formData.nama,
+          address: formData.alamat,
+          pic_name: formData.pic_nama,
+          pic_phone: formData.telepon,
+          target_opening_date: formData.target_opening || null,
+        }),
       });
       const json = await res.json();
       if (json.success) {
@@ -89,8 +96,13 @@ export default function OutletManagerView() {
     }
   };
 
-  const filteredOutlets = outlets.filter(o => {
-    if (regionFilter !== 'ALL' && o.region !== regionFilter) return false;
+  const filteredOutlets = outlets.filter((o) => {
+    if (regionFilter !== 'ALL') {
+      const isJabo =
+        (regionFilter === 'JABO' || regionFilter === 'JABODETABEK') &&
+        (o.region === 'JABO' || o.region === 'JABODETABEK');
+      if (!isJabo && o.region !== regionFilter) return false;
+    }
     const q = search.toLowerCase();
     const name = (o.nama || o.branch_name || '').toLowerCase();
     const address = (o.alamat || o.address || '').toLowerCase();
@@ -290,7 +302,7 @@ export default function OutletManagerView() {
                 </Link>
 
                 <Link
-                  href="/opening-readiness"
+                  href={`/opening-readiness?branch=${encodeURIComponent(outlet.nama || outlet.branch_name)}`}
                   className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 rounded-lg transition"
                 >
                   Kesiapan Buka <ArrowRight className="w-3.5 h-3.5" />

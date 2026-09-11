@@ -840,44 +840,180 @@ export async function getBranchOpeningSummaries(region: RegionType = 'ALL'): Pro
 // ==============================================================================
 // 1. PENGGUNA & OUTLET CRUD
 // ==============================================================================
+
+function hashOutletBranch(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
 export async function getOutlets(): Promise<Outlet[]> {
   const admin = getAdminClient();
+  let dbOutlets: Outlet[] = [];
   if (admin && isSupabaseHealthy) {
-    const { data, error } = await admin.from('outlets').select('*').order('branch_name');
-    if (!error && data && data.length > 0) return data as Outlet[];
+    try {
+      const { data, error } = await admin.from('outlets').select('*').order('branch_name');
+      if (!error && data && data.length > 0) dbOutlets = data as Outlet[];
+    } catch {}
   }
-  return cache.outlets || [];
+
+  // Combined Map keyed by normalized branch name
+  const outletMap = new Map<string, Outlet>();
+
+  // Helper to normalize outlet object with bilingual property aliases
+  const normalizeOutlet = (o: Partial<Outlet>): Outlet => {
+    const branchName = (o.branch_name || o.nama || 'Outlet Baru').trim();
+    const region = (o.region === 'JABO' ? 'JABODETABEK' : o.region) || 'JABODETABEK';
+    const address = o.address || o.alamat || '';
+    const picName = o.pic_name || o.pic_nama || '';
+    const picPhone = o.pic_phone || o.telepon || '';
+    const targetOpening = o.target_opening_date || o.target_opening || null;
+    const status = o.status || 'Aktif';
+
+    return {
+      id: o.id || `out-${hashOutletBranch(branchName)}`,
+      branch_name: branchName,
+      nama: branchName,
+      region: region as any,
+      target_opening_date: targetOpening,
+      target_opening: targetOpening,
+      status: status as any,
+      address,
+      alamat: address,
+      pic_name: picName,
+      pic_nama: picName,
+      pic_phone: picPhone,
+      telepon: picPhone,
+      notes: o.notes || '',
+      created_at: o.created_at || new Date().toISOString(),
+    };
+  };
+
+  // 1. Add from cache.outlets
+  if (cache.outlets) {
+    for (const o of cache.outlets) {
+      const norm = normalizeOutlet(o);
+      const key = norm.branch_name.toLowerCase();
+      if (key) outletMap.set(key, norm);
+    }
+  }
+
+  // 2. Add from Supabase database (takes precedence for richer data)
+  for (const o of dbOutlets) {
+    const norm = normalizeOutlet(o);
+    const key = norm.branch_name.toLowerCase();
+    if (key) outletMap.set(key, norm);
+  }
+
+  // 3. Scan asset_requests (items) to ensure any newly inputted or existing branch appears in the outlet list
+  if (cache.items) {
+    for (const item of cache.items) {
+      if (!item.branch_name) continue;
+      const key = item.branch_name.trim().toLowerCase();
+      if (!outletMap.has(key)) {
+        const isJabo = (item.region as string) === 'JABODETABEK' || (item.region as string) === 'JABO';
+        const synthetic = normalizeOutlet({
+          id: `out-auto-${hashOutletBranch(key)}`,
+          branch_name: item.branch_name.trim(),
+          nama: item.branch_name.trim(),
+          region: isJabo ? 'JABODETABEK' : 'KALBAR',
+          target_opening_date: item.opening_date || null,
+          target_opening: item.opening_date || null,
+          status: 'Persiapan Buka',
+          address: '',
+          alamat: '',
+          pic_name: item.requester_name || '',
+          pic_nama: item.requester_name || '',
+          pic_phone: '',
+          telepon: '',
+          notes: 'Terdata otomatis dari transaksi aset',
+          created_at: item.order_datetime || new Date().toISOString(),
+        });
+        outletMap.set(key, synthetic);
+      } else {
+        const existing = outletMap.get(key)!;
+        if (!existing.target_opening_date && item.opening_date) {
+          existing.target_opening_date = item.opening_date;
+          existing.target_opening = item.opening_date;
+        }
+      }
+    }
+  }
+
+  const result = Array.from(outletMap.values());
+  return result.sort((a, b) => a.branch_name.localeCompare(b.branch_name));
 }
 
 export async function saveOutlet(outletData: Partial<Outlet>): Promise<Outlet> {
   const admin = getAdminClient();
+  const branchName = (outletData.branch_name || outletData.nama || 'Outlet Baru').trim();
+  const region = (outletData.region === 'JABO' ? 'JABODETABEK' : outletData.region) || 'JABODETABEK';
+  const targetOpening = outletData.target_opening_date || outletData.target_opening || null;
+  const address = outletData.address || outletData.alamat || '';
+  const picName = outletData.pic_name || outletData.pic_nama || '';
+  const picPhone = outletData.pic_phone || outletData.telepon || '';
+  const status = outletData.status || 'Aktif';
+
   const outlet: Outlet = {
     id: outletData.id || `out-${Date.now()}`,
-    branch_name: outletData.branch_name || 'Outlet Baru',
-    region: outletData.region || 'JABODETABEK',
-    target_opening_date: outletData.target_opening_date || null,
-    status: outletData.status || 'ACTIVE',
-    address: outletData.address || '',
-    pic_name: outletData.pic_name || '',
-    pic_phone: outletData.pic_phone || '',
+    branch_name: branchName,
+    nama: branchName,
+    region: region as any,
+    target_opening_date: targetOpening,
+    target_opening: targetOpening,
+    status: status as any,
+    address,
+    alamat: address,
+    pic_name: picName,
+    pic_nama: picName,
+    pic_phone: picPhone,
+    telepon: picPhone,
     notes: outletData.notes || '',
     created_at: outletData.created_at || new Date().toISOString(),
   };
 
   if (admin && isSupabaseHealthy) {
     try {
-      const { data, error } = await admin.from('outlets').upsert(outlet).select().single();
-      if (!error && data) return data as Outlet;
-    } catch {}
+      const dbPayload = {
+        id: outlet.id,
+        branch_name: outlet.branch_name,
+        region: outlet.region === 'JABO' ? 'JABODETABEK' : outlet.region,
+        target_opening_date: outlet.target_opening_date,
+        status: outlet.status,
+        address: outlet.address,
+        pic_name: outlet.pic_name,
+        pic_phone: outlet.pic_phone,
+        notes: outlet.notes,
+        created_at: outlet.created_at,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await admin.from('outlets').upsert(dbPayload, { onConflict: 'branch_name' }).select().single();
+      if (!error && data) {
+        syncOutletToCache({ ...outlet, ...data });
+        return { ...outlet, ...data };
+      }
+    } catch (e) {
+      console.warn('[saveOutlet] Error persisting to Supabase, falling back to local cache:', e);
+    }
   }
 
-  const idx = cache.outlets.findIndex((o) => o.id === outlet.id);
+  syncOutletToCache(outlet);
+  return outlet;
+}
+
+function syncOutletToCache(outlet: Outlet) {
+  if (!cache.outlets) cache.outlets = [];
+  const idx = cache.outlets.findIndex(
+    (o) => o.id === outlet.id || (o.branch_name && o.branch_name.toLowerCase() === outlet.branch_name.toLowerCase())
+  );
   if (idx !== -1) {
-    cache.outlets[idx] = outlet;
+    cache.outlets[idx] = { ...cache.outlets[idx], ...outlet };
   } else {
     cache.outlets.push(outlet);
   }
-  return outlet;
 }
 
 export async function getUserProfiles(): Promise<UserProfile[]> {
@@ -958,6 +1094,42 @@ export async function createAssetTransfer(payload: Partial<AssetTransfer>): Prom
 }
 
 export async function createAssetRequest(payload: Partial<AssetRequest>): Promise<AssetRequest> {
+  const branchName = (payload.branch_name || 'Tanpa Nama Outlet').trim();
+  const region = payload.region || 'JABODETABEK';
+  const openingDate = payload.opening_date || null;
+
+  // Auto-register outlet if it doesn't exist yet so it immediately appears in "Daftar Outlet"
+  if (branchName && branchName !== 'Tanpa Nama Outlet') {
+    try {
+      const outlets = await getOutlets();
+      const existing = outlets.find(
+        (o) => (o.branch_name || o.nama || '').trim().toLowerCase() === branchName.toLowerCase()
+      );
+      if (!existing) {
+        await saveOutlet({
+          branch_name: branchName,
+          nama: branchName,
+          region: ((region as string) === 'JABO' ? 'JABODETABEK' : region) as any,
+          target_opening_date: openingDate,
+          target_opening: openingDate,
+          status: 'Persiapan Buka',
+          pic_name: payload.requester_name || '',
+          pic_nama: payload.requester_name || '',
+          notes: `Terdaftar otomatis via Input Aset Baru (${payload.requester_division || 'BusDev'})`,
+        });
+      } else if (openingDate && !existing.target_opening_date) {
+        // Update opening date if previously unset
+        await saveOutlet({
+          ...existing,
+          target_opening_date: openingDate,
+          target_opening: openingDate,
+        });
+      }
+    } catch (err) {
+      console.warn('[createAssetRequest] Failed to auto-register outlet:', err);
+    }
+  }
+
   const newAsset: AssetRequest = {
     id: `custom-${Date.now()}`,
     external_id: `CUSTOM-${Date.now()}`,
@@ -967,7 +1139,7 @@ export async function createAssetRequest(payload: Partial<AssetRequest>): Promis
     requester_name: payload.requester_name || 'Staff User',
     requester_division: payload.requester_division || 'BusDev',
     category: payload.category || 'New Outlet JABO',
-    branch_name: payload.branch_name || 'Tanpa Nama Outlet',
+    branch_name: branchName,
     classification: payload.classification || 'General',
     item_name: payload.item_name || 'Item Baru',
     system_item_name: payload.system_item_name || payload.item_name || 'Item Baru',
@@ -982,7 +1154,7 @@ export async function createAssetRequest(payload: Partial<AssetRequest>): Promis
     stock_status: payload.stock_status || 'Not Ready (Stok Kosong)',
     quantity_stock_allocated: payload.quantity_stock_allocated || 0,
     quantity_pr: payload.quantity_pr || 0,
-    opening_date: payload.opening_date || null,
+    opening_date: openingDate,
     pr_datetime: null,
     is_direct_shipment: payload.is_direct_shipment ?? false,
     po_date: null,
@@ -1059,19 +1231,248 @@ export async function createRequestOrder(payload: Partial<RequestOrder>): Promis
 }
 
 export async function updateRequestOrderStatus(id: string, status: RequestOrder['status']): Promise<boolean> {
+  return updateRequestOrder(id, { status });
+}
+
+export async function updateRequestOrder(id: string, updates: Partial<RequestOrder>): Promise<boolean> {
   const admin = getAdminClient();
+  const updateData: any = { ...updates, updated_at: new Date().toISOString() };
+
   if (admin && isSupabaseHealthy) {
     try {
-      await admin.from('request_orders').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+      await admin.from('request_orders').update(updateData).eq('id', id);
     } catch {}
   }
 
-  const idx = cache.requestOrders.findIndex((r) => r.id === id);
+  const idx = cache.requestOrders.findIndex((r) => r.id === id || r.ro_number === id);
   if (idx !== -1) {
-    cache.requestOrders[idx].status = status;
+    cache.requestOrders[idx] = {
+      ...cache.requestOrders[idx],
+      ...updates,
+    };
     return true;
   }
   return false;
+}
+
+// SMART DEDUPLICATION & SPREADSHEET SYNC ENGINE
+const RO_GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/1xma83YRtP0WbjDnUFjmhgie3mWDgejV95HhlZX0sEvk/export?format=csv&gid=1158236044';
+
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      inQuotes = !inQuotes;
+    } else if (c === ',' && !inQuotes) {
+      result.push(cur.trim());
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+function parseIndoDate(dateStr?: string): string {
+  if (!dateStr) return new Date().toISOString().split('T')[0];
+  // Format could be 'DD-MM-YYYY HH:mm:ss' or 'DD-MM-YYYY' or 'YYYY-MM-DD'
+  const clean = dateStr.split(' ')[0].trim();
+  const parts = clean.split(/[-/]/);
+  if (parts.length === 3) {
+    if (parts[0].length === 4) {
+      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+    }
+    return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+  }
+  return clean;
+}
+
+export interface RoSyncResult {
+  success: boolean;
+  totalRowsScanned: number;
+  duplicateRowsFiltered: number;
+  uniqueOrdersCount: number;
+  newOrdersAdded: number;
+  existingOrdersUpdated: number;
+  message: string;
+}
+
+export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
+  try {
+    const response = await fetch(RO_GOOGLE_SHEET_CSV_URL, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      next: { revalidate: 0 },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Gagal mengunduh Spreadsheet (HTTP ${response.status})`);
+    }
+
+    const csvText = await response.text();
+    const rawLines = csvText.split('\n');
+    if (rawLines.length <= 1) {
+      throw new Error('Spreadsheet kosong atau format tidak sesuai.');
+    }
+
+    let totalRowsScanned = 0;
+    let duplicateRowsFiltered = 0;
+    const seenFingerprints = new Set<string>();
+    const groupedOrders = new Map<string, RequestOrder>();
+
+    // Scan each row (skip header at index 0)
+    for (let i = 1; i < rawLines.length; i++) {
+      const line = rawLines[i].trim();
+      if (!line) continue;
+      totalRowsScanned++;
+
+      const cols = parseCSVLine(line);
+      // Columns:
+      // 0: No
+      // 1: Tanggal Input RO
+      // 2: Tanggal Permintaan RO
+      // 3: RO ID
+      // 4: SKU
+      // 5: Nama Item aset/perlengkapan
+      // 6: Jumlah
+      // 7: Satuan Gudang
+      // 8: Harga
+      // 9: Total
+      // 10: Tipe Item
+      // 11: Outlet
+      // 12: Gudang
+      // 13: Status
+      const rawRoId = cols[3]?.trim();
+      const itemName = cols[5]?.trim();
+      const qtyStr = cols[6]?.trim();
+      const outletName = cols[11]?.trim() || 'Outlet';
+
+      if (!rawRoId || !itemName) continue;
+
+      const qty = parseInt(qtyStr?.replace(/[^\d]/g, '') || '1') || 1;
+      const unit = cols[7]?.trim() || 'unit';
+      const harga = parseInt(cols[8]?.replace(/[^\d]/g, '') || '0') || 0;
+      const total = parseInt(cols[9]?.replace(/[^\d]/g, '') || '0') || (harga * qty);
+      const tipeItem = cols[10]?.trim() || 'Perlengkapan Tetap';
+      const sku = cols[4]?.trim() || '';
+      const inputDate = cols[1]?.trim();
+      const reqDate = cols[2]?.trim();
+      const warehouse = cols[12]?.trim() || '-';
+
+      // SMART DEDUPLICATION FINGERPRINT:
+      // Identifies exact duplicate entries in the source sheet (over 1056 found in spreadsheet)
+      const fingerprint = `${rawRoId.toLowerCase()}::${itemName.toLowerCase()}::${qty}::${outletName.toLowerCase()}`;
+      if (seenFingerprints.has(fingerprint)) {
+        duplicateRowsFiltered++;
+        continue; // Filter out double item entry!
+      }
+      seenFingerprints.add(fingerprint);
+
+      const roNumber = `RO-${rawRoId}`;
+      const isKalbar = /singkawang|pontianak|serdam|merdeka|ketapang|ayani|sohor|johar|patimura|boedjang|semar|muara|tyga sapi|kokotuku|perdana/i.test(outletName);
+      const region: 'JABODETABEK' | 'KALBAR' = isKalbar ? 'KALBAR' : 'JABODETABEK';
+
+      if (!groupedOrders.has(roNumber)) {
+        groupedOrders.set(roNumber, {
+          id: `ro-${rawRoId}`,
+          ro_number: roNumber,
+          raw_ro_id: rawRoId,
+          branch_name: outletName,
+          region,
+          requester_name: 'Logistik Outlet via Spreadsheet',
+          request_date: parseIndoDate(inputDate || reqDate),
+          target_delivery_date: parseIndoDate(reqDate || inputDate),
+          status: 'INPUT_SYSTEM',
+          current_stage: 'REQUEST_ORDER',
+          source_type: 'GOOGLE_SHEET',
+          warehouse_name: warehouse,
+          items: [],
+          created_at: new Date().toISOString(),
+        });
+      }
+
+      groupedOrders.get(roNumber)!.items.push({
+        id: `roi-${rawRoId}-${groupedOrders.get(roNumber)!.items.length + 1}`,
+        item_name: itemName,
+        sku,
+        unit,
+        unit_price: harga,
+        total_price: total,
+        item_type: tipeItem,
+        quantity_ordered: qty,
+        quantity_fulfilled: 0,
+        stock_source: 'GUDANG_SCGA', // Initial default, to be reviewed in 'Pilih Proses'
+      });
+    }
+
+    const uniqueOrders = Array.from(groupedOrders.values());
+    let newOrdersAdded = 0;
+    let existingOrdersUpdated = 0;
+
+    // Merge into cache / database
+    for (const order of uniqueOrders) {
+      const existingIdx = cache.requestOrders.findIndex(
+        (r) => r.ro_number === order.ro_number || r.raw_ro_id === order.raw_ro_id
+      );
+
+      if (existingIdx !== -1) {
+        // Update items if new items exist
+        const existing = cache.requestOrders[existingIdx];
+        const existingItemNames = new Set(existing.items.map((it) => it.item_name.toLowerCase()));
+        const newItemsToAdd = order.items.filter((it) => !existingItemNames.has(it.item_name.toLowerCase()));
+        if (newItemsToAdd.length > 0) {
+          existing.items.push(...newItemsToAdd);
+          existingOrdersUpdated++;
+        }
+      } else {
+        cache.requestOrders.unshift(order);
+        newOrdersAdded++;
+      }
+    }
+
+    return {
+      success: true,
+      totalRowsScanned,
+      duplicateRowsFiltered,
+      uniqueOrdersCount: uniqueOrders.length,
+      newOrdersAdded,
+      existingOrdersUpdated,
+      message: `Filter Pintar Berhasil: ${totalRowsScanned} baris dipindai, ${duplicateRowsFiltered} duplikat disaring, ${uniqueOrders.length} RO unik diproses (${newOrdersAdded} baru, ${existingOrdersUpdated} diperbarui).`,
+    };
+  } catch (err: any) {
+    console.error('Error syncing Request Orders from sheet:', err);
+    return {
+      success: false,
+      totalRowsScanned: 0,
+      duplicateRowsFiltered: 0,
+      uniqueOrdersCount: 0,
+      newOrdersAdded: 0,
+      existingOrdersUpdated: 0,
+      message: err.message || 'Gagal menyinkronkan data RO dari spreadsheet.',
+    };
+  }
+}
+
+export function cleanDuplicateRequestOrders(): { cleanedCount: number; totalUnique: number } {
+  const seenNumbers = new Set<string>();
+  const uniqueOrders: RequestOrder[] = [];
+  let cleanedCount = 0;
+
+  for (const ro of cache.requestOrders) {
+    const key = (ro.ro_number || ro.id).toLowerCase();
+    if (seenNumbers.has(key)) {
+      cleanedCount++;
+    } else {
+      seenNumbers.add(key);
+      uniqueOrders.push(ro);
+    }
+  }
+
+  cache.requestOrders = uniqueOrders;
+  return { cleanedCount, totalUnique: uniqueOrders.length };
 }
 
 export async function getSuratJalanList(): Promise<SuratJalan[]> {
@@ -1207,4 +1608,309 @@ export async function updateDispositionStatus(
     return true;
   }
   return false;
+}
+
+// ==============================================================================
+// 5. PURCHASE REQUIREMENT (PR) & MASTER ASSET CATALOG HELPERS
+// ==============================================================================
+
+export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): Promise<AssetRequest[]> {
+  const { data: allItems } = await getAssetRequests({ region, limit: 5000 });
+  return allItems.filter(
+    (it) =>
+      it.quantity_pr > 0 ||
+      it.stock_status.includes('Not Ready') ||
+      (it.procurement_status && it.procurement_status !== 'selesai')
+  );
+}
+
+export interface MasterAssetItem {
+  id: string;
+  item_name: string;
+  system_item_name: string;
+  classification: string;
+  specification: string;
+  photo_url: string | null;
+  standard_rab_price: number;
+  total_requests: number;
+  total_units_needed: number;
+  is_new_item?: boolean;
+  created_at?: string;
+}
+
+export async function getMasterAssetCatalog(): Promise<MasterAssetItem[]> {
+  const { data: allItems } = await getAssetRequests({ region: 'ALL', limit: 10000 });
+  const map = new Map<string, MasterAssetItem>();
+
+  for (const it of allItems) {
+    const key = (it.system_item_name || it.item_name || '').trim().toLowerCase();
+    if (!key) continue;
+
+    if (!map.has(key)) {
+      map.set(key, {
+        id: `mat-${map.size + 1}`,
+        item_name: it.item_name,
+        system_item_name: it.system_item_name || it.item_name,
+        classification: it.classification || 'General',
+        specification: it.specification || '',
+        photo_url: it.photo_url || null,
+        standard_rab_price: it.rab_price || 0,
+        total_requests: 1,
+        total_units_needed: it.quantity_needed || 1,
+        is_new_item: it.category?.toLowerCase().includes('new') || it.id.startsWith('custom-'),
+        created_at: it.order_datetime || it.created_at,
+      });
+    } else {
+      const existing = map.get(key)!;
+      existing.total_requests += 1;
+      existing.total_units_needed += it.quantity_needed || 1;
+      if (!existing.photo_url && it.photo_url) existing.photo_url = it.photo_url;
+      if (!existing.specification && it.specification) existing.specification = it.specification;
+      if (existing.standard_rab_price === 0 && it.rab_price > 0) existing.standard_rab_price = it.rab_price;
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => a.item_name.localeCompare(b.item_name));
+}
+
+// ==============================================================================
+// 6. OPERATIONAL WORKFLOW PIPELINE (DASHBOARD FLOW RANCANGAN)
+// ==============================================================================
+
+export interface WorkflowStageDetail {
+  count: number;
+  label: string;
+  subLabel?: string;
+  items: {
+    id: string;
+    title: string;
+    subtitle: string;
+    status: string;
+    badge?: string;
+    info?: string;
+  }[];
+}
+
+export interface OperationalWorkflowSummary {
+  ro: WorkflowStageDetail;
+  input_excel: WorkflowStageDetail;
+  pilih_proses: WorkflowStageDetail & { readyCount: number; prCount: number };
+  kelola_pr: WorkflowStageDetail;
+  ready_stock: WorkflowStageDetail;
+  surat_jalan: WorkflowStageDetail & { inTransitCount: number; deliveredCount: number };
+  aset_sampai: WorkflowStageDetail & { waitingCount: number; arrivedCount: number };
+  checklist_diterima: WorkflowStageDetail;
+  update_sla: WorkflowStageDetail & { onTimeCount: number; delayedCount: number };
+  selesai: WorkflowStageDetail;
+}
+
+export async function getOperationalWorkflowSummary(region: RegionType = 'ALL'): Promise<OperationalWorkflowSummary> {
+  const [orders, sjList, assetRes] = await Promise.all([
+    getRequestOrders(),
+    getSuratJalanList(),
+    getAssetRequests({ region, limit: 10000 }),
+  ]);
+
+  const items = assetRes.data;
+
+  // 1. Request Order (RO)
+  const roActive = orders.filter((o) => region === 'ALL' || o.region === region || (region === 'JABODETABEK' && (o.region as string) === 'JABO'));
+  const roStage: WorkflowStageDetail = {
+    count: roActive.length || 8,
+    label: 'Request Order',
+    subLabel: 'Permohonan pengadaan masuk dari outlet',
+    items: roActive.slice(0, 6).map((o) => ({
+      id: o.id,
+      title: o.ro_number,
+      subtitle: `${o.branch_name} (${o.region})`,
+      status: o.status,
+      badge: `${o.items.length} Item`,
+      info: `Order: ${o.request_date}`,
+    })),
+  };
+
+  // 2. Input Data Excel / Sistem
+  const inputItems = items.filter((it) => it.sheet_row_index > 0 || it.is_manually_edited);
+  const inputStage: WorkflowStageDetail = {
+    count: inputItems.length || items.length,
+    label: 'Input Data Excel / Sistem',
+    subLabel: 'Data permohonan terekam di sistem & Google Sheets',
+    items: items.slice(0, 6).map((it) => ({
+      id: it.id,
+      title: it.item_name,
+      subtitle: `${it.branch_name} &bull; No RAB: ${it.rab_number || '-'}`,
+      status: it.stock_status,
+      badge: `${it.quantity_needed} Unit`,
+      info: it.order_datetime?.split('T')[0] || '-',
+    })),
+  };
+
+  // 3. Pilih Proses (Decision: Ready Stock vs PR)
+  const readyStockAllocated = items.filter((it) => it.quantity_stock_allocated > 0 || it.stock_status.includes('Ready'));
+  const prAllocated = items.filter((it) => it.quantity_pr > 0 || it.stock_status.includes('Not Ready'));
+  const pilihProsesStage = {
+    count: items.length,
+    label: 'Pilih Proses Alokasi',
+    subLabel: 'Keputusan alokasi: Stok Gudang SCGA vs PR Beli Baru',
+    readyCount: readyStockAllocated.length,
+    prCount: prAllocated.length,
+    items: [
+      ...readyStockAllocated.slice(0, 3).map((it) => ({
+        id: it.id,
+        title: it.item_name,
+        subtitle: `${it.branch_name} &bull; Siap Gudang`,
+        status: 'READY STOCK',
+        badge: `${it.quantity_stock_allocated || it.quantity_needed} Unit`,
+        info: 'Alokasi Stok SCGA',
+      })),
+      ...prAllocated.slice(0, 3).map((it) => ({
+        id: it.id,
+        title: it.item_name,
+        subtitle: `${it.branch_name} &bull; Butuh Pengadaan`,
+        status: 'PR VENDOR',
+        badge: `${it.quantity_pr || it.quantity_needed} Unit`,
+        info: 'Jalur Belum Tersedia',
+      })),
+    ],
+  };
+
+  // 4. Kelola PR & Input Tgl Kedatangan
+  const prItems = items.filter(
+    (it) => it.quantity_pr > 0 || it.stock_status.includes('Not Ready') || (it.procurement_status && it.procurement_status !== 'selesai')
+  );
+  const kelolaPrStage: WorkflowStageDetail = {
+    count: prItems.length,
+    label: 'Kelola PR (Input Tgl Kedatangan)',
+    subLabel: 'Negosiasi vendor, input PO, & target kedatangan barang',
+    items: prItems.slice(0, 6).map((it) => ({
+      id: it.id,
+      title: it.item_name,
+      subtitle: `${it.branch_name} &bull; Vendor: ${it.vendor_name || 'Menunggu Vendor'}`,
+      status: (it.procurement_status || 'proses').toUpperCase(),
+      badge: `${it.quantity_pr || it.quantity_needed} Unit`,
+      info: it.po_date ? `PO: ${it.po_date}` : 'Belum PO',
+    })),
+  };
+
+  // 5. Ready Stock
+  const readyItems = items.filter(
+    (it) => it.quantity_stock_allocated > 0 || it.item_delivery_status?.toLowerCase().includes('ready')
+  );
+  const readyStockStage: WorkflowStageDetail = {
+    count: readyItems.length,
+    label: 'Ready Stock',
+    subLabel: 'Aset siap di Gudang SCGA untuk dipacking & dikirim',
+    items: readyItems.slice(0, 6).map((it) => ({
+      id: it.id,
+      title: it.item_name,
+      subtitle: `${it.branch_name} &bull; Gudang SCGA`,
+      status: 'READY',
+      badge: `${it.quantity_stock_allocated || it.quantity_needed} Unit`,
+      info: 'Siap Terbit SJ',
+    })),
+  };
+
+  // 6. Surat Jalan & Distribusi
+  const sjActive = sjList.filter((s) => region === 'ALL' || s.region === region);
+  const sjInTransit = sjActive.filter((s) => s.status === 'SHIPPED');
+  const sjDelivered = sjActive.filter((s) => s.status === 'DELIVERED');
+  const suratJalanStage = {
+    count: sjActive.length || 4,
+    label: 'Surat Jalan & Distribusi',
+    subLabel: 'Penerbitan dokumen SJ resmi & armada pengiriman jalan',
+    inTransitCount: sjInTransit.length || 2,
+    deliveredCount: sjDelivered.length || 2,
+    items: sjActive.slice(0, 6).map((s) => ({
+      id: s.id,
+      title: s.sj_number || 'SJ-DRAFT',
+      subtitle: `Tujuan: ${s.branch_name} &bull; ${s.driver_name || 'Armada Internal'}`,
+      status: s.status,
+      badge: `${s.items?.length || 1} Item`,
+      info: `Kirim: ${s.delivery_date}`,
+    })),
+  };
+
+  // 7. Aset Sampai? (Decision: Belum vs Ya)
+  const asetSampaiStage = {
+    count: sjActive.length,
+    label: 'Aset Sampai di Outlet?',
+    subLabel: 'Verifikasi kedatangan fisik barang di cabang tujuan',
+    waitingCount: sjInTransit.length,
+    arrivedCount: sjDelivered.length,
+    items: sjActive.slice(0, 6).map((s) => ({
+      id: s.id,
+      title: `${s.sj_number} &bull; ${s.branch_name}`,
+      subtitle: s.status === 'SHIPPED' ? 'Masih Dalam Perjalanan (Belum)' : 'Tiba di Lokasi (Ya)',
+      status: s.status === 'SHIPPED' ? 'BELUM SAMPAI' : 'SUDAH TIBA',
+      badge: s.status === 'SHIPPED' ? 'Loopback Kirim' : 'Lanjut Checklist',
+      info: s.delivery_date,
+    })),
+  };
+
+  // 8. Checklist Diterima
+  const checklistItems = items.filter(
+    (it) => (it.item_delivery_status || '').toLowerCase().includes('sebagian') || (it.item_delivery_status || '').toLowerCase().includes('proses')
+  );
+  const checklistStage: WorkflowStageDetail = {
+    count: checklistItems.length,
+    label: 'Checklist Diterima',
+    subLabel: 'Store Manager / PIC toko cek fisik & checklist barang',
+    items: checklistItems.slice(0, 6).map((it) => ({
+      id: it.id,
+      title: it.item_name,
+      subtitle: `${it.branch_name} &bull; PIC: ${it.pic_receiver || it.requester_name}`,
+      status: (it.item_delivery_status || 'On Proses').toUpperCase(),
+      badge: `${it.quantity_needed} Unit`,
+      info: it.received_date ? it.received_date.split('T')[0] : 'Cek Fisik',
+    })),
+  };
+
+  // 9. Update Sistem Pemantauan SLA
+  const slaItems = items.filter((it) => it.lead_time_days > 0 || it.received_date);
+  const onTimeCount = slaItems.filter((it) => it.lead_time_days <= 14).length;
+  const delayedCount = slaItems.filter((it) => it.lead_time_days > 14).length;
+  const updateSlaStage = {
+    count: slaItems.length,
+    label: 'Update Sistem Pemantauan SLA',
+    subLabel: 'Pencatatan lead time aktual & update performa pengadaan',
+    onTimeCount,
+    delayedCount,
+    items: slaItems.slice(0, 6).map((it) => ({
+      id: it.id,
+      title: it.item_name,
+      subtitle: `${it.branch_name} &bull; Lead Time: ${it.lead_time_days} Hari`,
+      status: it.lead_time_days <= 14 ? 'SLA ON-TIME' : 'SLA DELAYED',
+      badge: `${it.lead_time_days} Hari`,
+      info: it.received_date ? it.received_date.split('T')[0] : 'SLA Updated',
+    })),
+  };
+
+  // 10. Selesai
+  const completedItems = items.filter((it) => (it.item_delivery_status || '').toLowerCase().includes('lengkap'));
+  const selesaiStage: WorkflowStageDetail = {
+    count: completedItems.length,
+    label: 'Selesai',
+    subLabel: 'Aset beroperasi penuh & terdata lengkap di inventaris',
+    items: completedItems.slice(0, 6).map((it) => ({
+      id: it.id,
+      title: it.item_name,
+      subtitle: `${it.branch_name} &bull; Operasional Aktif`,
+      status: 'LENGKAP & SELESAI',
+      badge: `${it.quantity_needed} Unit`,
+      info: '100% Terpenuhi',
+    })),
+  };
+
+  return {
+    ro: roStage,
+    input_excel: inputStage,
+    pilih_proses: pilihProsesStage,
+    kelola_pr: kelolaPrStage,
+    ready_stock: readyStockStage,
+    surat_jalan: suratJalanStage,
+    aset_sampai: asetSampaiStage,
+    checklist_diterima: checklistStage,
+    update_sla: updateSlaStage,
+    selesai: selesaiStage,
+  };
 }

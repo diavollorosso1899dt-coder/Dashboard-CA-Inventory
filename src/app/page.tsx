@@ -1,7 +1,8 @@
 import React from 'react';
 import { UpcomingOpeningsCard } from '@/components/dashboard/UpcomingOpeningsCard';
+import { OperationalWorkflowCard } from '@/components/dashboard/OperationalWorkflowCard';
 import { AssetDataTable } from '@/components/tracker/AssetDataTable';
-import { getBranchOpeningSummaries, getAssetRequests } from '@/lib/supabase/server';
+import { getBranchOpeningSummaries, getAssetRequests, getOperationalWorkflowSummary } from '@/lib/supabase/server';
 import { RegionType } from '@/lib/supabase/types';
 import { Layers } from 'lucide-react';
 
@@ -15,9 +16,10 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const { region: rawRegion } = await searchParams;
   const region = (rawRegion as RegionType) || 'ALL';
 
-  const [branchSummaries, assetResponse] = await Promise.all([
+  const [branchSummaries, assetResponse, workflowSummary] = await Promise.all([
     getBranchOpeningSummaries(region),
     getAssetRequests({ region, limit: 1000 }),
+    getOperationalWorkflowSummary(region),
   ]);
 
   return (
@@ -34,12 +36,15 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </span>
           </div>
           <p className="text-xs sm:text-sm text-[#444746] dark:text-[#c4c7c5] mt-1">
-            Monitoring terpusat permohonan aset, durasi SLA pengadaan, pelacakan RAB, dan kesiapan outlet baru.
+            Monitoring terpusat permohonan aset, alur operasional pengadaan, durasi SLA, dan kesiapan outlet baru.
           </p>
         </div>
       </div>
 
-      {/* 1. Jadwal Opening Outlet */}
+      {/* 1. Alur Operasional Pengadaan & Distribusi Aset */}
+      <OperationalWorkflowCard summary={workflowSummary} region={region} />
+
+      {/* 2. Jadwal Opening Outlet */}
       <UpcomingOpeningsCard branches={branchSummaries} />
 
       {/* 2. Tabel Pemantauan Permohonan Aset */}

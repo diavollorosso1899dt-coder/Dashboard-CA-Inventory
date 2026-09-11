@@ -215,7 +215,17 @@ export interface AssetTransfer {
 // ==========================================
 // 3. DISTRIBUSI: RO & SURAT JALAN TYPES
 // ==========================================
-export type ROStatus = 'PENDING' | 'APPROVED' | 'IN_DELIVERY' | 'COMPLETED' | 'REJECTED';
+export type ROStatus = 
+  | 'INPUT_SYSTEM' 
+  | 'PILAH_PROSES' 
+  | 'NEED_PR' 
+  | 'READY_STOCK' 
+  | 'IN_DELIVERY' 
+  | 'CHECKLIST_DONE' 
+  | 'COMPLETED' 
+  | 'PENDING' 
+  | 'APPROVED' 
+  | 'REJECTED';
 
 export interface ROItem {
   id: string;
@@ -225,11 +235,30 @@ export interface ROItem {
   quantity_ordered: number;
   quantity_fulfilled: number;
   stock_source: 'GUDANG_SCGA' | 'PR_VENDOR';
+  
+  // Spreadsheet integration fields
+  sku?: string;
+  unit?: string;
+  unit_price?: number;
+  total_price?: number;
+  item_type?: string;
+
+  // PR & Workflow Tracking Fields
+  pr_vendor_name?: string;
+  pr_po_number?: string;
+  pr_arrival_date?: string | null;
+  is_arrived_at_warehouse?: boolean;
+
+  // Checklist verification fields
+  received_qty?: number;
+  condition?: 'BAIK' | 'RUSAK' | 'KURANG' | string;
+  notes?: string;
 }
 
 export interface RequestOrder {
   id: string;
   ro_number: string;
+  raw_ro_id?: string;
   branch_name: string;
   region: 'JABODETABEK' | 'KALBAR';
   requester_name: string;
@@ -238,6 +267,38 @@ export interface RequestOrder {
   status: ROStatus;
   items: ROItem[];
   notes?: string;
+  
+  // Spreadsheet metadata
+  warehouse_name?: string;
+  sheet_row_indices?: number[];
+  source_type?: 'GOOGLE_SHEET' | 'MANUAL' | 'EXCEL_PASTE';
+
+  // Smart Deduplication Fields
+  is_duplicate?: boolean;
+  duplicate_count?: number;
+  duplicate_group_id?: string;
+  
+  // Diagram 9-Stage Workflow Fields
+  current_stage?: 
+    | 'REQUEST_ORDER'
+    | 'INPUT_DATA'
+    | 'PILIH_PROSES'
+    | 'KELOLA_PR'
+    | 'READY_STOCK'
+    | 'SURAT_JALAN'
+    | 'ASET_SAMPAI'
+    | 'CHECKLIST'
+    | 'UPDATE_SLA'
+    | 'SELESAI';
+  pr_vendor_name?: string | null;
+  pr_po_number?: string | null;
+  pr_estimated_arrival?: string | null;
+  arrival_datetime?: string | null;
+  received_date?: string | null;
+  pic_receiver?: string | null;
+  checklist_notes?: string | null;
+  sla_lead_time_days?: number | null;
+  sla_status?: 'ON_TIME' | 'DELAYED' | 'PENDING';
   created_at: string;
 }
 

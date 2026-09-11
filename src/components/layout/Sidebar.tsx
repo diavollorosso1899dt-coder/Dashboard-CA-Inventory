@@ -18,17 +18,26 @@ import {
   ChevronDown,
   Activity,
   Printer,
-  LogOut
+  FileText,
+  Boxes,
+  LogOut,
+  ChevronRight
 } from 'lucide-react';
 
 import { useNavigation } from './NavigationContext';
 import { useAuth } from '@/components/auth/AuthContext';
+
+interface ChildMenuItem {
+  name: string;
+  href: string;
+}
 
 interface SubMenuItem {
   name: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   badge?: string;
+  children?: ChildMenuItem[];
 }
 
 interface MenuGroup {
@@ -47,13 +56,13 @@ export function Sidebar() {
 
   const menuGroups: MenuGroup[] = [
     {
-      title: 'Monitoring',
+      title: 'Monitoring New Outlet',
       icon: Layers,
       color: 'text-purple-600 dark:text-purple-400',
       items: [
-        { name: 'Daftar Aset', href: '/monitoring/assets', icon: Layers },
-        { name: 'Pemantauan Transfer Aset', href: '/monitoring/transfer', icon: ArrowRightLeft },
+        { name: 'Monitoring Status (Daftar Aset)', href: '/monitoring/assets', icon: Layers },
         { name: 'Input Aset Baru', href: '/monitoring/input', icon: PlusCircle },
+        { name: 'Pemantauan Transfer Aset', href: '/monitoring/transfer', icon: ArrowRightLeft },
       ],
     },
     {
@@ -61,10 +70,26 @@ export function Sidebar() {
       icon: Truck,
       color: 'text-blue-600 dark:text-blue-400',
       items: [
-        { name: 'Kelola RO', href: '/distribution/ro', icon: FileCheck2 },
-        { name: 'Surat Jalan (SJ)', href: '/distribution/surat-jalan', icon: Printer },
-        { name: 'Riwayat SJ', href: '/distribution/surat-jalan/history', icon: Truck },
-        { name: 'Monitoring SLA', href: '/distribution/sla', icon: Clock },
+        { name: 'Kelola RO (Excel & Ready/PR)', href: '/distribution/ro', icon: FileCheck2 },
+        { 
+          name: 'Purchase Requirement (PR)', 
+          href: '/distribution/pr', 
+          icon: Clock,
+          children: [
+            { name: 'Input Tanggal Permintaan', href: '/distribution/pr?tab=input' },
+            { name: 'Monitoring PR', href: '/distribution/pr?tab=monitoring' },
+          ]
+        },
+        { 
+          name: 'Surat Jalan', 
+          href: '/distribution/surat-jalan', 
+          icon: Printer,
+          children: [
+            { name: 'Cetak SJ', href: '/distribution/surat-jalan' },
+            { name: 'Riwayat SJ', href: '/distribution/surat-jalan/history' },
+          ]
+        },
+        { name: 'Monitoring SLA', href: '/distribution/sla', icon: Activity },
       ],
     },
     {
@@ -72,27 +97,46 @@ export function Sidebar() {
       icon: RotateCcw,
       color: 'text-emerald-600 dark:text-emerald-400',
       items: [
-        { name: 'Form Pengembalian', href: '/disposition/return-form', icon: PlusCircle },
+        { name: 'Form Pengembalian Aset', href: '/disposition/return-form', icon: PlusCircle },
+        { name: 'Rincian Form', href: '/disposition/rincian', icon: FileText },
         { name: 'Monitoring Status', href: '/disposition/status', icon: Activity },
       ],
     },
     {
-      title: 'Pengguna & Outlet',
+      title: 'Pengguna',
       icon: Users,
       color: 'text-amber-600 dark:text-amber-400',
       items: [
-        { name: 'Kelola User', href: '/users', icon: Users },
-        { name: 'Daftar Outlet', href: '/outlets', icon: Store },
+        { 
+          name: 'Kelola User', 
+          href: '/users', 
+          icon: Users,
+          children: [
+            { name: 'Super User', href: '/users?role=Super+User' },
+            { name: 'User', href: '/users?role=User' },
+            { name: 'User Outlet Manager', href: '/users?role=User+Outlet+Manager' },
+          ]
+        },
+        { name: 'Kelola Outlet (Daftar Outlet)', href: '/outlets', icon: Store },
+        { 
+          name: 'Kelola Item', 
+          href: '/items', 
+          icon: Boxes,
+          children: [
+            { name: 'Daftar Item Baru', href: '/items?tab=new' },
+            { name: 'Master Aset (Gambar & Spek)', href: '/items?tab=master' },
+          ]
+        },
       ],
     },
   ];
 
   // Auto expand groups that contain the active route
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    Monitoring: true,
+    'Monitoring New Outlet': true,
     Distribusi: true,
     Disposisi: true,
-    'Pengguna & Outlet': true,
+    Pengguna: true,
   });
 
   useEffect(() => {
@@ -174,37 +218,64 @@ export function Sidebar() {
                 {isOpen && (
                   <div className="space-y-0.5 pl-2 border-l border-[#e0e2ec] dark:border-[#444746] ml-2">
                     {group.items.map((item) => {
-                      const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+                      const isParentActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
                       const Icon = item.icon;
 
                       return (
-                        <Link
-                          key={item.href}
-                          href={`${item.href}${regionQuery}`}
-                          onClick={closeMobile}
-                          className={`group flex items-center justify-between rounded-full px-3 py-2 text-xs transition-all ${
-                            isActive
-                              ? 'bg-[#c2e7ff] text-[#001d35] font-semibold dark:bg-[#004a77] dark:text-[#c2e7ff] shadow-xs'
-                              : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5 truncate">
-                            <Icon
-                              className={`h-3.5 w-3.5 shrink-0 transition-colors ${
-                                isActive
-                                  ? 'text-[#001d35] dark:text-[#c2e7ff]'
-                                  : 'text-[#747775] dark:text-[#8e918f] group-hover:text-[#1f1f1f] dark:group-hover:text-white'
-                              }`}
-                            />
-                            <span className="truncate">{item.name}</span>
-                          </div>
+                        <div key={item.href} className="space-y-0.5">
+                          <Link
+                            href={`${item.href}${regionQuery}`}
+                            onClick={closeMobile}
+                            className={`group flex items-center justify-between rounded-xl px-3 py-2 text-xs transition-all ${
+                              isParentActive && (!item.children || item.children.every(c => pathname !== c.href.split('?')[0]))
+                                ? 'bg-[#c2e7ff] text-[#001d35] font-semibold dark:bg-[#004a77] dark:text-[#c2e7ff] shadow-xs'
+                                : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 truncate">
+                              <Icon
+                                className={`h-3.5 w-3.5 shrink-0 transition-colors ${
+                                  isParentActive
+                                    ? 'text-[#0b57d0] dark:text-[#a8c7fa]'
+                                    : 'text-[#747775] dark:text-[#8e918f] group-hover:text-[#1f1f1f] dark:group-hover:text-white'
+                                }`}
+                              />
+                              <span className="truncate">{item.name}</span>
+                            </div>
 
-                          {item.badge && (
-                            <span className="rounded-full bg-[#e8f0fe] dark:bg-[#004a77] px-2 py-0.5 text-[10px] font-bold text-[#0b57d0] dark:text-[#c2e7ff]">
-                              {item.badge}
-                            </span>
+                            {item.badge && (
+                              <span className="rounded-full bg-[#e8f0fe] dark:bg-[#004a77] px-2 py-0.5 text-[10px] font-bold text-[#0b57d0] dark:text-[#c2e7ff]">
+                                {item.badge}
+                              </span>
+                            )}
+                          </Link>
+
+                          {/* Nested Children Links */}
+                          {item.children && (
+                            <div className="pl-6 pr-1 py-0.5 space-y-0.5 border-l-2 border-dotted border-slate-200 dark:border-slate-800 ml-3">
+                              {item.children.map((child) => {
+                                const childPath = child.href.split('?')[0];
+                                const isChildActive = pathname === childPath;
+
+                                return (
+                                  <Link
+                                    key={child.href}
+                                    href={`${child.href}${child.href.includes('?') && regionQuery ? '&' + regionQuery.replace('?', '') : regionQuery}`}
+                                    onClick={closeMobile}
+                                    className={`flex items-center gap-1.5 py-1 px-2 rounded-lg text-[11px] transition-all ${
+                                      isChildActive
+                                        ? 'text-[#0b57d0] dark:text-[#a8c7fa] font-bold bg-[#e8f0fe]/60 dark:bg-[#004a77]/40'
+                                        : 'text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#1f1f1f] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                                    }`}
+                                  >
+                                    <span className="w-1 h-1 rounded-full bg-current opacity-60 shrink-0" />
+                                    <span className="truncate">{child.name}</span>
+                                  </Link>
+                                );
+                              })}
+                            </div>
                           )}
-                        </Link>
+                        </div>
                       );
                     })}
                   </div>

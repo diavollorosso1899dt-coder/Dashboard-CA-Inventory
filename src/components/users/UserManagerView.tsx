@@ -18,12 +18,22 @@ import {
   Building2
 } from 'lucide-react';
 
+import { useSearchParams } from 'next/navigation';
+
 export default function UserManagerView() {
+  const searchParams = useSearchParams();
+  const initialRole = searchParams.get('role') || 'ALL';
+
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [outlets, setOutlets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [roleFilter, setRoleFilter] = useState<string>('ALL');
+  const [roleFilter, setRoleFilter] = useState<string>(initialRole);
+
+  useEffect(() => {
+    const r = searchParams.get('role');
+    if (r) setRoleFilter(r);
+  }, [searchParams]);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);

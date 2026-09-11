@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRequestOrders, createRequestOrder, updateRequestOrderStatus } from '@/lib/supabase/server';
+import { getRequestOrders, createRequestOrder, updateRequestOrder } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,8 +25,9 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
-    const { id, status } = body;
-    const ok = await updateRequestOrderStatus(id, status);
+    const { id, status, updates } = body;
+    const patchData = updates || (status ? { status } : body);
+    const ok = await updateRequestOrder(id, patchData);
     return NextResponse.json({ success: ok });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

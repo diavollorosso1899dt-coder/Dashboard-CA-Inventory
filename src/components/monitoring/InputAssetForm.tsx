@@ -19,11 +19,15 @@ interface InputAssetFormProps {
   outlets: Outlet[];
 }
 
-export function InputAssetForm({ outlets }: InputAssetFormProps) {
+export function InputAssetForm({ outlets: initialOutlets }: InputAssetFormProps) {
   const router = useRouter();
 
+  const [outletsList, setOutletsList] = useState<Outlet[]>(initialOutlets);
   const [region, setRegion] = useState<'JABODETABEK' | 'KALBAR'>('JABODETABEK');
-  const [branchName, setBranchName] = useState(outlets[0]?.branch_name || 'Mie Ayam Muntjul Karawang');
+  const [isNewOutlet, setIsNewOutlet] = useState(false);
+  const [branchName, setBranchName] = useState(initialOutlets[0]?.branch_name || initialOutlets[0]?.nama || 'Mie Ayam Muntjul Karawang');
+  const [newBranchName, setNewBranchName] = useState('');
+  const [openingDate, setOpeningDate] = useState('');
   const [requesterName, setRequesterName] = useState('Tim BusDev');
   const [requesterDivision, setRequesterDivision] = useState('BusDev');
   const [rabNumber, setRabNumber] = useState('');
@@ -46,8 +50,22 @@ export function InputAssetForm({ outlets }: InputAssetFormProps) {
 
   const calculatedTotal = quantityNeeded * rabPrice;
 
+  // Filter existing outlets based on selected region
+  const regionalOutlets = outletsList.filter((o) => {
+    if (region === 'JABODETABEK') {
+      return o.region === 'JABODETABEK' || o.region === 'JABO';
+    }
+    return o.region === 'KALBAR';
+  });
+
+  const finalBranchName = isNewOutlet ? newBranchName.trim() : branchName;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!finalBranchName) {
+      alert('Nama Cabang / Outlet wajib diisi.');
+      return;
+    }
     if (!itemName.trim() || !rabNumber.trim()) {
       alert('Nama Item dan Nomor RAB wajib diisi.');
       return;
@@ -57,7 +75,9 @@ export function InputAssetForm({ outlets }: InputAssetFormProps) {
       setIsSubmitting(true);
       const payload = {
         region,
-        branch_name: branchName,
+        branch_name: finalBranchName,
+        category: `New Outlet ${region === 'KALBAR' ? 'KALBAR' : 'JABO'}`,
+        opening_date: openingDate || null,
         requester_name: requesterName,
         requester_division: requesterDivision,
         rab_number: rabNumber,
@@ -86,16 +106,41 @@ export function InputAssetForm({ outlets }: InputAssetFormProps) {
       const json = await res.json();
       if (json.success && json.data) {
         setSubmittedAsset(json.data);
-        // Reset form
+
+        // If new outlet was entered, add to local outletsList and select it
+        if (isNewOutlet && newBranchName) {
+          const newOutletObj: Outlet = {
+            id: `out-${Date.now()}`,
+            branch_name: newBranchName.trim(),
+            nama: newBranchName.trim(),
+            region,
+            target_opening_date: openingDate || null,
+            target_opening: openingDate || null,
+            status: 'Persiapan Buka',
+            created_at: new Date().toISOString(),
+          };
+          setOutletsList((prev) => [...prev, newOutletObj]);
+          setBranchName(newBranchName.trim());
+          setIsNewOutlet(false);
+          setNewBranchName('');
+        }
+
+        // Reset item fields
         setItemName('');
         setSystemItemName('');
         setSpecification('');
         setRabNumber('');
         setRabPrice(0);
         setQuantityNeeded(1);
+
+        // Refresh router so other server components fetch latest data
+        router.refresh();
+      } else {
+        alert(json.error || 'Gagal menyimpan aset.');
       }
     } catch (err) {
       console.error('Failed to create asset:', err);
+      alert('Terjadi kesalahan jaringan saat menyimpan aset.');
     } finally {
       setIsSubmitting(false);
     }
@@ -148,7 +193,18 @@ export function InputAssetForm({ outlets }: InputAssetFormProps) {
                 <label className="block font-bold text-[#444746] dark:text-[#c4c7c5] mb-1">Wilayah</label>
                 <select
                   value={region}
-                  onChange={(e: any) => setRegion(e.target.value)}
+                  onChange={(e: any) => {
+                    const newReg = e.target.value;
+                    setRegion(newReg);
+                    const matching = outletsList.filter((o) =>
+                      newReg === 'JABODETABEK'
+                        ? o.region === 'JABODETABEK' || o.region === 'JABO'
+                        : o.region === 'KALBAR'
+                    );
+                    if (matching.length > 0 && !isNewOutlet) {
+                      setBranchName(matching[0].branch_name || matching[0].nama || '');
+                    }
+                  }}
                   className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-2 text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
                 >
                   <option value="JABODETABEK">JABODETABEK</option>
@@ -157,18 +213,58 @@ export function InputAssetForm({ outlets }: InputAssetFormProps) {
               </div>
 
               <div>
-                <label className="block font-bold text-[#444746] dark:text-[#c4c7c5] mb-1">Cabang / Outlet</label>
-                <select
-                  value={branchName}
-                  onChange={(e) => setBranchName(e.target.value)}
-                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-2 text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-                >
-                  {outlets.map((o) => (
-                    <option key={o.id} value={o.branch_name}>
-                      {o.branch_name} ({o.region})
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-bold text-[#444746] dark:text-[#c4c7c5]">
+                    Cabang / Outlet <span className="text-[#b3261e]">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsNewOutlet(!isNewOutlet);
+                      if (!isNewOutlet && !newBranchName) {
+                        setNewBranchName('');
+                      }
+                    }}
+                    className="text-[11px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline"
+                  >
+                    {isNewOutlet ? '← Pilih dari Daftar' : '+ Outlet Baru'}
+                  </button>
+                </div>
+
+                {isNewOutlet ? (
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ketik Nama Outlet Baru (cth: CA - Mall Kelapa Gading 3)"
+                    value={newBranchName}
+                    onChange={(e) => setNewBranchName(e.target.value)}
+                    className="w-full rounded-xl border border-[#0b57d0] dark:border-[#a8c7fa] bg-[#ffffff] dark:bg-[#1e1f20] px-3 py-2 text-[#1f1f1f] dark:text-[#e3e3e3] focus:outline-none ring-2 ring-[#0b57d0]/20 font-medium"
+                  />
+                ) : (
+                  <select
+                    value={branchName}
+                    onChange={(e) => {
+                      if (e.target.value === '__NEW__') {
+                        setIsNewOutlet(true);
+                      } else {
+                        setBranchName(e.target.value);
+                      }
+                    }}
+                    className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-2 text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                  >
+                    {regionalOutlets.map((o) => {
+                      const bName = o.branch_name || o.nama;
+                      return (
+                        <option key={o.id || bName} value={bName}>
+                          {bName} ({o.region})
+                        </option>
+                      );
+                    })}
+                    <option value="__NEW__" className="font-bold text-[#0b57d0]">
+                      + [Ketik Outlet Baru / New Outlet...]
                     </option>
-                  ))}
-                </select>
+                  </select>
+                )}
               </div>
 
               <div>
@@ -177,6 +273,32 @@ export function InputAssetForm({ outlets }: InputAssetFormProps) {
                   type="text"
                   value={requesterName}
                   onChange={(e) => setRequesterName(e.target.value)}
+                  required
+                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-2 text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Target Opening Date row (always visible or highlighted when adding new outlet) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+              <div>
+                <label className="block font-bold text-[#444746] dark:text-[#c4c7c5] mb-1">
+                  Target Tanggal Opening Outlet {isNewOutlet && <span className="text-emerald-600 dark:text-emerald-400">(Rekomendasi diisi)</span>}
+                </label>
+                <input
+                  type="date"
+                  value={openingDate}
+                  onChange={(e) => setOpeningDate(e.target.value)}
+                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-2 text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-[#444746] dark:text-[#c4c7c5] mb-1">Divisi Pengaju</label>
+                <input
+                  type="text"
+                  value={requesterDivision}
+                  onChange={(e) => setRequesterDivision(e.target.value)}
                   required
                   className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-2 text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
                 />
