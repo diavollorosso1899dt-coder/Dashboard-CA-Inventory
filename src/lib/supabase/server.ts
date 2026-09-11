@@ -21,6 +21,18 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.
 let isSupabaseHealthy: boolean | null = null;
 let lastHealthCheck = 0;
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const isUuid = (val?: string | null): boolean => {
+  if (!val || typeof val !== 'string') return false;
+  return UUID_REGEX.test(val);
+};
+
+export const ensureUuid = (id?: string | null): string => {
+  if (id && isUuid(id)) return id;
+  return crypto.randomUUID();
+};
+
 export const isServerSupabaseConfigured = () => {
   return Boolean(
     supabaseUrl &&
@@ -572,15 +584,23 @@ export async function updateAssetRequest(
     };
 
     if (admin) {
-      const { data, error } = await admin
-        .from('asset_requests')
-        .update(updatePayload)
-        .or(`id.eq.${id},external_id.eq.${id}`)
-        .select()
-        .single();
+      let query = admin.from('asset_requests').update(updatePayload);
+      if (isUuid(id)) {
+        query = query.eq('id', id);
+      } else {
+        query = query.eq('external_id', id);
+      }
 
-      if (error) throw error;
-      return { success: true, data: data as AssetRequest };
+      const { data, error } = await query.select().single();
+      if (error) {
+        console.error('[Supabase updateAssetRequest error]:', error.message);
+      } else if (data) {
+        const index = cache.items.findIndex((item) => item.id === id || item.external_id === id);
+        if (index !== -1) {
+          cache.items[index] = { ...cache.items[index], ...data };
+        }
+        return { success: true, data: data as AssetRequest };
+      }
     }
 
     // Update in local cache
@@ -618,14 +638,46 @@ export async function updateAssetRequestsBulk(
     };
 
     if (admin) {
-      const { data, error } = await admin
-        .from('asset_requests')
-        .update(updatePayload)
-        .in('id', ids)
-        .select('id');
+      const uuidIds = ids.filter(isUuid);
+      const extIds = ids.filter((id) => !isUuid(id));
+      let totalUpdated = 0;
 
-      if (error) throw error;
-      return { success: true, updatedCount: data?.length || ids.length };
+      if (uuidIds.length > 0) {
+        const { data, error } = await admin
+          .from('asset_requests')
+          .update(updatePayload)
+          .in('id', uuidIds)
+          .select('id');
+        if (error) {
+          console.error('[Supabase updateAssetRequestsBulk uuid error]:', error.message);
+        } else if (data) {
+          totalUpdated += data.length;
+        }
+      }
+
+      if (extIds.length > 0) {
+        const { data, error } = await admin
+          .from('asset_requests')
+          .update(updatePayload)
+          .in('external_id', extIds)
+          .select('id');
+        if (error) {
+          console.error('[Supabase updateAssetRequestsBulk extIds error]:', error.message);
+        } else if (data) {
+          totalUpdated += data.length;
+        }
+      }
+
+      // Update in local cache as well
+      ids.forEach((id) => {
+        const index = cache.items.findIndex((item) => item.id === id || item.external_id === id);
+        if (index !== -1) {
+          cache.items[index] = { ...cache.items[index], ...updatePayload };
+          cache.manualEdits.set(id, updatePayload);
+        }
+      });
+
+      return { success: true, updatedCount: totalUpdated || ids.length };
     }
 
     // Local cache fallback
@@ -853,11 +905,17 @@ function hashOutletBranch(str: string): string {
 export async function getOutlets(): Promise<Outlet[]> {
   const admin = getAdminClient();
   let dbOutlets: Outlet[] = [];
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
       const { data, error } = await admin.from('outlets').select('*').order('branch_name');
-      if (!error && data && data.length > 0) dbOutlets = data as Outlet[];
-    } catch {}
+      if (!error && data && data.length > 0) {
+        dbOutlets = data as Outlet[];
+      } else if (error) {
+        console.error('[Supabase getOutlets error]:', error.message);
+      }
+    } catch (err: any) {
+      console.error('[Supabase getOutlets exception]:', err.message);
+    }
   }
 
   // Combined Map keyed by normalized branch name
@@ -956,9 +1014,10 @@ export async function saveOutlet(outletData: Partial<Outlet>): Promise<Outlet> {
   const picName = outletData.pic_name || outletData.pic_nama || '';
   const picPhone = outletData.pic_phone || outletData.telepon || '';
   const status = outletData.status || 'Aktif';
+  const outletId = ensureUuid(outletData.id);
 
   const outlet: Outlet = {
-    id: outletData.id || `out-${Date.now()}`,
+    id: outletId,
     branch_name: branchName,
     nama: branchName,
     region: region as any,
@@ -975,7 +1034,7 @@ export async function saveOutlet(outletData: Partial<Outlet>): Promise<Outlet> {
     created_at: outletData.created_at || new Date().toISOString(),
   };
 
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
       const dbPayload = {
         id: outlet.id,
@@ -991,12 +1050,14 @@ export async function saveOutlet(outletData: Partial<Outlet>): Promise<Outlet> {
         updated_at: new Date().toISOString(),
       };
       const { data, error } = await admin.from('outlets').upsert(dbPayload, { onConflict: 'branch_name' }).select().single();
-      if (!error && data) {
+      if (error) {
+        console.error('[Supabase saveOutlet error]:', error.message);
+      } else if (data) {
         syncOutletToCache({ ...outlet, ...data });
         return { ...outlet, ...data };
       }
-    } catch (e) {
-      console.warn('[saveOutlet] Error persisting to Supabase, falling back to local cache:', e);
+    } catch (e: any) {
+      console.warn('[saveOutlet] Error persisting to Supabase, falling back to local cache:', e.message);
     }
   }
 
@@ -1018,34 +1079,59 @@ function syncOutletToCache(outlet: Outlet) {
 
 export async function getUserProfiles(): Promise<UserProfile[]> {
   const admin = getAdminClient();
-  if (admin && isSupabaseHealthy) {
-    const { data, error } = await admin.from('user_profiles').select('*').order('full_name');
-    if (!error && data && data.length > 0) return data as UserProfile[];
+  if (admin) {
+    try {
+      const { data, error } = await admin.from('user_profiles').select('*').order('full_name');
+      if (!error && data && data.length > 0) return data as UserProfile[];
+      if (error) console.error('[Supabase getUserProfiles error]:', error.message);
+    } catch (err: any) {
+      console.error('[Supabase getUserProfiles exception]:', err.message);
+    }
   }
   return cache.users || [];
 }
 
 export async function saveUserProfile(userData: Partial<UserProfile>): Promise<UserProfile> {
   const admin = getAdminClient();
+  const userId = ensureUuid(userData.id);
+  const branch = userData.branch_name || userData.outlet_assigned || null;
   const user: UserProfile = {
-    id: userData.id || `usr-${Date.now()}`,
+    id: userId,
     email: userData.email || '',
     full_name: userData.full_name || 'User',
     role: userData.role || 'user',
-    branch_name: userData.branch_name,
+    branch_name: branch || undefined,
+    outlet_assigned: branch || undefined,
     phone: userData.phone,
     is_active: userData.is_active ?? true,
     created_at: userData.created_at || new Date().toISOString(),
   };
 
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
-      const { data, error } = await admin.from('user_profiles').upsert(user).select().single();
-      if (!error && data) return data as UserProfile;
-    } catch {}
+      const dbPayload = {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+        branch_name: branch,
+        phone: user.phone || null,
+        is_active: user.is_active,
+        created_at: user.created_at,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await admin.from('user_profiles').upsert(dbPayload, { onConflict: 'email' }).select().single();
+      if (error) {
+        console.error('[Supabase saveUserProfile error]:', error.message);
+      } else if (data) {
+        return data as UserProfile;
+      }
+    } catch (err: any) {
+      console.error('[Supabase saveUserProfile exception]:', err.message);
+    }
   }
 
-  const idx = cache.users.findIndex((u) => u.id === user.id);
+  const idx = cache.users.findIndex((u) => u.id === user.id || (u.email && u.email.toLowerCase() === user.email.toLowerCase()));
   if (idx !== -1) {
     cache.users[idx] = user;
   } else {
@@ -1059,17 +1145,23 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
 // ==============================================================================
 export async function getAssetTransfers(): Promise<AssetTransfer[]> {
   const admin = getAdminClient();
-  if (admin && isSupabaseHealthy) {
-    const { data, error } = await admin.from('asset_transfers').select('*').order('transfer_date', { ascending: false });
-    if (!error && data && data.length > 0) return data as AssetTransfer[];
+  if (admin) {
+    try {
+      const { data, error } = await admin.from('asset_transfers').select('*').order('transfer_date', { ascending: false });
+      if (!error && data && data.length > 0) return data as AssetTransfer[];
+      if (error) console.error('[Supabase getAssetTransfers error]:', error.message);
+    } catch (err: any) {
+      console.error('[Supabase getAssetTransfers exception]:', err.message);
+    }
   }
   return cache.transfers || [];
 }
 
 export async function createAssetTransfer(payload: Partial<AssetTransfer>): Promise<AssetTransfer> {
   const admin = getAdminClient();
+  const transferId = ensureUuid(payload.id);
   const transfer: AssetTransfer = {
-    id: payload.id || `trf-${Date.now()}`,
+    id: transferId,
     transfer_number: payload.transfer_number || `TRF/CA/${new Date().getFullYear()}/${Date.now().toString().slice(-4)}`,
     from_location: payload.from_location || 'Gudang Pusat SCGA',
     to_location: payload.to_location || 'Outlet',
@@ -1082,11 +1174,18 @@ export async function createAssetTransfer(payload: Partial<AssetTransfer>): Prom
     created_at: new Date().toISOString(),
   };
 
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
       const { data, error } = await admin.from('asset_transfers').insert(transfer).select().single();
-      if (!error && data) return data as AssetTransfer;
-    } catch {}
+      if (error) {
+        console.error('[Supabase createAssetTransfer error]:', error.message);
+      } else if (data) {
+        cache.transfers.unshift(data as AssetTransfer);
+        return data as AssetTransfer;
+      }
+    } catch (err: any) {
+      console.error('[Supabase createAssetTransfer exception]:', err.message);
+    }
   }
 
   cache.transfers.unshift(transfer);
@@ -1130,9 +1229,12 @@ export async function createAssetRequest(payload: Partial<AssetRequest>): Promis
     }
   }
 
+  const newId = ensureUuid(payload.id);
+  const newExtId = payload.external_id || `CUSTOM-${Date.now()}`;
+
   const newAsset: AssetRequest = {
-    id: `custom-${Date.now()}`,
-    external_id: `CUSTOM-${Date.now()}`,
+    id: newId,
+    external_id: newExtId,
     region: payload.region || 'JABODETABEK',
     sheet_row_index: 0,
     order_datetime: payload.order_datetime || new Date().toISOString(),
@@ -1172,19 +1274,24 @@ export async function createAssetRequest(payload: Partial<AssetRequest>): Promis
     pic_receiver: payload.pic_receiver || '',
     notes: payload.notes || '',
     is_manually_edited: true,
+    is_system_transfer: payload.is_system_transfer ?? false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 
   const admin = getAdminClient();
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
       const { data, error } = await admin.from('asset_requests').insert(newAsset).select().single();
-      if (!error && data) {
+      if (error) {
+        console.error('[Supabase createAssetRequest error]:', error.message);
+      } else if (data) {
         cache.items.unshift(data as AssetRequest);
         return data as AssetRequest;
       }
-    } catch {}
+    } catch (err: any) {
+      console.error('[Supabase createAssetRequest exception]:', err.message);
+    }
   }
 
   cache.items.unshift(newAsset);
@@ -1194,20 +1301,61 @@ export async function createAssetRequest(payload: Partial<AssetRequest>): Promis
 // ==============================================================================
 // 3. DISTRIBUSI: RO (REQUEST ORDER) & SURAT JALAN (SJ)
 // ==============================================================================
+// Helper: Guarantee strict deduplication on RO orders and internal items
+export function deduplicateOrderItems(orders: RequestOrder[]): RequestOrder[] {
+  const seenRoNumbers = new Set<string>();
+  const sanitizedOrders: RequestOrder[] = [];
+
+  for (const ro of orders) {
+    const roKey = (ro.ro_number || ro.id || '').trim().toLowerCase();
+    if (!roKey || seenRoNumbers.has(roKey)) continue;
+    seenRoNumbers.add(roKey);
+
+    // Deduplicate items inside this RO by: item_name + quantity_ordered
+    const seenItems = new Set<string>();
+    const cleanItems = [];
+    for (const it of (ro.items || [])) {
+      const itemKey = `${(it.item_name || '').trim().toLowerCase()}::${it.quantity_ordered ?? 1}`;
+      if (!seenItems.has(itemKey)) {
+        seenItems.add(itemKey);
+        cleanItems.push(it);
+      }
+    }
+
+    sanitizedOrders.push({
+      ...ro,
+      items: cleanItems,
+    });
+  }
+
+  return sanitizedOrders;
+}
+
 export async function getRequestOrders(): Promise<RequestOrder[]> {
   const admin = getAdminClient();
-  if (admin && isSupabaseHealthy) {
-    const { data, error } = await admin.from('request_orders').select('*').order('request_date', { ascending: false });
-    if (!error && data && data.length > 0) return data as RequestOrder[];
+  if (admin) {
+    try {
+      const { data, error } = await admin
+        .from('request_orders')
+        .select('*')
+        .order('request_date', { ascending: false })
+        .limit(10000);
+      if (!error && data && data.length > 0) return deduplicateOrderItems(data as RequestOrder[]);
+      if (error) console.error('[Supabase getRequestOrders error]:', error.message);
+    } catch (err: any) {
+      console.error('[Supabase getRequestOrders exception]:', err.message);
+    }
   }
-  return cache.requestOrders || [];
+  return deduplicateOrderItems(cache.requestOrders || []);
 }
 
 export async function createRequestOrder(payload: Partial<RequestOrder>): Promise<RequestOrder> {
   const admin = getAdminClient();
+  const roId = ensureUuid(payload.id);
   const ro: RequestOrder = {
-    id: payload.id || `ro-${Date.now()}`,
+    id: roId,
     ro_number: payload.ro_number || `RO-CA-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
+    raw_ro_id: payload.raw_ro_id,
     branch_name: payload.branch_name || 'Outlet',
     region: payload.region || 'JABODETABEK',
     requester_name: payload.requester_name || 'User Tim Pusat',
@@ -1216,14 +1364,36 @@ export async function createRequestOrder(payload: Partial<RequestOrder>): Promis
     status: payload.status || 'PENDING',
     items: payload.items || [],
     notes: payload.notes,
+    warehouse_name: payload.warehouse_name,
+    source_type: payload.source_type || 'MANUAL',
+    is_duplicate: payload.is_duplicate ?? false,
+    duplicate_count: payload.duplicate_count ?? 0,
+    duplicate_group_id: payload.duplicate_group_id,
+    current_stage: payload.current_stage || 'REQUEST_ORDER',
+    pr_vendor_name: payload.pr_vendor_name,
+    pr_po_number: payload.pr_po_number,
+    pr_estimated_arrival: payload.pr_estimated_arrival,
+    arrival_datetime: payload.arrival_datetime,
+    received_date: payload.received_date,
+    pic_receiver: payload.pic_receiver,
+    checklist_notes: payload.checklist_notes,
+    sla_lead_time_days: payload.sla_lead_time_days,
+    sla_status: payload.sla_status,
     created_at: new Date().toISOString(),
   };
 
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
       const { data, error } = await admin.from('request_orders').insert(ro).select().single();
-      if (!error && data) return data as RequestOrder;
-    } catch {}
+      if (error) {
+        console.error('[Supabase createRequestOrder error]:', error.message);
+      } else if (data) {
+        cache.requestOrders.unshift(data as RequestOrder);
+        return data as RequestOrder;
+      }
+    } catch (err: any) {
+      console.error('[Supabase createRequestOrder exception]:', err.message);
+    }
   }
 
   cache.requestOrders.unshift(ro);
@@ -1238,10 +1408,19 @@ export async function updateRequestOrder(id: string, updates: Partial<RequestOrd
   const admin = getAdminClient();
   const updateData: any = { ...updates, updated_at: new Date().toISOString() };
 
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
-      await admin.from('request_orders').update(updateData).eq('id', id);
-    } catch {}
+      let q = admin.from('request_orders').update(updateData);
+      if (isUuid(id)) {
+        q = q.eq('id', id);
+      } else {
+        q = q.eq('ro_number', id);
+      }
+      const { error } = await q;
+      if (error) console.error('[Supabase updateRequestOrder error]:', error.message);
+    } catch (err: any) {
+      console.error('[Supabase updateRequestOrder exception]:', err.message);
+    }
   }
 
   const idx = cache.requestOrders.findIndex((r) => r.id === id || r.ro_number === id);
@@ -1252,11 +1431,13 @@ export async function updateRequestOrder(id: string, updates: Partial<RequestOrd
     };
     return true;
   }
-  return false;
+  return true;
 }
 
 // SMART DEDUPLICATION & SPREADSHEET SYNC ENGINE
-const RO_GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/1xma83YRtP0WbjDnUFjmhgie3mWDgejV95HhlZX0sEvk/export?format=csv&gid=1158236044';
+const RO_GOOGLE_SHEET_CSV_URL =
+  process.env.GOOGLE_SHEET_RO_URL ||
+  'https://docs.google.com/spreadsheets/d/1xma83YRtP0WbjDnUFjmhgie3mWDgejV95HhlZX0sEvk/export?format=csv&gid=1158236044';
 
 function parseCSVLine(line: string): string[] {
   const result: string[] = [];
@@ -1277,18 +1458,22 @@ function parseCSVLine(line: string): string[] {
   return result;
 }
 
-function parseIndoDate(dateStr?: string): string {
-  if (!dateStr) return new Date().toISOString().split('T')[0];
-  // Format could be 'DD-MM-YYYY HH:mm:ss' or 'DD-MM-YYYY' or 'YYYY-MM-DD'
+function parseIndoDate(dateStr?: string, fallbackToNull = false): string | null {
+  if (!dateStr || typeof dateStr !== 'string') return fallbackToNull ? null : new Date().toISOString().split('T')[0];
   const clean = dateStr.split(' ')[0].trim();
   const parts = clean.split(/[-/]/);
   if (parts.length === 3) {
-    if (parts[0].length === 4) {
-      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+    const p0 = parseInt(parts[0], 10);
+    const p1 = parseInt(parts[1], 10);
+    const p2 = parseInt(parts[2], 10);
+    if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
+      if (parts[0].length === 4) {
+        return `${parts[0]}-${String(p1).padStart(2, '0')}-${String(p2).padStart(2, '0')}`;
+      }
+      return `${parts[2]}-${String(p1).padStart(2, '0')}-${String(p0).padStart(2, '0')}`;
     }
-    return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
   }
-  return clean;
+  return fallbackToNull ? null : new Date().toISOString().split('T')[0];
 }
 
 export interface RoSyncResult {
@@ -1330,21 +1515,6 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
       totalRowsScanned++;
 
       const cols = parseCSVLine(line);
-      // Columns:
-      // 0: No
-      // 1: Tanggal Input RO
-      // 2: Tanggal Permintaan RO
-      // 3: RO ID
-      // 4: SKU
-      // 5: Nama Item aset/perlengkapan
-      // 6: Jumlah
-      // 7: Satuan Gudang
-      // 8: Harga
-      // 9: Total
-      // 10: Tipe Item
-      // 11: Outlet
-      // 12: Gudang
-      // 13: Status
       const rawRoId = cols[3]?.trim();
       const itemName = cols[5]?.trim();
       const qtyStr = cols[6]?.trim();
@@ -1357,23 +1527,27 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
       const harga = parseInt(cols[8]?.replace(/[^\d]/g, '') || '0') || 0;
       const total = parseInt(cols[9]?.replace(/[^\d]/g, '') || '0') || (harga * qty);
       const tipeItem = cols[10]?.trim() || 'Perlengkapan Tetap';
+      const rowNo = cols[0]?.trim() || String(i);
       const sku = cols[4]?.trim() || '';
       const inputDate = cols[1]?.trim();
       const reqDate = cols[2]?.trim();
       const warehouse = cols[12]?.trim() || '-';
+      const statusStr = cols[13]?.trim() || 'Diproses';
 
-      // SMART DEDUPLICATION FINGERPRINT:
-      // Identifies exact duplicate entries in the source sheet (over 1056 found in spreadsheet)
-      const fingerprint = `${rawRoId.toLowerCase()}::${itemName.toLowerCase()}::${qty}::${outletName.toLowerCase()}`;
+      // Cek data double: RO ID + item + qty + nama outlet yang sama -> hanya tampilkan 1 saja
+      const fingerprint = `${rawRoId.toLowerCase().trim()}::${itemName.toLowerCase().trim()}::${qty}::${outletName.toLowerCase().trim()}`;
       if (seenFingerprints.has(fingerprint)) {
         duplicateRowsFiltered++;
-        continue; // Filter out double item entry!
+        continue; // Lewati duplikat
       }
       seenFingerprints.add(fingerprint);
 
       const roNumber = `RO-${rawRoId}`;
       const isKalbar = /singkawang|pontianak|serdam|merdeka|ketapang|ayani|sohor|johar|patimura|boedjang|semar|muara|tyga sapi|kokotuku|perdana/i.test(outletName);
       const region: 'JABODETABEK' | 'KALBAR' = isKalbar ? 'KALBAR' : 'JABODETABEK';
+
+      const parsedRequestDate = parseIndoDate(inputDate || reqDate) || new Date().toISOString().split('T')[0];
+      const parsedTargetDate = parseIndoDate(reqDate || inputDate, true);
 
       if (!groupedOrders.has(roNumber)) {
         groupedOrders.set(roNumber, {
@@ -1383,10 +1557,10 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
           branch_name: outletName,
           region,
           requester_name: 'Logistik Outlet via Spreadsheet',
-          request_date: parseIndoDate(inputDate || reqDate),
-          target_delivery_date: parseIndoDate(reqDate || inputDate),
-          status: 'INPUT_SYSTEM',
-          current_stage: 'REQUEST_ORDER',
+          request_date: parsedRequestDate,
+          target_delivery_date: parsedTargetDate || undefined,
+          status: statusStr === 'Diterima' ? 'COMPLETED' : 'INPUT_SYSTEM',
+          current_stage: statusStr === 'Diterima' ? 'SELESAI' : 'REQUEST_ORDER',
           source_type: 'GOOGLE_SHEET',
           warehouse_name: warehouse,
           items: [],
@@ -1395,7 +1569,7 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
       }
 
       groupedOrders.get(roNumber)!.items.push({
-        id: `roi-${rawRoId}-${groupedOrders.get(roNumber)!.items.length + 1}`,
+        id: `roi-${rawRoId}-${rowNo}-${groupedOrders.get(roNumber)!.items.length + 1}`,
         item_name: itemName,
         sku,
         unit,
@@ -1403,44 +1577,49 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
         total_price: total,
         item_type: tipeItem,
         quantity_ordered: qty,
-        quantity_fulfilled: 0,
-        stock_source: 'GUDANG_SCGA', // Initial default, to be reviewed in 'Pilih Proses'
+        quantity_fulfilled: statusStr === 'Diterima' ? qty : 0,
+        stock_source: 'GUDANG_SCGA',
       });
     }
 
     const uniqueOrders = Array.from(groupedOrders.values());
-    let newOrdersAdded = 0;
-    let existingOrdersUpdated = 0;
+    let totalItems = 0;
+    uniqueOrders.forEach(o => totalItems += o.items.length);
 
-    // Merge into cache / database
-    for (const order of uniqueOrders) {
-      const existingIdx = cache.requestOrders.findIndex(
-        (r) => r.ro_number === order.ro_number || r.raw_ro_id === order.raw_ro_id
-      );
-
-      if (existingIdx !== -1) {
-        // Update items if new items exist
-        const existing = cache.requestOrders[existingIdx];
-        const existingItemNames = new Set(existing.items.map((it) => it.item_name.toLowerCase()));
-        const newItemsToAdd = order.items.filter((it) => !existingItemNames.has(it.item_name.toLowerCase()));
-        if (newItemsToAdd.length > 0) {
-          existing.items.push(...newItemsToAdd);
-          existingOrdersUpdated++;
-        }
-      } else {
-        cache.requestOrders.unshift(order);
-        newOrdersAdded++;
+    // Upsert into Supabase request_orders table
+    const admin = getAdminClient();
+    if (admin && uniqueOrders.length > 0) {
+      const chunkSize = 100;
+      for (let i = 0; i < uniqueOrders.length; i += chunkSize) {
+        const chunk = uniqueOrders.slice(i, i + chunkSize).map((o) => ({
+          ro_number: o.ro_number,
+          raw_ro_id: o.raw_ro_id,
+          branch_name: o.branch_name,
+          region: o.region,
+          requester_name: o.requester_name,
+          request_date: o.request_date,
+          target_delivery_date: o.target_delivery_date || null,
+          status: o.status,
+          current_stage: o.current_stage,
+          source_type: o.source_type,
+          warehouse_name: o.warehouse_name,
+          items: o.items,
+        }));
+        await admin.from('request_orders').upsert(chunk, { onConflict: 'ro_number' });
       }
     }
+
+    // Merge into in-memory cache
+    cache.requestOrders = uniqueOrders;
 
     return {
       success: true,
       totalRowsScanned,
       duplicateRowsFiltered,
       uniqueOrdersCount: uniqueOrders.length,
-      newOrdersAdded,
-      existingOrdersUpdated,
-      message: `Filter Pintar Berhasil: ${totalRowsScanned} baris dipindai, ${duplicateRowsFiltered} duplikat disaring, ${uniqueOrders.length} RO unik diproses (${newOrdersAdded} baru, ${existingOrdersUpdated} diperbarui).`,
+      newOrdersAdded: totalItems,
+      existingOrdersUpdated: 0,
+      message: `Deduplikasi Sukses: ${totalRowsScanned} baris dipindai. ${duplicateRowsFiltered} baris data double (RO ID + item + qty + outlet sama) disaring. Hanya 1 yang ditampilkan (${totalItems} item unik dalam ${uniqueOrders.length} dokumen RO).`,
     };
   } catch (err: any) {
     console.error('Error syncing Request Orders from sheet:', err);
@@ -1477,9 +1656,14 @@ export function cleanDuplicateRequestOrders(): { cleanedCount: number; totalUniq
 
 export async function getSuratJalanList(): Promise<SuratJalan[]> {
   const admin = getAdminClient();
-  if (admin && isSupabaseHealthy) {
-    const { data, error } = await admin.from('surat_jalan').select('*').order('delivery_date', { ascending: false });
-    if (!error && data && data.length > 0) return data as SuratJalan[];
+  if (admin) {
+    try {
+      const { data, error } = await admin.from('surat_jalan').select('*').order('delivery_date', { ascending: false });
+      if (!error && data && data.length > 0) return data as SuratJalan[];
+      if (error) console.error('[Supabase getSuratJalanList error]:', error.message);
+    } catch (err: any) {
+      console.error('[Supabase getSuratJalanList exception]:', err.message);
+    }
   }
   return cache.suratJalan || [];
 }
@@ -1491,31 +1675,45 @@ export async function getSuratJalanById(id: string): Promise<SuratJalan | null> 
 
 export async function createSuratJalan(payload: Partial<SuratJalan>): Promise<SuratJalan> {
   const admin = getAdminClient();
+  const sjId = ensureUuid(payload.id);
+  const roId = isUuid(payload.ro_id) ? payload.ro_id : null;
+
   const sj: SuratJalan = {
-    id: payload.id || `sj-${Date.now()}`,
+    id: sjId,
     sj_number: payload.sj_number || `SJ/SCGA/${new Date().getFullYear()}/${new Date().getMonth() + 1}/${Date.now().toString().slice(-4)}`,
-    ro_id: payload.ro_id,
+    ro_id: roId || undefined,
     ro_number: payload.ro_number,
-    branch_name: payload.branch_name || 'Outlet Tujuan',
+    branch_name: payload.branch_name || payload.tujuan_outlet_nama || 'Outlet Tujuan',
     region: payload.region || 'JABODETABEK',
-    delivery_date: payload.delivery_date || new Date().toISOString().split('T')[0],
-    driver_name: payload.driver_name || 'Driver Pengantar',
+    delivery_date: payload.delivery_date || payload.tanggal_kirim || new Date().toISOString().split('T')[0],
+    driver_name: payload.driver_name || payload.driver_nama || 'Driver Pengantar',
     driver_phone: payload.driver_phone,
-    vehicle_number: payload.vehicle_number || 'B 1234 SCG',
-    expedition: payload.expedition || 'Armada Internal SCGA',
-    sender_name: payload.sender_name || 'Staff Gudang SCGA',
-    receiver_name: payload.receiver_name,
+    vehicle_number: payload.vehicle_number || payload.kendaraan_plat || 'B 1234 SCG',
+    expedition: payload.expedition || payload.ekspedisi || 'Armada Internal SCGA',
+    sender_name: payload.sender_name || payload.pengirim_nama || 'Staff Gudang SCGA',
+    receiver_name: payload.receiver_name || payload.penerima_nama,
     status: payload.status || 'SHIPPED',
     items: payload.items || [],
-    notes: payload.notes,
+    notes: payload.notes || payload.catatan,
     created_at: new Date().toISOString(),
   };
 
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
-      const { data, error } = await admin.from('surat_jalan').insert(sj).select().single();
-      if (!error && data) return data as SuratJalan;
-    } catch {}
+      const dbPayload = {
+        ...sj,
+        ro_id: roId,
+      };
+      const { data, error } = await admin.from('surat_jalan').insert(dbPayload).select().single();
+      if (error) {
+        console.error('[Supabase createSuratJalan error]:', error.message);
+      } else if (data) {
+        cache.suratJalan.unshift(data as SuratJalan);
+        return data as SuratJalan;
+      }
+    } catch (err: any) {
+      console.error('[Supabase createSuratJalan exception]:', err.message);
+    }
   }
 
   cache.suratJalan.unshift(sj);
@@ -1528,20 +1726,29 @@ export async function updateSuratJalanStatus(id: string, status: 'SHIPPED' | 'DE
   if (receiverName) updateData.receiver_name = receiverName;
   if (status === 'DELIVERED') updateData.received_at = new Date().toISOString();
 
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
-      await admin.from('surat_jalan').update(updateData).eq('id', id);
-    } catch {}
+      let q = admin.from('surat_jalan').update(updateData);
+      if (isUuid(id)) {
+        q = q.eq('id', id);
+      } else {
+        q = q.eq('sj_number', id);
+      }
+      const { error } = await q;
+      if (error) console.error('[Supabase updateSuratJalanStatus error]:', error.message);
+    } catch (err: any) {
+      console.error('[Supabase updateSuratJalanStatus exception]:', err.message);
+    }
   }
 
-  const idx = cache.suratJalan.findIndex((sj) => sj.id === id);
+  const idx = cache.suratJalan.findIndex((sj) => sj.id === id || sj.sj_number === id);
   if (idx !== -1) {
     cache.suratJalan[idx].status = status;
     if (receiverName) cache.suratJalan[idx].receiver_name = receiverName;
     if (status === 'DELIVERED') cache.suratJalan[idx].received_at = new Date().toISOString();
     return true;
   }
-  return false;
+  return true;
 }
 
 // ==============================================================================
@@ -1549,34 +1756,72 @@ export async function updateSuratJalanStatus(id: string, status: 'SHIPPED' | 'DE
 // ==============================================================================
 export async function getDispositionRequests(): Promise<DispositionRequest[]> {
   const admin = getAdminClient();
-  if (admin && isSupabaseHealthy) {
-    const { data, error } = await admin.from('disposition_requests').select('*').order('submission_date', { ascending: false });
-    if (!error && data && data.length > 0) return data as DispositionRequest[];
+  if (admin) {
+    try {
+      const { data, error } = await admin.from('disposition_requests').select('*').order('submission_date', { ascending: false });
+      if (!error && data && data.length > 0) return data as DispositionRequest[];
+      if (error) console.error('[Supabase getDispositionRequests error]:', error.message);
+    } catch (err: any) {
+      console.error('[Supabase getDispositionRequests exception]:', err.message);
+    }
   }
   return cache.dispositions || [];
 }
 
 export async function createDispositionRequest(payload: Partial<DispositionRequest>): Promise<DispositionRequest> {
   const admin = getAdminClient();
+  const dispId = ensureUuid(payload.id);
+  const branchName = payload.branch_name || payload.outlet_nama || 'Outlet';
+  const requester = payload.requester_name || payload.diajukan_oleh || 'Staff Cabang';
+
+  // Construct items array if submitted with single-item fields
+  let items = payload.items || [];
+  if (items.length === 0 && (payload.nama_aset || payload.kode_aset)) {
+    items = [
+      {
+        id: ensureUuid(),
+        item_name: payload.nama_aset || 'Aset',
+        quantity: 1,
+        condition: (payload.kondisi as any) || 'Rusak Ringan',
+        reason: payload.alasan || '',
+        photo_url: payload.foto_url,
+      },
+    ];
+  }
+
   const disp: DispositionRequest = {
-    id: payload.id || `disp-${Date.now()}`,
+    id: dispId,
     disposition_number: payload.disposition_number || `DISP/CA/${new Date().getFullYear()}/${Date.now().toString().slice(-4)}`,
-    branch_name: payload.branch_name || 'Outlet',
+    branch_name: branchName,
+    outlet_nama: branchName,
     region: payload.region || 'JABODETABEK',
-    requester_name: payload.requester_name || 'Outlet Manager',
+    requester_name: requester,
+    diajukan_oleh: requester,
     submission_date: payload.submission_date || new Date().toISOString().split('T')[0],
     status: payload.status || 'DIAJUKAN',
-    items: payload.items || [],
-    approval_notes: payload.approval_notes,
+    items,
+    kode_aset: payload.kode_aset,
+    nama_aset: payload.nama_aset,
+    kondisi: payload.kondisi,
+    alasan: payload.alasan,
+    foto_url: payload.foto_url,
+    approval_notes: payload.approval_notes || payload.catatan_admin,
     approved_by: payload.approved_by,
     created_at: new Date().toISOString(),
   };
 
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
       const { data, error } = await admin.from('disposition_requests').insert(disp).select().single();
-      if (!error && data) return data as DispositionRequest;
-    } catch {}
+      if (error) {
+        console.error('[Supabase createDispositionRequest error]:', error.message);
+      } else if (data) {
+        cache.dispositions.unshift(data as DispositionRequest);
+        return data as DispositionRequest;
+      }
+    } catch (err: any) {
+      console.error('[Supabase createDispositionRequest exception]:', err.message);
+    }
   }
 
   cache.dispositions.unshift(disp);
@@ -1590,24 +1835,36 @@ export async function updateDispositionStatus(
   approvedBy?: string
 ): Promise<boolean> {
   const admin = getAdminClient();
-  const updateData: any = { status, updated_at: new Date().toISOString() };
-  if (approvalNotes) updateData.approval_notes = approvalNotes;
-  if (approvedBy) updateData.approved_by = approvedBy;
+  const updateData: any = { 
+    status, 
+    updated_at: new Date().toISOString(),
+    approval_notes: approvalNotes || null,
+    approved_by: approvedBy || null
+  };
 
-  if (admin && isSupabaseHealthy) {
+  if (admin) {
     try {
-      await admin.from('disposition_requests').update(updateData).eq('id', id);
-    } catch {}
+      let q = admin.from('disposition_requests').update(updateData);
+      if (isUuid(id)) {
+        q = q.eq('id', id);
+      } else {
+        q = q.eq('disposition_number', id);
+      }
+      const { error } = await q;
+      if (error) console.error('[Supabase updateDispositionStatus error]:', error.message);
+    } catch (err: any) {
+      console.error('[Supabase updateDispositionStatus exception]:', err.message);
+    }
   }
 
-  const idx = cache.dispositions.findIndex((d) => d.id === id);
+  const idx = cache.dispositions.findIndex((d) => d.id === id || d.disposition_number === id);
   if (idx !== -1) {
     cache.dispositions[idx].status = status;
     if (approvalNotes) cache.dispositions[idx].approval_notes = approvalNotes;
     if (approvedBy) cache.dispositions[idx].approved_by = approvedBy;
     return true;
   }
-  return false;
+  return true;
 }
 
 // ==============================================================================
@@ -1628,6 +1885,7 @@ export interface MasterAssetItem {
   id: string;
   item_name: string;
   system_item_name: string;
+  unit?: string;
   classification: string;
   specification: string;
   photo_url: string | null;
@@ -1638,39 +1896,170 @@ export interface MasterAssetItem {
   created_at?: string;
 }
 
-export async function getMasterAssetCatalog(): Promise<MasterAssetItem[]> {
-  const { data: allItems } = await getAssetRequests({ region: 'ALL', limit: 10000 });
-  const map = new Map<string, MasterAssetItem>();
+const MASTER_ASSET_GOOGLE_SHEET_CSV_URL =
+  process.env.GOOGLE_SHEET_MASTER_ASSET_URL ||
+  'https://docs.google.com/spreadsheets/d/1xma83YRtP0WbjDnUFjmhgie3mWDgejV95HhlZX0sEvk/export?format=csv&gid=109322565';
+let cachedMasterCatalog: MasterAssetItem[] | null = null;
+let masterCatalogLastFetched = 0;
 
-  for (const it of allItems) {
-    const key = (it.system_item_name || it.item_name || '').trim().toLowerCase();
-    if (!key) continue;
+export async function syncMasterAssetCatalogFromSheet(): Promise<{
+  success: boolean;
+  totalItems: number;
+  classifications: string[];
+  message: string;
+}> {
+  try {
+    const response = await fetch(MASTER_ASSET_GOOGLE_SHEET_CSV_URL, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      next: { revalidate: 0 },
+    });
 
-    if (!map.has(key)) {
-      map.set(key, {
-        id: `mat-${map.size + 1}`,
-        item_name: it.item_name,
-        system_item_name: it.system_item_name || it.item_name,
-        classification: it.classification || 'General',
-        specification: it.specification || '',
-        photo_url: it.photo_url || null,
-        standard_rab_price: it.rab_price || 0,
-        total_requests: 1,
-        total_units_needed: it.quantity_needed || 1,
-        is_new_item: it.category?.toLowerCase().includes('new') || it.id.startsWith('custom-'),
-        created_at: it.order_datetime || it.created_at,
-      });
-    } else {
-      const existing = map.get(key)!;
-      existing.total_requests += 1;
-      existing.total_units_needed += it.quantity_needed || 1;
-      if (!existing.photo_url && it.photo_url) existing.photo_url = it.photo_url;
-      if (!existing.specification && it.specification) existing.specification = it.specification;
-      if (existing.standard_rab_price === 0 && it.rab_price > 0) existing.standard_rab_price = it.rab_price;
+    if (!response.ok) {
+      throw new Error(`Gagal mengunduh Spreadsheet Master Aset (HTTP ${response.status})`);
     }
+
+    const csvText = await response.text();
+    const lines = csvText.split('\n');
+    const items: MasterAssetItem[] = [];
+    const seenNames = new Set<string>();
+    const classifications = new Set<string>();
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      const cols = parseCSVLine(line);
+
+      const rawName = cols[7]?.trim();
+      if (!rawName) continue;
+
+      const unit = cols[8]?.trim() || 'unit';
+      let akun = cols[9]?.trim() || 'General';
+      const akunLower = akun.toLowerCase();
+      if (akunLower === 'perlengkapan tetap') akun = 'Perlengkapan Tetap';
+      else if (akunLower === 'peralatan') akun = 'Peralatan';
+      else if (akunLower === 'mesin') akun = 'Mesin';
+      else if (akunLower === 'kendaraan') akun = 'Kendaraan';
+      else if (akunLower === 'bangunan') akun = 'Bangunan';
+      else if (akunLower === 'perlengkapan habis pakai') akun = 'Perlengkapan Habis Pakai';
+      else if (!akun || akun === '-') akun = 'General';
+      else akun = akun.charAt(0).toUpperCase() + akun.slice(1);
+
+      classifications.add(akun);
+
+      const imgRaw = cols[10]?.trim();
+      const specRaw = cols[11]?.trim();
+
+      let photoUrl: string | null = null;
+      let specification = specRaw || '';
+
+      if (imgRaw && (imgRaw.startsWith('http') || imgRaw.includes('drive.google.com'))) {
+        photoUrl = imgRaw;
+      } else if (specRaw && (specRaw.startsWith('http') && (specRaw.includes('drive.google.com') || /\.(png|jpe?g|webp|gif)/i.test(specRaw)))) {
+        photoUrl = specRaw;
+        specification = '';
+      }
+
+      // Convert Google Drive view links to direct image preview links
+      if (photoUrl && photoUrl.includes('drive.google.com')) {
+        const driveMatch = photoUrl.match(/(?:file\/d\/|open\?id=|id=)([a-zA-Z0-9_-]{20,})/);
+        if (driveMatch && driveMatch[1]) {
+          photoUrl = `https://drive.google.com/thumbnail?id=${driveMatch[1]}&sz=w800`;
+        }
+      }
+
+      const key = rawName.toLowerCase();
+      if (seenNames.has(key)) continue;
+      seenNames.add(key);
+
+      const isNewItem = rawName.toLowerCase().includes('(sampel)') || rawName.toLowerCase().includes('new') || rawName.toLowerCase().includes('sample');
+
+      items.push({
+        id: `mat-${items.length + 1}`,
+        item_name: rawName,
+        system_item_name: rawName,
+        unit,
+        classification: akun,
+        specification,
+        photo_url: photoUrl,
+        standard_rab_price: 0,
+        total_requests: 1,
+        total_units_needed: 1,
+        is_new_item: isNewItem,
+      });
+    }
+
+    // Also supplement with any items from the RO sheet (New Data Mentah) so no requested item is missing
+    try {
+      const roResponse = await fetch(RO_GOOGLE_SHEET_CSV_URL, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      });
+      if (roResponse.ok) {
+        const roCsvText = await roResponse.text();
+        const roLines = roCsvText.split('\n');
+        for (let i = 1; i < roLines.length; i++) {
+          const rLine = roLines[i];
+          if (!rLine.trim()) continue;
+          const rCols = parseCSVLine(rLine);
+          const rItemName = rCols[5]?.trim();
+          if (!rItemName) continue;
+          const rKey = rItemName.toLowerCase();
+          if (!seenNames.has(rKey)) {
+            seenNames.add(rKey);
+            const rUnit = rCols[7]?.trim() || 'unit';
+            const rTipe = rCols[10]?.trim() || 'Perlengkapan Tetap';
+            classifications.add(rTipe);
+            items.push({
+              id: `mat-ro-${items.length + 1}`,
+              item_name: rItemName,
+              system_item_name: rItemName,
+              unit: rUnit,
+              classification: rTipe,
+              specification: '',
+              photo_url: null,
+              standard_rab_price: parseInt(rCols[8]?.replace(/[^\d]/g, '') || '0') || 0,
+              total_requests: 1,
+              total_units_needed: 1,
+              is_new_item: true,
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not supplement master catalog with RO items:', e);
+    }
+
+    items.sort((a, b) => a.item_name.localeCompare(b.item_name));
+    cachedMasterCatalog = items;
+    masterCatalogLastFetched = Date.now();
+
+    return {
+      success: true,
+      totalItems: items.length,
+      classifications: Array.from(classifications),
+      message: `Berhasil menyinkronkan ${items.length} item dari Master Aset Google Spreadsheet.`,
+    };
+  } catch (err: any) {
+    console.error('Error syncing Master Asset Catalog from sheet:', err);
+    return {
+      success: false,
+      totalItems: 0,
+      classifications: [],
+      message: err.message || 'Gagal menyinkronkan Master Aset dari Spreadsheet.',
+    };
+  }
+}
+
+export async function getMasterAssetCatalog(): Promise<MasterAssetItem[]> {
+  if (cachedMasterCatalog && Date.now() - masterCatalogLastFetched < 15 * 60 * 1000) {
+    return cachedMasterCatalog;
   }
 
-  return Array.from(map.values()).sort((a, b) => a.item_name.localeCompare(b.item_name));
+  const syncRes = await syncMasterAssetCatalogFromSheet();
+  if (syncRes.success && cachedMasterCatalog) {
+    return cachedMasterCatalog;
+  }
+
+  return cachedMasterCatalog || [];
 }
 
 // ==============================================================================

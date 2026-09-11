@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS public.asset_requests (
     
     -- Control metadata
     is_manually_edited BOOLEAN DEFAULT FALSE, -- Ditandai TRUE jika diedit langsung dari dashboard
+    is_system_transfer BOOLEAN DEFAULT FALSE, -- Ditandai TRUE jika dibuat otomatis via transfer
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -105,12 +106,15 @@ EXECUTE FUNCTION update_asset_requests_modtime();
 ALTER TABLE public.asset_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sync_logs ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Allow public read access on asset_requests" ON public.asset_requests;
 CREATE POLICY "Allow public read access on asset_requests"
 ON public.asset_requests FOR SELECT USING (true);
 
+DROP POLICY IF EXISTS "Allow public insert/update access on asset_requests" ON public.asset_requests;
 CREATE POLICY "Allow public insert/update access on asset_requests"
 ON public.asset_requests FOR ALL USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Allow public read/insert on sync_logs" ON public.sync_logs;
 CREATE POLICY "Allow public read/insert on sync_logs"
 ON public.sync_logs FOR ALL USING (true) WITH CHECK (true);
 
@@ -185,19 +189,40 @@ CREATE TABLE IF NOT EXISTS public.asset_transfers (
 );
 
 -- ==============================================================================
--- 11. Table: request_orders (Kelola RO Distribusi)
+-- 11. Table: request_orders (Kelola RO Distribusi & Alur 9-Tahap)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.request_orders (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     ro_number TEXT UNIQUE NOT NULL,
+    raw_ro_id TEXT,
     branch_name TEXT NOT NULL,
     region TEXT NOT NULL DEFAULT 'JABODETABEK',
     requester_name TEXT NOT NULL,
     request_date DATE NOT NULL DEFAULT CURRENT_DATE,
     target_delivery_date DATE,
-    status TEXT NOT NULL DEFAULT 'PENDING', -- 'PENDING' | 'APPROVED' | 'IN_DELIVERY' | 'COMPLETED' | 'REJECTED'
+    status TEXT NOT NULL DEFAULT 'PENDING',
     items JSONB NOT NULL DEFAULT '[]'::jsonb,
     notes TEXT,
+    
+    -- Spreadsheet & Deduplication metadata
+    warehouse_name TEXT,
+    source_type TEXT DEFAULT 'MANUAL',
+    is_duplicate BOOLEAN DEFAULT FALSE,
+    duplicate_count INTEGER DEFAULT 0,
+    duplicate_group_id TEXT,
+
+    -- 9-Stage Workflow Tracking
+    current_stage TEXT DEFAULT 'REQUEST_ORDER',
+    pr_vendor_name TEXT,
+    pr_po_number TEXT,
+    pr_estimated_arrival DATE,
+    arrival_datetime TIMESTAMPTZ,
+    received_date DATE,
+    pic_receiver TEXT,
+    checklist_notes TEXT,
+    sla_lead_time_days NUMERIC(8,2),
+    sla_status TEXT,
+
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -234,13 +259,83 @@ CREATE TABLE IF NOT EXISTS public.disposition_requests (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     disposition_number TEXT UNIQUE NOT NULL,
     branch_name TEXT NOT NULL,
+    outlet_nama TEXT,
     region TEXT NOT NULL DEFAULT 'JABODETABEK',
     requester_name TEXT NOT NULL,
+    diajukan_oleh TEXT,
     submission_date DATE NOT NULL DEFAULT CURRENT_DATE,
     status TEXT NOT NULL DEFAULT 'DIAJUKAN', -- 'DIAJUKAN' | 'DISETUJUI' | 'DITOLAK' | 'DITERIMA_GUDANG' | 'SCRAP'
     approval_notes TEXT,
     approved_by TEXT,
+    kode_aset TEXT,
+    nama_aset TEXT,
+    kondisi TEXT,
+    alasan TEXT,
+    foto_url TEXT,
     items JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ==============================================================================
+-- 14. Row Level Security (RLS) - Seluruh Tabel Operasional
+-- ==============================================================================
+ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.outlets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.asset_transfers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.request_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.surat_jalan ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.disposition_requests ENABLE ROW LEVEL SECURITY;
+
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public all on user_profiles') THEN
+        CREATE POLICY "Allow public all on user_profiles" ON public.user_profiles FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public all on outlets') THEN
+        CREATE POLICY "Allow public all on outlets" ON public.outlets FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public all on asset_transfers') THEN
+        CREATE POLICY "Allow public all on asset_transfers" ON public.asset_transfers FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public all on request_orders') THEN
+        CREATE POLICY "Allow public all on request_orders" ON public.request_orders FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public all on surat_jalan') THEN
+        CREATE POLICY "Allow public all on surat_jalan" ON public.surat_jalan FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public all on disposition_requests') THEN
+        CREATE POLICY "Allow public all on disposition_requests" ON public.disposition_requests FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+END $$;
+
+-- ==============================================================================
+-- 15. Migration Helper: Tambah Kolom Baru Jika Tabel Sudah Ada Sebelumnya
+-- ==============================================================================
+ALTER TABLE public.asset_requests ADD COLUMN IF NOT EXISTS is_system_transfer BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS raw_ro_id TEXT;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS warehouse_name TEXT;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS source_type TEXT DEFAULT 'MANUAL';
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS is_duplicate BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS duplicate_count INTEGER DEFAULT 0;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS duplicate_group_id TEXT;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS current_stage TEXT DEFAULT 'REQUEST_ORDER';
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS pr_vendor_name TEXT;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS pr_po_number TEXT;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS pr_estimated_arrival DATE;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS arrival_datetime TIMESTAMPTZ;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS received_date DATE;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS pic_receiver TEXT;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS checklist_notes TEXT;
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS sla_lead_time_days NUMERIC(8,2);
+ALTER TABLE public.request_orders ADD COLUMN IF NOT EXISTS sla_status TEXT;
+
+ALTER TABLE public.disposition_requests ADD COLUMN IF NOT EXISTS outlet_nama TEXT;
+ALTER TABLE public.disposition_requests ADD COLUMN IF NOT EXISTS diajukan_oleh TEXT;
+ALTER TABLE public.disposition_requests ADD COLUMN IF NOT EXISTS kode_aset TEXT;
+ALTER TABLE public.disposition_requests ADD COLUMN IF NOT EXISTS nama_aset TEXT;
+ALTER TABLE public.disposition_requests ADD COLUMN IF NOT EXISTS kondisi TEXT;
+ALTER TABLE public.disposition_requests ADD COLUMN IF NOT EXISTS alasan TEXT;
+ALTER TABLE public.disposition_requests ADD COLUMN IF NOT EXISTS foto_url TEXT;
+

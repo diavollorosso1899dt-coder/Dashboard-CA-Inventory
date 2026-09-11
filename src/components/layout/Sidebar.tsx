@@ -174,10 +174,10 @@ export function Sidebar() {
             <Link
               href={`/${regionQuery}`}
               onClick={closeMobile}
-              className={`flex items-center gap-3 rounded-full px-3.5 py-2.5 text-xs font-semibold transition-all ${
+              className={`interactive-tap flex items-center gap-3 rounded-full px-3.5 py-2.5 text-xs font-semibold transition-all ${
                 pathname === '/'
                   ? 'bg-[#c2e7ff] text-[#001d35] dark:bg-[#004a77] dark:text-[#c2e7ff] shadow-sm'
-                  : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white'
+                  : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white hover:translate-x-0.5'
               }`}
             >
               <LayoutDashboard className="h-4 w-4 shrink-0 text-[#0b57d0] dark:text-[#a8c7fa]" />
@@ -198,7 +198,7 @@ export function Sidebar() {
                 <button
                   type="button"
                   onClick={() => toggleGroup(group.title)}
-                  className={`flex w-full items-center justify-between px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors rounded-lg ${
+                  className={`interactive-tap flex w-full items-center justify-between px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors rounded-lg ${
                     hasActiveChild
                       ? 'text-[#0b57d0] dark:text-[#a8c7fa]'
                       : 'text-[#747775] dark:text-[#8e918f] hover:text-[#1f1f1f] dark:hover:text-white'
@@ -226,10 +226,10 @@ export function Sidebar() {
                           <Link
                             href={`${item.href}${regionQuery}`}
                             onClick={closeMobile}
-                            className={`group flex items-center justify-between rounded-xl px-3 py-2 text-xs transition-all ${
+                            className={`interactive-tap group flex items-center justify-between rounded-xl px-3 py-2 text-xs transition-all ${
                               isParentActive && (!item.children || item.children.every(c => pathname !== c.href.split('?')[0]))
                                 ? 'bg-[#c2e7ff] text-[#001d35] font-semibold dark:bg-[#004a77] dark:text-[#c2e7ff] shadow-xs'
-                                : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white'
+                                : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white hover:translate-x-0.5'
                             }`}
                           >
                             <div className="flex items-center gap-2.5 truncate">
@@ -262,10 +262,10 @@ export function Sidebar() {
                                     key={child.href}
                                     href={`${child.href}${child.href.includes('?') && regionQuery ? '&' + regionQuery.replace('?', '') : regionQuery}`}
                                     onClick={closeMobile}
-                                    className={`flex items-center gap-1.5 py-1 px-2 rounded-lg text-[11px] transition-all ${
+                                    className={`interactive-tap flex items-center gap-1.5 py-1 px-2 rounded-lg text-[11px] transition-all ${
                                       isChildActive
                                         ? 'text-[#0b57d0] dark:text-[#a8c7fa] font-bold bg-[#e8f0fe]/60 dark:bg-[#004a77]/40'
-                                        : 'text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#1f1f1f] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                                        : 'text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#1f1f1f] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:translate-x-0.5'
                                     }`}
                                   >
                                     <span className="w-1 h-1 rounded-full bg-current opacity-60 shrink-0" />

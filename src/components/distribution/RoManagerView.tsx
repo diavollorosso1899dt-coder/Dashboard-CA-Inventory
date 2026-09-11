@@ -650,7 +650,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                   <button
                     type="button"
                     onClick={() => setSelectedStage(isActive ? 'ALL' : st.key)}
-                    className={`group relative flex flex-col items-center justify-center p-2 transition-all cursor-pointer text-center shrink-0 border-2 ${st.color} ${
+                    className={`interactive-tap group relative flex flex-col items-center justify-center p-2 transition-all cursor-pointer text-center shrink-0 border-2 ${st.color} ${
                       isPill ? 'rounded-full px-3 py-1.5' : isDiamond ? 'rounded-lg w-[84px] h-[64px]' : 'rounded-xl w-[92px] h-[64px]'
                     } ${isActive ? 'ring-3 ring-blue-500 shadow-md scale-105' : 'hover:scale-102 hover:shadow-xs'}`}
                   >
@@ -696,7 +696,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             <button
               onClick={handleSyncSheet}
               disabled={isSyncing}
-              className="flex items-center gap-1.5 rounded-full border border-emerald-600/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 px-3.5 py-2 text-xs font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors shadow-xs disabled:opacity-50"
+              className="interactive-tap flex items-center gap-1.5 rounded-full border border-emerald-600/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 px-3.5 py-2 text-xs font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors shadow-xs disabled:opacity-50"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
               <span>{isSyncing ? 'Menyinkronkan...' : 'Tarik Spreadsheet RO'}</span>
@@ -705,7 +705,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             {/* Tarik Data Excel Paste */}
             <button
               onClick={() => setIsExcelModalOpen(true)}
-              className="flex items-center gap-1.5 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#282a2c] text-[#1f1f1f] dark:text-[#e3e3e3] px-3.5 py-2 text-xs font-semibold hover:bg-slate-50 transition-colors"
+              className="interactive-tap flex items-center gap-1.5 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#282a2c] text-[#1f1f1f] dark:text-[#e3e3e3] px-3.5 py-2 text-xs font-semibold hover:bg-slate-50 transition-colors"
             >
               <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
               <span>Import CSV/Excel</span>
@@ -714,7 +714,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             {/* Buat RO Baru */}
             <button
               onClick={() => setIsRoModalOpen(true)}
-              className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-white dark:text-[#041e49] px-4 py-2 text-xs font-semibold hover:bg-[#0842a0] transition-colors shadow-sm shrink-0"
+              className="interactive-tap flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-white dark:text-[#041e49] px-4 py-2 text-xs font-semibold hover:bg-[#0842a0] transition-colors shadow-sm shrink-0"
             >
               <PlusCircle className="h-3.5 w-3.5" />
               <span>Buat RO Baru</span>
@@ -732,7 +732,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c]">
               <button
                 onClick={() => setSmartFilter('ALL')}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
                   smartFilter === 'ALL' ? 'bg-white dark:bg-[#1a1c1e] text-[#0b57d0] font-bold shadow-xs' : 'text-[#747775]'
                 }`}
               >
@@ -740,19 +740,19 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               </button>
               <button
                 onClick={() => setSmartFilter('CLEAN')}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                  smartFilter === 'CLEAN' ? 'bg-white dark:bg-[#1a1c1e] text-emerald-700 font-bold shadow-xs' : 'text-[#747775]'
+                className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                  smartFilter === 'CLEAN' ? 'bg-white dark:bg-[#1a1c1e] text-emerald-600 font-bold shadow-xs' : 'text-[#747775]'
                 }`}
               >
-                RO Bersih / Unik ({orders.length - (duplicateOrdersCount > 0 ? duplicateOrdersCount - deduplicationMap.size : 0)})
+                Data Bersih Unik ({orders.length - (duplicateOrdersCount > 0 ? duplicateOrdersCount - deduplicationMap.size : 0)})
               </button>
               <button
                 onClick={() => setSmartFilter('DUPLICATES')}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                  smartFilter === 'DUPLICATES' ? 'bg-amber-100 text-amber-900 font-bold shadow-xs' : 'text-[#747775]'
+                className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                  smartFilter === 'DUPLICATES' ? 'bg-white dark:bg-[#1a1c1e] text-amber-600 font-bold shadow-xs' : 'text-[#747775]'
                 }`}
               >
-                Peringatan Duplikat ({duplicateOrdersCount})
+                Data Terduplikasi ({duplicateOrdersCount})
               </button>
             </div>
           </div>
@@ -982,7 +982,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       {/* ========================================================= */}
       {selectedRoForProcess && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="panel-card w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4 border border-[#e0e2ec] dark:border-[#444746] rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
+          <div className="spring-pop panel-card w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4 border border-[#e0e2ec] dark:border-[#444746] rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
             <div className="flex items-center justify-between border-b border-[#e0e2ec] dark:border-[#35383a] pb-3">
               <div className="flex items-center gap-2">
                 <GitMerge className="h-5 w-5 text-[#0b57d0]" />
@@ -1060,7 +1060,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       {/* ========================================================= */}
       {selectedRoForPr && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="panel-card w-full max-w-lg p-6 space-y-4 border border-[#e0e2ec] dark:border-[#444746] rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
+          <div className="spring-pop panel-card w-full max-w-lg p-6 space-y-4 border border-[#e0e2ec] dark:border-[#444746] rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
                 <Clock className="h-5 w-5 text-orange-600" />
@@ -1147,7 +1147,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       {/* ========================================================= */}
       {selectedRoForSj && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="panel-card w-full max-w-md p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
+          <div className="spring-pop panel-card w-full max-w-md p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
                 <Truck className="h-5 w-5 text-[#0b57d0]" />
@@ -1223,7 +1223,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       {/* ========================================================= */}
       {selectedRoForArrival && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="panel-card w-full max-w-md p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
+          <div className="spring-pop panel-card w-full max-w-md p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
                 <HelpCircle className="h-5 w-5 text-amber-600" />
@@ -1277,7 +1277,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       {/* ========================================================= */}
       {selectedRoForChecklist && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="panel-card w-full max-w-xl max-h-[90vh] overflow-y-auto p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
+          <div className="spring-pop panel-card w-full max-w-xl max-h-[90vh] overflow-y-auto p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
                 <CheckSquare className="h-5 w-5 text-cyan-600" />
@@ -1393,7 +1393,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       {/* MODAL BUAT RO BARU */}
       {isRoModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="panel-card w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
+          <div className="spring-pop panel-card w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
                 <FileCheck2 className="h-5 w-5 text-[#0b57d0]" />
@@ -1515,7 +1515,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       {/* MODAL TARIK DATA EXCEL PASTE */}
       {isExcelModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="panel-card w-full max-w-lg p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
+          <div className="spring-pop panel-card w-full max-w-lg p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
                 <FileSpreadsheet className="h-5 w-5 text-emerald-600" />
