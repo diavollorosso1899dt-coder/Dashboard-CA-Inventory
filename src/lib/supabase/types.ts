@@ -155,7 +155,9 @@ export type UserRole = 'super_user' | 'user' | 'outlet_manager' | 'Super User' |
 
 export interface UserProfile {
   id: string;
+  username?: string;
   email: string;
+  password?: string;
   full_name: string;
   role: UserRole;
   branch_name?: string;

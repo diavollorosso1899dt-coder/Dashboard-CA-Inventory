@@ -15,15 +15,19 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { email, full_name, role, outlet_assigned } = body;
+    const username = (body.username || body.email || '').trim().toLowerCase();
+    const { full_name, role, outlet_assigned, password } = body;
 
-    if (!email || !full_name || !role) {
-      return NextResponse.json({ success: false, error: 'Email, Nama Lengkap, dan Role wajib diisi.' }, { status: 400 });
+    if (!username || !full_name || !role) {
+      return NextResponse.json({ success: false, error: 'Username, Nama Lengkap, dan Role wajib diisi.' }, { status: 400 });
     }
 
     const saved = await saveUserProfile({
       id: body.id || undefined,
-      email,
+      username,
+      email: username,
+      password: password || undefined,
+      phone: password || undefined,
       full_name,
       role,
       outlet_assigned: outlet_assigned || null

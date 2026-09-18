@@ -1118,27 +1118,42 @@ export async function getUserProfiles(): Promise<UserProfile[]> {
   if (admin) {
     try {
       const { data, error } = await admin.from('user_profiles').select('*').order('full_name');
-      if (!error && data && data.length > 0) return data as UserProfile[];
+      if (!error && data && data.length > 0) {
+        return data.map((u: any) => ({
+          ...u,
+          username: u.username || u.email,
+          password: u.password || u.phone || '',
+        })) as UserProfile[];
+      }
       if (error) console.error('[Supabase getUserProfiles error]:', error.message);
     } catch (err: any) {
       console.error('[Supabase getUserProfiles exception]:', err.message);
     }
   }
-  return cache.users || [];
+  return (cache.users || []).map((u) => ({
+    ...u,
+    username: u.username || u.email,
+    password: u.password || u.phone || '',
+  }));
 }
 
 export async function saveUserProfile(userData: Partial<UserProfile>): Promise<UserProfile> {
   const admin = getAdminClient();
   const userId = ensureUuid(userData.id);
   const branch = userData.branch_name || userData.outlet_assigned || null;
+  const username = (userData.username || userData.email || '').trim().toLowerCase();
+  const password = userData.password || userData.phone || '';
+
   const user: UserProfile = {
     id: userId,
-    email: userData.email || '',
+    username,
+    email: username,
+    password,
     full_name: userData.full_name || 'User',
     role: userData.role || 'user',
     branch_name: branch || undefined,
     outlet_assigned: branch || undefined,
-    phone: userData.phone,
+    phone: password || userData.phone || undefined,
     is_active: userData.is_active ?? true,
     created_at: userData.created_at || new Date().toISOString(),
   };
@@ -1160,7 +1175,11 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
       if (error) {
         console.error('[Supabase saveUserProfile error]:', error.message);
       } else if (data) {
-        return data as UserProfile;
+        return {
+          ...data,
+          username: (data as any).username || data.email,
+          password: (data as any).password || (data as any).phone || password,
+        } as UserProfile;
       }
     } catch (err: any) {
       console.error('[Supabase saveUserProfile exception]:', err.message);
