@@ -9,7 +9,7 @@ export default async function TransferAssetPage() {
   const [transfers, outlets, assetsRes] = await Promise.all([
     getAssetTransfers(),
     getOutlets(),
-    getAssetRequests({ limit: 1000 }),
+    getAssetRequests({ limit: 10000 }),
   ]);
 
   return (

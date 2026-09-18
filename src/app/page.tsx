@@ -17,7 +17,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
   const [branchSummaries, assetResponse] = await Promise.all([
     getBranchOpeningSummaries(region),
-    getAssetRequests({ region, limit: 1000 }),
+    getAssetRequests({ region, limit: 10000 }),
   ]);
 
   return (

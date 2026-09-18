@@ -15,7 +15,7 @@ export default async function MonitoringAssetsPage({ searchParams }: PageProps) 
   const { region: rawRegion } = await searchParams;
   const region = (rawRegion as RegionType) || 'ALL';
 
-  const assetResponse = await getAssetRequests({ region, limit: 3000 });
+  const assetResponse = await getAssetRequests({ region, limit: 10000 });
 
   return (
     <div className="space-y-6 pb-12">

@@ -477,48 +477,84 @@ export async function getAssetRequests(options?: {
     try {
       const admin = getAdminClient();
       if (admin) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2500);
+        const buildFilteredQuery = () => {
+          let q = admin.from('asset_requests').select('*', { count: 'exact' }).abortSignal(controller.signal);
 
-        let query = admin.from('asset_requests').select('*', { count: 'exact' }).abortSignal(controller.signal);
+          if (options?.region && options.region !== 'ALL') {
+            q = q.eq('region', options.region);
+          }
+          if (options?.branch && options.branch !== 'ALL') {
+            q = q.eq('branch_name', options.branch);
+          }
+          if (options?.rabNumber) {
+            q = q.ilike('rab_number', `%${options.rabNumber}%`);
+          }
+          if (options?.isSystemTransfer) {
+            q = q.eq('is_system_transfer', true);
+          }
+          if (options?.search) {
+            q = q.or(
+              `item_name.ilike.%${options.search}%,branch_name.ilike.%${options.search}%,requester_name.ilike.%${options.search}%,rab_number.ilike.%${options.search}%`
+            );
+          }
 
-        if (options?.region && options.region !== 'ALL') {
-          query = query.eq('region', options.region);
-        }
-        if (options?.branch && options.branch !== 'ALL') {
-          query = query.eq('branch_name', options.branch);
-        }
-        if (options?.rabNumber) {
-          query = query.ilike('rab_number', `%${options.rabNumber}%`);
-        }
-        if (options?.isSystemTransfer) {
-          query = query.eq('is_system_transfer', true);
-        }
-        if (options?.search) {
-          query = query.or(
-            `item_name.ilike.%${options.search}%,branch_name.ilike.%${options.search}%,requester_name.ilike.%${options.search}%,rab_number.ilike.%${options.search}%`
-          );
-        }
+          return q.order('order_datetime', { ascending: false, nullsFirst: false });
+        };
 
-        query = query.order('order_datetime', { ascending: false, nullsFirst: false });
+        const targetLimit = options?.limit;
+        const targetOffset = options?.offset || 0;
 
-        if (options?.limit) {
-          query = query.limit(options.limit);
-        }
-        if (options?.offset) {
-          query = query.range(options.offset, options.offset + (options.limit || 50) - 1);
-        }
+        // If specific small slice is requested (e.g. limit <= 1000)
+        if (targetLimit && targetLimit <= 1000) {
+          const { data, count, error } = await buildFilteredQuery()
+            .range(targetOffset, targetOffset + targetLimit - 1);
+          clearTimeout(timeoutId);
 
-        const { data, count, error } = await query;
+          if (!error && data) {
+            return {
+              data: data as AssetRequest[],
+              total: count || data.length,
+              lastSynced: cache.lastSynced,
+            };
+          }
+        } else {
+          // Fetch all items or up to targetLimit (handling Supabase PostgREST 1000-row cap per request)
+          const pageSize = 1000;
+          const { data: page0, count, error } = await buildFilteredQuery()
+            .range(targetOffset, targetOffset + pageSize - 1);
+
+          if (!error && page0) {
+            let allData = [...page0] as AssetRequest[];
+            const totalCount = count || allData.length;
+            const effectiveLimit = targetLimit ? Math.min(targetLimit, totalCount) : totalCount;
+
+            if (effectiveLimit > allData.length) {
+              const promises = [];
+              const totalPages = Math.ceil(effectiveLimit / pageSize);
+              for (let p = 1; p < totalPages; p++) {
+                const from = targetOffset + p * pageSize;
+                const to = Math.min(targetOffset + (p + 1) * pageSize - 1, targetOffset + effectiveLimit - 1);
+                promises.push(
+                  buildFilteredQuery()
+                    .range(from, to)
+                    .then((res) => (res.data || []) as AssetRequest[])
+                );
+              }
+              const remainingPages = await Promise.all(promises);
+              for (const batch of remainingPages) {
+                allData = allData.concat(batch);
+              }
+            }
+
+            clearTimeout(timeoutId);
+            return {
+              data: allData,
+              total: totalCount,
+              lastSynced: cache.lastSynced,
+            };
+          }
+        }
         clearTimeout(timeoutId);
-
-        if (!error && data && data.length > 0) {
-          return {
-            data: data as AssetRequest[],
-            total: count || data.length,
-            lastSynced: cache.lastSynced,
-          };
-        }
       }
     } catch {
       // Gracefully fall through to local cache
