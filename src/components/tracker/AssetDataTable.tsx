@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Search, 
   Download, 
@@ -17,12 +17,48 @@ import {
   CheckCircle2,
   RefreshCw,
   X,
-  ArrowRightLeft
+  ArrowRightLeft,
+  SlidersHorizontal,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import { formatDateTime, formatDateOnly, formatLeadTime } from '@/lib/utils/date-formatter';
 import { AssetDetailModal } from './AssetDetailModal';
 import { BranchBastModal } from './BranchBastModal';
+
+export interface ColumnConfig {
+  id: string;
+  label: string;
+}
+
+export const AVAILABLE_COLUMNS: ColumnConfig[] = [
+  { id: 'order_datetime', label: 'Waktu Order' },
+  { id: 'branch_requester', label: 'Cabang & Pengaju' },
+  { id: 'item_classification', label: 'Item & Klasifikasi' },
+  { id: 'quantity', label: 'Kebutuhan' },
+  { id: 'rab_number', label: 'No. RAB' },
+  { id: 'opening_date', label: 'Target Opening' },
+  { id: 'stock_status', label: 'Status Stok' },
+  { id: 'item_delivery_status', label: 'Status Barang' },
+  { id: 'system_transfer', label: 'Transfer Sistem' },
+  { id: 'sla', label: 'SLA' },
+  { id: 'actions', label: 'Aksi' },
+];
+
+export const DEFAULT_VISIBLE_COLUMNS: Record<string, boolean> = {
+  order_datetime: true,
+  branch_requester: true,
+  item_classification: true,
+  quantity: true,
+  rab_number: true,
+  opening_date: true,
+  stock_status: true,
+  item_delivery_status: true,
+  system_transfer: true,
+  sla: true,
+  actions: true,
+};
 
 interface AssetDataTableProps {
   initialItems: AssetRequest[];
@@ -55,6 +91,71 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   // BAST Modal State
   const [isBastModalOpen, setIsBastModalOpen] = useState(false);
   const [bastBranch, setBastBranch] = useState<string>('');
+
+  // Column Visibility State
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(DEFAULT_VISIBLE_COLUMNS);
+  const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false);
+  const columnPickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('ca_column_visibility');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed === 'object' && parsed !== null) {
+          setVisibleColumns((prev) => ({ ...prev, ...parsed }));
+        }
+      }
+    } catch (e) {
+      console.error('Failed reading localStorage column visibility:', e);
+    }
+  }, []);
+
+  // Close column picker on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (columnPickerRef.current && !columnPickerRef.current.contains(e.target as Node)) {
+        setIsColumnPickerOpen(false);
+      }
+    };
+    if (isColumnPickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isColumnPickerOpen]);
+
+  const toggleColumn = (columnId: string) => {
+    setVisibleColumns((prev) => {
+      const next = { ...prev, [columnId]: !prev[columnId] };
+      try {
+        localStorage.setItem('ca_column_visibility', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
+
+  const showAllColumns = () => {
+    const next: Record<string, boolean> = {};
+    AVAILABLE_COLUMNS.forEach((col) => {
+      next[col.id] = true;
+    });
+    setVisibleColumns(next);
+    try {
+      localStorage.setItem('ca_column_visibility', JSON.stringify(next));
+    } catch (e) {}
+  };
+
+  const resetColumns = () => {
+    setVisibleColumns(DEFAULT_VISIBLE_COLUMNS);
+    try {
+      localStorage.removeItem('ca_column_visibility');
+    } catch (e) {}
+  };
+
+  const visibleColumnCount = 1 + AVAILABLE_COLUMNS.filter((col) => visibleColumns[col.id] !== false).length;
+  const hiddenCount = AVAILABLE_COLUMNS.filter((col) => visibleColumns[col.id] === false).length;
 
   useEffect(() => {
     let storedIds: string[] = [];
@@ -476,6 +577,99 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
               <Download className="h-3.5 w-3.5 text-[#444746] dark:text-[#c4c7c5]" />
               Unduh CSV
             </button>
+
+            {/* Column Visibility Selector */}
+            <div className="relative" ref={columnPickerRef}>
+              <button
+                type="button"
+                onClick={() => setIsColumnPickerOpen((prev) => !prev)}
+                className={`flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors shadow-sm ${
+                  isColumnPickerOpen || hiddenCount > 0
+                    ? 'border-[#0b57d0] dark:border-[#a8c7fa] bg-[#e8f0fe] dark:bg-[#004a77]/40 text-[#0b57d0] dark:text-[#a8c7fa]'
+                    : 'border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c]'
+                }`}
+                title="Atur visibilitas kolom tabel"
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                <span>Kolom</span>
+                {hiddenCount > 0 ? (
+                  <span className="rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-white dark:text-[#041e49] px-1.5 py-0.2 text-[10px] font-bold">
+                    {AVAILABLE_COLUMNS.length - hiddenCount}/{AVAILABLE_COLUMNS.length}
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-[#747775] dark:text-[#8e918f]">
+                    ({AVAILABLE_COLUMNS.length})
+                  </span>
+                )}
+              </button>
+
+              {/* Popover Dropdown */}
+              {isColumnPickerOpen && (
+                <div className="absolute right-0 top-full mt-2 z-50 w-72 rounded-2xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] p-3 shadow-xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#e0e2ec] dark:border-[#444746]">
+                    <div>
+                      <div className="text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-1.5">
+                        <SlidersHorizontal className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                        Tampilkan Kolom
+                      </div>
+                      <p className="text-[10px] text-[#747775] dark:text-[#8e918f]">
+                        Pilih kolom yang ingin ditampilkan
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={showAllColumns}
+                        className="text-[11px] font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline px-1 py-0.5"
+                      >
+                        Semua
+                      </button>
+                      <span className="text-[#747775] text-xs">•</span>
+                      <button
+                        type="button"
+                        onClick={resetColumns}
+                        className="text-[11px] font-medium text-[#747775] dark:text-[#8e918f] hover:underline px-1 py-0.5"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto space-y-0.5 pr-1 divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {AVAILABLE_COLUMNS.map((col) => {
+                      const isVisible = visibleColumns[col.id] !== false;
+                      return (
+                        <label
+                          key={col.id}
+                          className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors select-none ${
+                            isVisible
+                              ? 'hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c] text-[#1f1f1f] dark:text-[#e3e3e3]'
+                              : 'text-[#747775] dark:text-[#8e918f] hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={isVisible}
+                              onChange={() => toggleColumn(col.id)}
+                              className="rounded border-[#c4c7c5] text-[#0b57d0] focus:ring-[#0b57d0] h-3.5 w-3.5 cursor-pointer accent-[#0b57d0]"
+                            />
+                            <span className={isVisible ? 'font-medium' : 'line-through opacity-70'}>
+                              {col.label}
+                            </span>
+                          </div>
+                          {isVisible ? (
+                            <Eye className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                          ) : (
+                            <EyeOff className="h-3.5 w-3.5 text-[#747775] dark:text-[#8e918f]" />
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -665,23 +859,45 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                     )}
                   </button>
                 </th>
-                <th className="py-3.5 px-3">Waktu Order</th>
-                <th className="py-3.5 px-3">Cabang &amp; Pengaju</th>
-                <th className="py-3.5 px-3">Item &amp; Klasifikasi</th>
-                <th className="py-3.5 px-3 text-center">Kebutuhan</th>
-                <th className="py-3.5 px-3">No. RAB</th>
-                <th className="py-3.5 px-3">Target Opening</th>
-                <th className="py-3.5 px-3">Status Stok</th>
-                <th className="py-3.5 px-3">Status Barang</th>
-                <th className="py-3.5 px-3 text-center">Transfer Sistem</th>
-                <th className="py-3.5 px-3 text-center">SLA</th>
-                <th className="py-3.5 px-3 text-right">Aksi</th>
+                {visibleColumns.order_datetime !== false && (
+                  <th className="py-3.5 px-3">Waktu Order</th>
+                )}
+                {visibleColumns.branch_requester !== false && (
+                  <th className="py-3.5 px-3">Cabang &amp; Pengaju</th>
+                )}
+                {visibleColumns.item_classification !== false && (
+                  <th className="py-3.5 px-3">Item &amp; Klasifikasi</th>
+                )}
+                {visibleColumns.quantity !== false && (
+                  <th className="py-3.5 px-3 text-center">Kebutuhan</th>
+                )}
+                {visibleColumns.rab_number !== false && (
+                  <th className="py-3.5 px-3">No. RAB</th>
+                )}
+                {visibleColumns.opening_date !== false && (
+                  <th className="py-3.5 px-3">Target Opening</th>
+                )}
+                {visibleColumns.stock_status !== false && (
+                  <th className="py-3.5 px-3">Status Stok</th>
+                )}
+                {visibleColumns.item_delivery_status !== false && (
+                  <th className="py-3.5 px-3">Status Barang</th>
+                )}
+                {visibleColumns.system_transfer !== false && (
+                  <th className="py-3.5 px-3 text-center">Transfer Sistem</th>
+                )}
+                {visibleColumns.sla !== false && (
+                  <th className="py-3.5 px-3 text-center">SLA</th>
+                )}
+                {visibleColumns.actions !== false && (
+                  <th className="py-3.5 px-3 text-right">Aksi</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
               {paginatedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
+                  <td colSpan={visibleColumnCount} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
                     Tidak ada data aset yang cocok dengan filter. Coba ubah kata kunci pencarian atau filter wilayah.
                   </td>
                 </tr>
@@ -719,141 +935,163 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                       </td>
 
                       {/* 1. Timestamp Input */}
-                      <td className="py-2.5 px-3 whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
-                        <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">
-                          {formatDateTime(item.order_datetime)}
-                        </div>
-                        <span className="inline-block mt-0.5 rounded-full px-2 py-0.2 text-[9px] font-medium bg-[#f0f4f9] dark:bg-[#282a2c] text-[#444746] dark:text-[#c4c7c5]">
-                          {item.region}
-                        </span>
-                      </td>
+                      {visibleColumns.order_datetime !== false && (
+                        <td className="py-2.5 px-3 whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
+                          <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">
+                            {formatDateTime(item.order_datetime)}
+                          </div>
+                          <span className="inline-block mt-0.5 rounded-full px-2 py-0.2 text-[9px] font-medium bg-[#f0f4f9] dark:bg-[#282a2c] text-[#444746] dark:text-[#c4c7c5]">
+                            {item.region}
+                          </span>
+                        </td>
+                      )}
 
                       {/* 2. Cabang & Pengaju */}
-                      <td className="py-2.5 px-3 cursor-pointer" onClick={() => handleOpenDetail(item)}>
-                        <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] line-clamp-1">
-                          {item.branch_name}
-                        </div>
-                        <div className="text-[11px] text-[#444746] dark:text-[#c4c7c5] line-clamp-1">
-                          {item.requester_name} ({item.requester_division || 'BusDev'})
-                        </div>
-                      </td>
+                      {visibleColumns.branch_requester !== false && (
+                        <td className="py-2.5 px-3 cursor-pointer" onClick={() => handleOpenDetail(item)}>
+                          <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] line-clamp-1">
+                            {item.branch_name}
+                          </div>
+                          <div className="text-[11px] text-[#444746] dark:text-[#c4c7c5] line-clamp-1">
+                            {item.requester_name} ({item.requester_division || 'BusDev'})
+                          </div>
+                        </td>
+                      )}
 
                       {/* 3. Item & Klasifikasi */}
-                      <td className="py-2.5 px-3 max-w-xs cursor-pointer" onClick={() => handleOpenDetail(item)}>
-                        <div className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3] line-clamp-1">
-                          {item.item_name}
-                        </div>
-                        <div className="text-[10px] text-[#747775] dark:text-[#8e918f] line-clamp-1">
-                          {item.classification} {item.specification ? `(${item.specification})` : ''}
-                        </div>
-                      </td>
+                      {visibleColumns.item_classification !== false && (
+                        <td className="py-2.5 px-3 max-w-xs cursor-pointer" onClick={() => handleOpenDetail(item)}>
+                          <div className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3] line-clamp-1">
+                            {item.item_name}
+                          </div>
+                          <div className="text-[10px] text-[#747775] dark:text-[#8e918f] line-clamp-1">
+                            {item.classification} {item.specification ? `(${item.specification})` : ''}
+                          </div>
+                        </td>
+                      )}
 
                       {/* 4. Kebutuhan */}
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
-                        <span className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">{item.quantity_needed} unit</span>
-                        <div className="text-[10px] text-[#747775] dark:text-[#8e918f]">
-                          Stok: {item.quantity_stock_allocated} | PR: {item.quantity_pr}
-                        </div>
-                      </td>
+                      {visibleColumns.quantity !== false && (
+                        <td className="py-2.5 px-3 text-center whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
+                          <span className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">{item.quantity_needed} unit</span>
+                          <div className="text-[10px] text-[#747775] dark:text-[#8e918f]">
+                            Stok: {item.quantity_stock_allocated} | PR: {item.quantity_pr}
+                          </div>
+                        </td>
+                      )}
 
                       {/* 5. No RAB */}
-                      <td className="py-2.5 px-3 whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
-                        <span className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">
-                          {item.rab_number || '-'}
-                        </span>
-                      </td>
+                      {visibleColumns.rab_number !== false && (
+                        <td className="py-2.5 px-3 whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
+                          <span className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">
+                            {item.rab_number || '-'}
+                          </span>
+                        </td>
+                      )}
 
                       {/* 6. Target Opening */}
-                      <td className="py-2.5 px-3 whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
-                        <div className="flex items-center gap-1 text-[#1f1f1f] dark:text-[#e3e3e3]">
-                          <Store className="h-3 w-3 text-[#0b57d0] dark:text-[#a8c7fa]" />
-                          {formatDateOnly(item.opening_date)}
-                        </div>
-                      </td>
+                      {visibleColumns.opening_date !== false && (
+                        <td className="py-2.5 px-3 whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
+                          <div className="flex items-center gap-1 text-[#1f1f1f] dark:text-[#e3e3e3]">
+                            <Store className="h-3 w-3 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                            {formatDateOnly(item.opening_date)}
+                          </div>
+                        </td>
+                      )}
 
                       {/* 7. Status Stok */}
-                      <td className="py-2.5 px-3 whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
-                        <span
-                          className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                            isReadyStock
-                              ? 'badge-complete'
-                              : 'badge-alert'
-                          }`}
-                        >
-                          {item.stock_status || 'Not Ready'}
-                        </span>
-                      </td>
-
-                      {/* 8. Status Barang (Google M3 Inline Dropdown) */}
-                      <td className="py-2.5 px-3 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <select
-                            value={item.item_delivery_status || 'On Proses PR'}
-                            disabled={isUpdating}
-                            onChange={(e) => handleInlineStatusChange(item, e.target.value)}
-                            className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors focus:outline-none ${
-                              isCompleted
-                                ? 'border-[#ceead6] dark:border-[#0f5223] bg-[#e6f4ea] dark:bg-[#0f5223]/40 text-[#137333] dark:text-[#6dd58c]'
-                                : isPartial
-                                ? 'border-[#d2e3fc] dark:border-[#004a77] bg-[#e8f0fe] dark:bg-[#004a77]/40 text-[#0b57d0] dark:text-[#a8c7fa]'
-                                : 'border-[#feeed9] dark:border-[#4a2800] bg-[#fef7e0] dark:bg-[#4a2800]/40 text-[#b06000] dark:text-[#ffb951]'
+                      {visibleColumns.stock_status !== false && (
+                        <td className="py-2.5 px-3 whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
+                          <span
+                            className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                              isReadyStock
+                                ? 'badge-complete'
+                                : 'badge-alert'
                             }`}
                           >
-                            <option value="Lengkap">✓ Lengkap</option>
-                            <option value="Ready Gudang SCGA">📦 Ready Gudang SCGA</option>
-                            <option value="Dalam Pengiriman (SCGA)">🚚 Dalam Pengiriman</option>
-                            <option value="Diterima Sebagian">⚡ Diterima Sebagian</option>
-                            <option value="On Proses PR">📝 On Proses PR</option>
-                          </select>
-                          {isUpdating && <RefreshCw className="h-3 w-3 animate-spin text-[#747775]" />}
-                        </div>
-                      </td>
+                            {item.stock_status || 'Not Ready'}
+                          </span>
+                        </td>
+                      )}
+
+                      {/* 8. Status Barang (Google M3 Inline Dropdown) */}
+                      {visibleColumns.item_delivery_status !== false && (
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <select
+                              value={item.item_delivery_status || 'On Proses PR'}
+                              disabled={isUpdating}
+                              onChange={(e) => handleInlineStatusChange(item, e.target.value)}
+                              className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors focus:outline-none ${
+                                isCompleted
+                                  ? 'border-[#ceead6] dark:border-[#0f5223] bg-[#e6f4ea] dark:bg-[#0f5223]/40 text-[#137333] dark:text-[#6dd58c]'
+                                  : isPartial
+                                  ? 'border-[#d2e3fc] dark:border-[#004a77] bg-[#e8f0fe] dark:bg-[#004a77]/40 text-[#0b57d0] dark:text-[#a8c7fa]'
+                                  : 'border-[#feeed9] dark:border-[#4a2800] bg-[#fef7e0] dark:bg-[#4a2800]/40 text-[#b06000] dark:text-[#ffb951]'
+                              }`}
+                            >
+                              <option value="Lengkap">✓ Lengkap</option>
+                              <option value="Ready Gudang SCGA">📦 Ready Gudang SCGA</option>
+                              <option value="Dalam Pengiriman (SCGA)">🚚 Dalam Pengiriman</option>
+                              <option value="Diterima Sebagian">⚡ Diterima Sebagian</option>
+                              <option value="On Proses PR">📝 On Proses PR</option>
+                            </select>
+                            {isUpdating && <RefreshCw className="h-3 w-3 animate-spin text-[#747775]" />}
+                          </div>
+                        </td>
+                      )}
 
                       {/* 8b. Transfer Sistem Checklist */}
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleSystemTransfer(item);
-                          }}
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold transition-all border ${
-                            systemTransferIds.includes(itemId) || item.is_system_transfer
-                              ? 'border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0] dark:border-[#a8c7fa] dark:bg-[#004a77]/50 dark:text-[#a8c7fa] shadow-xs'
-                              : 'border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] text-[#747775] dark:bg-[#282a2c] dark:text-[#8e918f] hover:bg-[#e0e2ec]'
-                          }`}
-                          title="Centang untuk memasukkan item ini ke Role Transfer Sistem"
-                        >
-                          {systemTransferIds.includes(itemId) || item.is_system_transfer ? (
-                            <>
-                              <CheckSquare className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-                              <span>Role Transfer</span>
-                            </>
-                          ) : (
-                            <>
-                              <Square className="h-3.5 w-3.5 text-[#747775]" />
-                              <span>Non Transfer</span>
-                            </>
-                          )}
-                        </button>
-                      </td>
+                      {visibleColumns.system_transfer !== false && (
+                        <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleSystemTransfer(item);
+                            }}
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold transition-all border ${
+                              systemTransferIds.includes(itemId) || item.is_system_transfer
+                                ? 'border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0] dark:border-[#a8c7fa] dark:bg-[#004a77]/50 dark:text-[#a8c7fa] shadow-xs'
+                                : 'border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] text-[#747775] dark:bg-[#282a2c] dark:text-[#8e918f] hover:bg-[#e0e2ec]'
+                            }`}
+                            title="Centang untuk memasukkan item ini ke Role Transfer Sistem"
+                          >
+                            {systemTransferIds.includes(itemId) || item.is_system_transfer ? (
+                              <>
+                                <CheckSquare className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                                <span>Role Transfer</span>
+                              </>
+                            ) : (
+                              <>
+                                <Square className="h-3.5 w-3.5 text-[#747775]" />
+                                <span>Non Transfer</span>
+                              </>
+                            )}
+                          </button>
+                        </td>
+                      )}
 
                       {/* 9. SLA */}
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap font-medium text-[#1f1f1f] dark:text-[#e3e3e3] cursor-pointer" onClick={() => handleOpenDetail(item)}>
-                        {formatLeadTime(item.lead_time_days)}
-                      </td>
+                      {visibleColumns.sla !== false && (
+                        <td className="py-2.5 px-3 text-center whitespace-nowrap font-medium text-[#1f1f1f] dark:text-[#e3e3e3] cursor-pointer" onClick={() => handleOpenDetail(item)}>
+                          {formatLeadTime(item.lead_time_days)}
+                        </td>
+                      )}
 
                       {/* 10. Actions */}
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <button
-                          onClick={() => handleOpenDetail(item)}
-                          className="rounded-full bg-[#f0f4f9] dark:bg-[#282a2c] p-1.5 text-[#444746] dark:text-[#c4c7c5] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors"
-                          title="Lihat Detail & Edit Lengkap"
-                          aria-label={`Edit ${item.item_name}`}
-                        >
-                          <Edit3 className="h-3.5 w-3.5" />
-                        </button>
-                      </td>
+                      {visibleColumns.actions !== false && (
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          <button
+                            onClick={() => handleOpenDetail(item)}
+                            className="rounded-full bg-[#f0f4f9] dark:bg-[#282a2c] p-1.5 text-[#444746] dark:text-[#c4c7c5] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors"
+                            title="Lihat Detail & Edit Lengkap"
+                            aria-label={`Edit ${item.item_name}`}
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })
