@@ -148,10 +148,15 @@ export interface AssetFilterState {
   sortOrder: 'asc' | 'desc';
 }
 
-// ==========================================
-// 1. PENGGUNA & OUTLET TYPES
-// ==========================================
-export type UserRole = 'super_user' | 'user' | 'outlet_manager' | 'Super User' | 'User' | 'User Outlet Manager';
+export type UserRole = 
+  | 'super_user' 
+  | 'user' 
+  | 'outlet_manager' 
+  | 'trash_audit_manager'
+  | 'Super User' 
+  | 'User' 
+  | 'User Outlet Manager'
+  | 'Manajemen Sampah & Log';
 
 export interface UserProfile {
   id: string;
@@ -385,4 +390,47 @@ export interface DispositionRequest {
   alasan?: string;
   foto_url?: string;
   created_at: string;
+}
+
+// ==========================================
+// 4. MANAJEMEN SAMPAH & AUDIT LOG TYPES
+// ==========================================
+export type TrashEntityType = 'ASET' | 'OUTLET' | 'ITEM' | 'SURAT_JALAN' | 'DISPOSISI';
+
+export interface TrashItem {
+  id: string;
+  entity_type: TrashEntityType;
+  entity_id: string;
+  title: string;
+  subtitle?: string;
+  category?: string;
+  region?: string;
+  deleted_by: string;
+  deleted_by_role?: string;
+  deleted_at: string;
+  notes?: string;
+  original_data: any;
+}
+
+export type AuditActionType = 
+  | 'CREATE' 
+  | 'UPDATE' 
+  | 'DELETE_TO_TRASH' 
+  | 'RESTORE' 
+  | 'PERMANENT_DELETE' 
+  | 'EMPTY_TRASH'
+  | 'STATUS_CHANGE';
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  actor_name: string;
+  actor_role: string;
+  action_type: AuditActionType;
+  entity_type: TrashEntityType | 'PENGGUNA' | 'SYSTEM';
+  entity_id?: string;
+  entity_title: string;
+  details: string;
+  previous_state?: any;
+  new_state?: any;
 }

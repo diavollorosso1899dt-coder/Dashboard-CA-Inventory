@@ -10,10 +10,12 @@ import {
   Store, 
   FileText, 
   CheckCircle2,
-  Camera
+  Camera,
+  Trash2
 } from 'lucide-react';
 import { AssetRequest } from '@/lib/supabase/types';
 import { formatDateTime, formatDateOnly, formatIDR, formatLeadTime } from '@/lib/utils/date-formatter';
+import { useAuth } from '@/components/auth/AuthContext';
 
 interface AssetDetailModalProps {
   item: AssetRequest;
@@ -28,7 +30,9 @@ export function AssetDetailModal({
   onClose,
   onSaveSuccess,
 }: AssetDetailModalProps) {
+  const { user } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [deliveryStatus, setDeliveryStatus] = useState(item.item_delivery_status || 'On Proses');
   const [stockStatus, setStockStatus] = useState(item.stock_status || 'Not Ready (Stok Kosong)');
   const [picReceiver, setPicReceiver] = useState(item.pic_receiver || '');
@@ -38,6 +42,36 @@ export function AssetDetailModal({
   );
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [selectedModalPhoto, setSelectedModalPhoto] = useState<string | null>(null);
+
+  const handleDeleteToTrash = async () => {
+    if (!confirm(`Pindahkan aset "${item.item_name}" ke Tempat Sampah?\n\nData ini dapat dipulihkan kapan saja oleh Administrator / Manajemen Sampah & Log.`)) {
+      return;
+    }
+    try {
+      setIsDeleting(true);
+      const res = await fetch(`/api/assets/${item.id}`, {
+        method: 'DELETE',
+        headers: {
+          'x-user-name': user?.full_name || 'Super User',
+          'x-user-role': user?.role || 'Super User',
+        },
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setSaveMessage('Item berhasil dipindahkan ke Tempat Sampah.');
+        setTimeout(() => {
+          onClose();
+          window.location.reload();
+        }, 700);
+      } else {
+        setSaveMessage(json.error || 'Gagal menghapus aset');
+      }
+    } catch (err: any) {
+      setSaveMessage(`Gagal: ${err.message}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const itemPhotos: string[] = React.useMemo(() => {
     if (!item.photo_url) return [];
@@ -365,21 +399,34 @@ export function AssetDetailModal({
         </div>
 
         {/* Sticky Footer Actions */}
-        <div className="sticky bottom-0 z-20 flex-shrink-0 flex items-center justify-end gap-2.5 border-t border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#282a2c] px-6 py-3.5">
+        <div className="sticky bottom-0 z-20 flex-shrink-0 flex items-center justify-between gap-2.5 border-t border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#282a2c] px-6 py-3.5">
           <button
-            onClick={onClose}
-            className="rounded-full border border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] px-4 py-1.5 text-xs font-semibold text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] transition-colors cursor-pointer"
+            type="button"
+            disabled={isDeleting || isSaving}
+            onClick={handleDeleteToTrash}
+            className="flex items-center gap-1.5 rounded-full border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 px-3.5 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/60 transition-colors cursor-pointer disabled:opacity-50"
+            title="Pindahkan aset ini ke Tempat Sampah (Recycle Bin)"
           >
-            Batal
+            <Trash2 className="h-3.5 w-3.5" />
+            <span>{isDeleting ? 'Memindahkan...' : 'Hapus ke Sampah'}</span>
           </button>
-          <button
-            onClick={handleSave}
-            disabled={isSaving}
-            className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-5 py-1.5 text-xs font-semibold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors disabled:opacity-50 shadow-sm cursor-pointer"
-          >
-            <Save className="h-4 w-4" />
-            <span>{isSaving ? 'Menyimpan...' : 'Simpan Perubahan'}</span>
-          </button>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="rounded-full border border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] px-4 py-1.5 text-xs font-semibold text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] transition-colors cursor-pointer"
+            >
+              Batal
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={isSaving || isDeleting}
+              className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-5 py-1.5 text-xs font-semibold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors disabled:opacity-50 shadow-sm cursor-pointer"
+            >
+              <Save className="h-4 w-4" />
+              <span>{isSaving ? 'Menyimpan...' : 'Simpan Perubahan'}</span>
+            </button>
+          </div>
         </div>
       </div>
 

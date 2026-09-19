@@ -20,10 +20,12 @@ import {
   ArrowRightLeft,
   SlidersHorizontal,
   Eye,
-  EyeOff
+  EyeOff,
+  Trash2
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import { formatDateTime, formatDateOnly, formatLeadTime } from '@/lib/utils/date-formatter';
+import { useAuth } from '@/components/auth/AuthContext';
 import { AssetDetailModal } from './AssetDetailModal';
 import { BranchBastModal } from './BranchBastModal';
 
@@ -81,10 +83,12 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   const [pageSize, setPageSize] = useState(25);
   
   // Modal & Selection States
+  const { user } = useAuth();
   const [selectedItem, setSelectedItem] = useState<AssetRequest | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [updatingRowId, setUpdatingRowId] = useState<string | null>(null);
   const [systemTransferIds, setSystemTransferIds] = useState<string[]>([]);
 
@@ -389,6 +393,39 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
       console.error('Error during bulk update:', err);
     } finally {
       setIsBulkUpdating(false);
+    }
+  };
+
+  // Bulk Delete to Trash Handler
+  const handleBulkDeleteToTrash = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(`Pindahkan ${selectedIds.length} item aset terpilih ke Tempat Sampah?\n\nData masih dapat dipulihkan kapan saja oleh Manajemen Sampah & Log.`)) {
+      return;
+    }
+
+    try {
+      setIsBulkDeleting(true);
+      const res = await fetch('/api/assets/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: selectedIds,
+          deleted_by: user?.full_name || 'Admin',
+        }),
+      });
+
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setItems((prev) => prev.filter((it) => !selectedIds.includes(it.id || it.external_id)));
+        setSelectedIds([]);
+      } else {
+        alert(json.error || 'Gagal memindahkan item ke tempat sampah');
+      }
+    } catch (err: any) {
+      console.error('Error in bulk delete to trash:', err);
+      alert(`Terjadi kesalahan: ${err.message}`);
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -828,6 +865,15 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
             >
               <Printer className="h-3.5 w-3.5" />
               Cetak BAST ({selectedIds.length} Item)
+            </button>
+            <button
+              onClick={handleBulkDeleteToTrash}
+              disabled={isBulkDeleting || isBulkUpdating}
+              className="flex items-center gap-1.5 rounded-full bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 shadow-sm"
+              title="Pindahkan semua item terpilih ke Tempat Sampah"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>{isBulkDeleting ? 'Menghapus...' : `Hapus (${selectedIds.length}) ke Sampah`}</span>
             </button>
             <button
               onClick={() => setSelectedIds([])}

@@ -21,7 +21,9 @@ import {
   FileText,
   Boxes,
   LogOut,
-  ChevronRight
+  ChevronRight,
+  Trash2,
+  History
 } from 'lucide-react';
 
 import { useNavigation } from './NavigationContext';
@@ -113,6 +115,7 @@ export function Sidebar() {
           icon: Users,
           children: [
             { name: 'Super User', href: '/users?role=Super+User' },
+            { name: 'Manajemen Sampah & Log', href: '/users?role=Manajemen+Sampah+%26+Log' },
             { name: 'User', href: '/users?role=User' },
             { name: 'User Outlet Manager', href: '/users?role=User+Outlet+Manager' },
           ]
@@ -126,6 +129,11 @@ export function Sidebar() {
             { name: 'Daftar Item Baru', href: '/items?tab=new' },
             { name: 'Master Aset (Gambar & Spek)', href: '/items?tab=master' },
           ]
+        },
+        { 
+          name: 'Manajemen Sampah & Log', 
+          href: '/trash', 
+          icon: Trash2,
         },
       ],
     },

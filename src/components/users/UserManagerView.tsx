@@ -18,7 +18,8 @@ import {
   Building2,
   Eye,
   EyeOff,
-  AtSign
+  AtSign,
+  Trash2
 } from 'lucide-react';
 
 import { useSearchParams } from 'next/navigation';
@@ -133,6 +134,13 @@ export default function UserManagerView() {
             <ShieldCheck className="w-3.5 h-3.5" /> Super User (Administrator)
           </span>
         );
+      case 'Manajemen Sampah & Log':
+      case 'trash_audit_manager':
+        return (
+          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
+            <Trash2 className="w-3.5 h-3.5" /> Manajemen Sampah &amp; Log
+          </span>
+        );
       case 'User Outlet Manager':
         return (
           <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
@@ -187,7 +195,7 @@ export default function UserManagerView() {
       </div>
 
       {/* Role Explanation Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         <div className="bg-purple-50/50 dark:bg-purple-950/20 p-4 rounded-xl border border-purple-100 dark:border-purple-900/40">
           <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300 font-bold text-sm mb-1">
             <ShieldCheck className="w-4 h-4" /> Super User
@@ -197,9 +205,18 @@ export default function UserManagerView() {
           </p>
         </div>
 
+        <div className="bg-rose-50/50 dark:bg-rose-950/20 p-4 rounded-xl border border-rose-100 dark:border-rose-900/40">
+          <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300 font-bold text-sm mb-1">
+            <Trash2 className="w-4 h-4" /> Manajemen Sampah &amp; Log
+          </div>
+          <p className="text-xs text-slate-600 dark:text-slate-400">
+            Otorisasi audit trail &amp; pemulihan: mengelola Tempat Sampah, pulihkan data terhapus, hapus permanen, dan cek log user.
+          </p>
+        </div>
+
         <div className="bg-blue-50/50 dark:bg-blue-950/20 p-4 rounded-xl border border-blue-100 dark:border-blue-900/40">
           <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300 font-bold text-sm mb-1">
-            <UserCheck className="w-4 h-4" /> User (Staff Pusat / Logistik)
+            <UserCheck className="w-4 h-4" /> User (Staff Logistik)
           </div>
           <p className="text-xs text-slate-600 dark:text-slate-400">
             Fokus operasional: verifikasi ketersediaan stok gudang, packing barang, penugasan armada driver, dan pembaruan resi SJ.
@@ -208,7 +225,7 @@ export default function UserManagerView() {
 
         <div className="bg-amber-50/50 dark:bg-amber-950/20 p-4 rounded-xl border border-amber-100 dark:border-amber-900/40">
           <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300 font-bold text-sm mb-1">
-            <Store className="w-4 h-4" /> User Outlet Manager
+            <Store className="w-4 h-4" /> Outlet Manager
           </div>
           <p className="text-xs text-slate-600 dark:text-slate-400">
             Akses spesifik ke outlet bersangkutan: membuat RO kebutuhan toko, konfirmasi penerimaan barang, dan lapor barang rusak.
@@ -218,7 +235,7 @@ export default function UserManagerView() {
 
       {/* Filter and Search */}
       <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-        <div className="relative w-full md:w-96">
+        <div className="relative w-full md:w-80">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
@@ -231,7 +248,7 @@ export default function UserManagerView() {
 
         <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
           <SlidersHorizontal className="w-4 h-4 text-slate-400 shrink-0" />
-          {['ALL', 'Super User', 'User', 'User Outlet Manager'].map((rf) => (
+          {['ALL', 'Super User', 'Manajemen Sampah & Log', 'User', 'User Outlet Manager'].map((rf) => (
             <button
               key={rf}
               onClick={() => setRoleFilter(rf)}
@@ -422,6 +439,7 @@ export default function UserManagerView() {
                   className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                 >
                   <option value="Super User">Super User (Akses Penuh Seluruh Sistem)</option>
+                  <option value="Manajemen Sampah & Log">Manajemen Sampah &amp; Log (Kelola Audit &amp; Pemulihan Data)</option>
                   <option value="User">User (Staff Gudang &amp; Logistik Pusat)</option>
                   <option value="User Outlet Manager">User Outlet Manager (Khusus Cabang)</option>
                 </select>
