@@ -9,7 +9,8 @@ import {
   User, 
   Store, 
   FileText, 
-  CheckCircle2 
+  CheckCircle2,
+  Camera
 } from 'lucide-react';
 import { AssetRequest } from '@/lib/supabase/types';
 import { formatDateTime, formatDateOnly, formatIDR, formatLeadTime } from '@/lib/utils/date-formatter';
@@ -36,6 +37,18 @@ export function AssetDetailModal({
     item.received_date ? item.received_date.split('T')[0] : ''
   );
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [selectedModalPhoto, setSelectedModalPhoto] = useState<string | null>(null);
+
+  const itemPhotos: string[] = React.useMemo(() => {
+    if (!item.photo_url) return [];
+    if (item.photo_url.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(item.photo_url);
+        if (Array.isArray(parsed)) return parsed.filter((p) => typeof p === 'string' && p);
+      } catch {}
+    }
+    return [item.photo_url];
+  }, [item.photo_url]);
 
   useEffect(() => {
     setDeliveryStatus(item.item_delivery_status || 'On Proses');
@@ -207,6 +220,34 @@ export function AssetDetailModal({
             </div>
           )}
 
+          {/* Foto Dokumentasi Aset */}
+          {itemPhotos.length > 0 && (
+            <div>
+              <label className="block font-bold uppercase text-[10px] text-[#747775] dark:text-[#8e918f] mb-1.5 flex items-center gap-1.5">
+                <Camera className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                Foto Dokumentasi Aset ({itemPhotos.length})
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {itemPhotos.map((src, i) => (
+                  <div
+                    key={i}
+                    onClick={() => setSelectedModalPhoto(src)}
+                    className="group relative rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] overflow-hidden aspect-video cursor-pointer hover:shadow-md transition-all"
+                  >
+                    <img
+                      src={src}
+                      alt={`Foto Aset ${i + 1}`}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <span className="text-[10px] text-white font-semibold bg-black/50 px-2 py-0.5 rounded-full">Perbesar</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Pengadaan & Vendor Info */}
           <div className="rounded-2xl bg-[#f0f4f9] dark:bg-[#282a2c] p-4 border border-[#e0e2ec] dark:border-[#444746]/60 grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div>
@@ -340,8 +381,32 @@ export function AssetDetailModal({
             <span>{isSaving ? 'Menyimpan...' : 'Simpan Perubahan'}</span>
           </button>
         </div>
-
       </div>
+
+      {/* Lightbox / Enlarged Photo Modal */}
+      {selectedModalPhoto && (
+        <div 
+          onClick={() => setSelectedModalPhoto(null)}
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()} 
+            className="relative max-w-3xl max-h-[85vh] bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/20"
+          >
+            <button
+              onClick={() => setSelectedModalPhoto(null)}
+              className="absolute top-3 right-3 h-8 w-8 rounded-full bg-black/70 text-white hover:bg-black flex items-center justify-center z-10 transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img 
+              src={selectedModalPhoto} 
+              alt="Preview Foto Aset" 
+              className="max-w-full max-h-[80vh] object-contain mx-auto"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

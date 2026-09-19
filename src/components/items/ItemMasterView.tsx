@@ -33,6 +33,17 @@ interface ItemMasterViewProps {
   initialItems: MasterAssetItem[];
 }
 
+function getPrimaryPhotoUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(url);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed[0];
+    } catch {}
+  }
+  return url;
+}
+
 export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
   const searchParams = useSearchParams();
   const initialTab = searchParams.get('tab') === 'new' ? 'new' : 'master';
@@ -279,9 +290,9 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
                   <div>
                     {/* Image Header */}
                     <div className="relative h-44 bg-slate-100 dark:bg-slate-800 flex items-center justify-center border-b border-slate-100 dark:border-slate-800 overflow-hidden">
-                      {item.photo_url ? (
+                      {getPrimaryPhotoUrl(item.photo_url) ? (
                         <img
-                          src={item.photo_url}
+                          src={getPrimaryPhotoUrl(item.photo_url)!}
                           alt={item.item_name}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                           onError={(e) => {

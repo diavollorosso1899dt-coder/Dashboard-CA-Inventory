@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   PlusCircle, 
@@ -10,7 +10,14 @@ import {
   Layers, 
   FileText, 
   Image as ImageIcon,
-  ArrowRight
+  ArrowRight,
+  Camera,
+  UploadCloud,
+  Trash2,
+  ZoomIn,
+  Star,
+  X,
+  RefreshCw
 } from 'lucide-react';
 import { Outlet } from '@/lib/supabase/types';
 import Link from 'next/link';
@@ -36,9 +43,17 @@ export function InputAssetForm({ outlets: initialOutlets }: InputAssetFormProps)
   const [systemItemName, setSystemItemName] = useState('');
   const [classification, setClassification] = useState('AST-Furniture');
   const [specification, setSpecification] = useState('');
-  const [photoUrl, setPhotoUrl] = useState('');
   const [quantityNeeded, setQuantityNeeded] = useState(1);
   const [rabPrice, setRabPrice] = useState(0);
+
+  // Multiple Photos State
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [photoUrlInput, setPhotoUrlInput] = useState('');
+  const [isProcessingPhotos, setIsProcessingPhotos] = useState(false);
+  const [previewModalImg, setPreviewModalImg] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fulfillment defaults
   const [stockStatus, setStockStatus] = useState('Not Ready (Stok Kosong)');
   const [quantityStock, setQuantityStock] = useState(0);
   const [quantityPr, setQuantityPr] = useState(0);
@@ -60,6 +75,84 @@ export function InputAssetForm({ outlets: initialOutlets }: InputAssetFormProps)
 
   const finalBranchName = isNewOutlet ? newBranchName.trim() : branchName;
 
+  // Compress image client-side to prevent large payload bottlenecks
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          const maxDimension = 1200;
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            } else {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', 0.82));
+          } else {
+            resolve(event.target?.result as string);
+          }
+        };
+        img.onerror = () => resolve(event.target?.result as string);
+        img.src = event.target?.result as string;
+      };
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    setIsProcessingPhotos(true);
+    try {
+      const fileList = Array.from(e.target.files);
+      const processed: string[] = [];
+      for (const file of fileList) {
+        if (file.type.startsWith('image/')) {
+          const compressed = await compressImage(file);
+          if (compressed) processed.push(compressed);
+        }
+      }
+      setPhotos((prev) => [...prev, ...processed]);
+    } catch (err) {
+      console.error('Error reading photos:', err);
+    } finally {
+      setIsProcessingPhotos(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemovePhoto = (index: number) => {
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSetPrimaryPhoto = (index: number) => {
+    setPhotos((prev) => {
+      const copy = [...prev];
+      const [selected] = copy.splice(index, 1);
+      return [selected, ...copy];
+    });
+  };
+
+  const handleAddPhotoByUrl = () => {
+    if (photoUrlInput.trim()) {
+      setPhotos((prev) => [...prev, photoUrlInput.trim()]);
+      setPhotoUrlInput('');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!finalBranchName) {
@@ -73,6 +166,10 @@ export function InputAssetForm({ outlets: initialOutlets }: InputAssetFormProps)
 
     try {
       setIsSubmitting(true);
+      const finalPhotoUrl = photos.length > 0 
+        ? (photos.length === 1 ? photos[0] : JSON.stringify(photos)) 
+        : null;
+
       const payload = {
         region,
         branch_name: finalBranchName,
@@ -86,13 +183,13 @@ export function InputAssetForm({ outlets: initialOutlets }: InputAssetFormProps)
         system_item_name: systemItemName || itemName,
         classification,
         specification,
-        photo_url: photoUrl || null,
+        photo_url: finalPhotoUrl,
         quantity_needed: quantityNeeded,
         rab_price: rabPrice,
         rab_total: calculatedTotal,
         stock_status: stockStatus,
         quantity_stock_allocated: quantityStock,
-        quantity_pr: quantityPr,
+        quantity_pr: quantityPr || quantityNeeded,
         is_direct_shipment: isDirectShipment,
         notes,
       };
@@ -424,62 +521,151 @@ export function InputAssetForm({ outlets: initialOutlets }: InputAssetFormProps)
             </div>
           </div>
 
-          {/* Section 4: Alokasi Stok & Logistik */}
+          {/* Section 4: Foto & Dokumentasi Aset (Multiple Upload) */}
           <div className="space-y-3">
-            <div className="flex items-center gap-2 font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3] border-b border-[#e0e2ec] dark:border-[#444746] pb-2">
-              <FileText className="h-4 w-4 text-[#b06000] dark:text-[#ffb951]" />
-              <span>4. Alokasi Stok Gudang SCGA &amp; Rencana Pengiriman</span>
+            <div className="flex items-center justify-between border-b border-[#e0e2ec] dark:border-[#444746] pb-2">
+              <div className="flex items-center gap-2 font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3]">
+                <Camera className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                <span>4. Foto Dokumentasi Aset</span>
+              </div>
+              <span className="rounded-full bg-[#e8f0fe] dark:bg-[#004a77] px-2.5 py-0.5 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa]">
+                {photos.length > 0 ? `${photos.length} Foto Terpilih` : 'Multiple Foto Didukung'}
+              </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block font-bold text-[#444746] dark:text-[#c4c7c5] mb-1">Status Stok Gudang</label>
-                <select
-                  value={stockStatus}
-                  onChange={(e) => setStockStatus(e.target.value)}
-                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-2 text-[#1f1f1f] dark:text-[#e3e3e3]"
-                >
-                  <option value="Ready (Spek Sesuai)">Ready (Spek Sesuai)</option>
-                  <option value="Ready (Spek Berbeda)">Ready (Spek Berbeda)</option>
-                  <option value="Not Ready (Stok Kosong)">Not Ready (Stok Kosong)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-bold text-[#444746] dark:text-[#c4c7c5] mb-1">Alokasi Stok Gudang</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={quantityStock}
-                  onChange={(e) => setQuantityStock(parseInt(e.target.value) || 0)}
-                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-2 text-[#1f1f1f] dark:text-[#e3e3e3]"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-[#444746] dark:text-[#c4c7c5] mb-1">Jumlah PR (Beli Baru)</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={quantityPr}
-                  onChange={(e) => setQuantityPr(parseInt(e.target.value) || 0)}
-                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-2 text-[#1f1f1f] dark:text-[#e3e3e3]"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 pt-1">
+            {/* Upload Drag-and-Drop Area */}
+            <div 
+              onClick={() => fileInputRef.current?.click()}
+              className="relative cursor-pointer rounded-2xl border-2 border-dashed border-[#c4c7c5] dark:border-[#444746] hover:border-[#0b57d0] dark:hover:border-[#a8c7fa] bg-[#f8fafd] dark:bg-[#1e1f20]/50 hover:bg-[#e8f0fe]/30 dark:hover:bg-[#004a77]/20 p-5 text-center transition-all duration-200 group"
+            >
               <input
-                type="checkbox"
-                id="directShip"
-                checked={isDirectShipment}
-                onChange={(e) => setIsDirectShipment(e.target.checked)}
-                className="rounded border-[#747775] text-[#0b57d0] focus:ring-0 h-4 w-4"
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={handleFilesSelected}
+                className="hidden"
               />
-              <label htmlFor="directShip" className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">
-                Pengiriman Langsung Ekspedisi / Vendor ke Outlet (Direct Shipment)
-              </label>
+              <div className="flex flex-col items-center justify-center gap-2">
+                <div className="h-12 w-12 rounded-full bg-[#e8f0fe] dark:bg-[#004a77] text-[#0b57d0] dark:text-[#a8c7fa] flex items-center justify-center group-hover:scale-110 transition-transform shadow-xs">
+                  {isProcessingPhotos ? (
+                    <RefreshCw className="h-6 w-6 animate-spin" />
+                  ) : (
+                    <UploadCloud className="h-6 w-6" />
+                  )}
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
+                    {isProcessingPhotos ? 'Sedang memproses foto...' : 'Klik untuk memilih foto atau seret file ke sini'}
+                  </div>
+                  <p className="text-[11px] text-[#747775] dark:text-[#8e918f] mt-0.5">
+                    Format JPG, PNG, WEBP. Dapat memilih <strong>banyak foto sekaligus</strong> (multiple file selection).
+                  </p>
+                </div>
+              </div>
             </div>
+
+            {/* Optional URL Input */}
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={photoUrlInput}
+                onChange={(e) => setPhotoUrlInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddPhotoByUrl();
+                  }
+                }}
+                placeholder="Atau masukkan URL foto online (opsional)..."
+                className="flex-1 rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleAddPhotoByUrl}
+                disabled={!photoUrlInput.trim()}
+                className="rounded-xl border border-[#0b57d0] dark:border-[#a8c7fa] bg-[#e8f0fe] dark:bg-[#004a77] text-[#0b57d0] dark:text-[#a8c7fa] px-3.5 py-1.5 text-xs font-bold hover:bg-[#d3e3fd] disabled:opacity-40 transition-colors shrink-0"
+              >
+                + Tambah URL
+              </button>
+            </div>
+
+            {/* Photo Gallery Thumbnails */}
+            {photos.length > 0 && (
+              <div className="space-y-2 pt-2">
+                <div className="flex items-center justify-between text-[11px] text-[#444746] dark:text-[#c4c7c5]">
+                  <span className="font-semibold">Foto Terunggah ({photos.length} item):</span>
+                  <button
+                    type="button"
+                    onClick={() => setPhotos([])}
+                    className="text-[#b3261e] dark:text-[#f2b8b5] hover:underline"
+                  >
+                    Hapus Semua
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                  {photos.map((src, idx) => (
+                    <div
+                      key={idx}
+                      className="group relative rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] overflow-hidden shadow-xs hover:shadow-md transition-all aspect-square"
+                    >
+                      <img
+                        src={src}
+                        alt={`Foto Aset ${idx + 1}`}
+                        className="w-full h-full object-cover cursor-pointer group-hover:scale-105 transition-transform duration-200"
+                        onClick={() => setPreviewModalImg(src)}
+                      />
+
+                      {/* Top Badges */}
+                      <div className="absolute top-1.5 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
+                        {idx === 0 ? (
+                          <span className="rounded-md bg-[#0b57d0] text-white text-[9px] font-bold px-1.5 py-0.5 shadow-sm flex items-center gap-0.5">
+                            <Star className="h-2.5 w-2.5 fill-current" /> Utama
+                          </span>
+                        ) : (
+                          <span className="rounded-md bg-black/60 backdrop-blur-xs text-white text-[9px] font-semibold px-1.5 py-0.5">
+                            #{idx + 1}
+                          </span>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemovePhoto(idx);
+                          }}
+                          className="pointer-events-auto h-6 w-6 rounded-full bg-red-600/90 text-white flex items-center justify-center shadow hover:bg-red-700 transition-colors"
+                          title="Hapus foto ini"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Bottom Quick Controls */}
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewModalImg(src)}
+                          className="text-[10px] text-white hover:text-[#a8c7fa] flex items-center gap-1 font-semibold"
+                        >
+                          <ZoomIn className="h-3 w-3" /> Lihat
+                        </button>
+                        {idx !== 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleSetPrimaryPhoto(idx)}
+                            className="text-[10px] text-amber-300 hover:text-amber-200 font-semibold"
+                          >
+                            Set Utama
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#e0e2ec] dark:border-[#444746]">
@@ -501,6 +687,31 @@ export function InputAssetForm({ outlets: initialOutlets }: InputAssetFormProps)
           </div>
         </form>
       </div>
+
+      {/* Lightbox / Enlarged Photo Modal */}
+      {previewModalImg && (
+        <div 
+          onClick={() => setPreviewModalImg(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()} 
+            className="relative max-w-3xl max-h-[85vh] bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/20"
+          >
+            <button
+              onClick={() => setPreviewModalImg(null)}
+              className="absolute top-3 right-3 h-8 w-8 rounded-full bg-black/70 text-white hover:bg-black flex items-center justify-center z-10 transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img 
+              src={previewModalImg} 
+              alt="Preview Foto Aset" 
+              className="max-w-full max-h-[80vh] object-contain mx-auto"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
