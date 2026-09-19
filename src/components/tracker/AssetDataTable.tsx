@@ -191,6 +191,31 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
     setCurrentPage(1);
   }, [initialItems]);
 
+  useEffect(() => {
+    const handleResetEvent = () => {
+      try {
+        localStorage.removeItem('ca_system_transfer_ids');
+      } catch (e) {}
+      setSystemTransferIds([]);
+      setItems((prev) => prev.map((it) => ({ ...it, is_system_transfer: false })));
+    };
+    window.addEventListener('ca_transfers_reset', handleResetEvent);
+    return () => window.removeEventListener('ca_transfers_reset', handleResetEvent);
+  }, []);
+
+  const handleResetTransferChecklist = async () => {
+    if (!window.confirm('Reset seluruh checklist Role Transfer menjadi 0?')) return;
+    try {
+      localStorage.removeItem('ca_system_transfer_ids');
+      setSystemTransferIds([]);
+      setItems((prev) => prev.map((it) => ({ ...it, is_system_transfer: false })));
+      window.dispatchEvent(new Event('ca_transfers_reset'));
+      await fetch('/api/transfers/reset', { method: 'POST' });
+    } catch (e) {
+      console.error('Error resetting transfers checklist:', e);
+    }
+  };
+
   const handleToggleSystemTransfer = async (item: AssetRequest) => {
     const id = item.id || item.external_id;
     const isCurrentlyTransfer = systemTransferIds.includes(id) || Boolean(item.is_system_transfer);
@@ -559,17 +584,28 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
           <CheckCircle2 className="h-3.5 w-3.5 text-[#137333]" />
           Sudah Lengkap
         </button>
-        <button
-          onClick={() => { setQuickFilter('TRANSFER_SYSTEM'); setCurrentPage(1); }}
-          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all ${
-            quickFilter === 'TRANSFER_SYSTEM'
-              ? 'bg-[#c2e7ff] dark:bg-[#004a77] border border-[#0b57d0] dark:border-[#a8c7fa] text-[#001d35] dark:text-[#c2e7ff] shadow-sm'
-              : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/30'
-          }`}
-        >
-          <ArrowRightLeft className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-          Role Transfer ({systemTransferIds.length})
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => { setQuickFilter('TRANSFER_SYSTEM'); setCurrentPage(1); }}
+            className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all ${
+              quickFilter === 'TRANSFER_SYSTEM'
+                ? 'bg-[#c2e7ff] dark:bg-[#004a77] border border-[#0b57d0] dark:border-[#a8c7fa] text-[#001d35] dark:text-[#c2e7ff] shadow-sm'
+                : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/30'
+            }`}
+          >
+            <ArrowRightLeft className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+            Role Transfer ({systemTransferIds.length})
+          </button>
+          {systemTransferIds.length > 0 && (
+            <button
+              onClick={handleResetTransferChecklist}
+              title="Reset seluruh checklist transfer aset menjadi 0"
+              className="p-1 rounded-full text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs transition-colors"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 2. Google M3 Search & Filter Card */}

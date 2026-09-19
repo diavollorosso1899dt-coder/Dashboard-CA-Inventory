@@ -195,27 +195,36 @@ export interface Outlet {
 // ==========================================
 // 2. MONITORING: TRANSFER ASET TYPES
 // ==========================================
-export type TransferStatus = 'DRAFT' | 'IN_TRANSIT' | 'RECEIVED' | 'CANCELLED';
+export type TransferStatus = 'DRAFT' | 'IN_TRANSIT' | 'RECEIVED' | 'COMPLETED' | 'CANCELLED';
 
 export interface TransferItem {
   id: string;
+  asset_id?: string;
   item_name: string;
   specification?: string;
   quantity: number;
   condition: 'BAIK' | 'PERLU_PERBAIKAN' | 'BEKAS_LAYAK';
+  notes?: string;
 }
 
 export interface AssetTransfer {
   id: string;
   transfer_number: string;
+  surat_jalan_number?: string;
+  source_type?: 'GUDANG_PUSAT' | 'OUTLET';
   from_location: string;
+  destination_type?: 'OUTLET' | 'GUDANG_PUSAT';
   to_location: string;
   transfer_date: string;
+  received_date?: string | null;
   status: TransferStatus;
   sender_pic: string;
   receiver_pic?: string;
+  expedition_courier?: string;
+  tracking_number?: string;
   items: TransferItem[];
   notes?: string;
+  received_notes?: string;
   created_at: string;
 }
 
@@ -395,7 +404,7 @@ export interface DispositionRequest {
 // ==========================================
 // 4. MANAJEMEN SAMPAH & AUDIT LOG TYPES
 // ==========================================
-export type TrashEntityType = 'ASET' | 'OUTLET' | 'ITEM' | 'SURAT_JALAN' | 'DISPOSISI';
+export type TrashEntityType = 'ASET' | 'OUTLET' | 'ITEM' | 'SURAT_JALAN' | 'DISPOSISI' | 'TRANSFER';
 
 export interface TrashItem {
   id: string;

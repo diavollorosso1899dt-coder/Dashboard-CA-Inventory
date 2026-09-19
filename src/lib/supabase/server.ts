@@ -193,24 +193,7 @@ if (!global.__LOCAL_ASSET_CACHE__) {
         created_at: new Date().toISOString(),
       }
     ],
-    transfers: [
-      {
-        id: 'trf-1',
-        transfer_number: 'TRF/CA/2026/03/001',
-        from_location: 'Gudang Pusat SCGA',
-        to_location: 'Mie Ayam Muntjul Karawang',
-        transfer_date: '2026-03-08',
-        status: 'IN_TRANSIT',
-        sender_pic: 'Staff Logistik SCGA',
-        receiver_pic: 'Budi Santoso',
-        notes: 'Pengiriman batch 1 meja kursi dan chiller dapur',
-        items: [
-          { id: 'ti-1', item_name: 'Meja Lesehan Kayu', quantity: 6, condition: 'BAIK' },
-          { id: 'ti-2', item_name: 'Kursi Kayu Panjang', quantity: 40, condition: 'BAIK' },
-        ],
-        created_at: new Date().toISOString(),
-      }
-    ],
+    transfers: [],
     requestOrders: [
       {
         id: 'ro-1',
@@ -1218,18 +1201,29 @@ export async function getAssetTransfers(): Promise<AssetTransfer[]> {
 export async function createAssetTransfer(payload: Partial<AssetTransfer>): Promise<AssetTransfer> {
   const admin = getAdminClient();
   const transferId = ensureUuid(payload.id);
+  const now = new Date();
+  const year = now.getFullYear();
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+
   const transfer: AssetTransfer = {
     id: transferId,
-    transfer_number: payload.transfer_number || `TRF/CA/${new Date().getFullYear()}/${Date.now().toString().slice(-4)}`,
+    transfer_number: payload.transfer_number || `TRF-MUT/${year}/${randomSuffix}`,
+    surat_jalan_number: payload.surat_jalan_number || `SJ-MUT/${year}/${randomSuffix}`,
+    source_type: payload.source_type || 'GUDANG_PUSAT',
     from_location: payload.from_location || 'Gudang Pusat SCGA',
-    to_location: payload.to_location || 'Outlet',
-    transfer_date: payload.transfer_date || new Date().toISOString().split('T')[0],
+    destination_type: payload.destination_type || 'OUTLET',
+    to_location: payload.to_location || 'Outlet Cabang',
+    transfer_date: payload.transfer_date || now.toISOString().split('T')[0],
+    received_date: payload.received_date || null,
     status: payload.status || 'IN_TRANSIT',
-    sender_pic: payload.sender_pic || 'Staff SCGA',
-    receiver_pic: payload.receiver_pic,
+    sender_pic: payload.sender_pic || 'Staff Logistik SCGA',
+    receiver_pic: payload.receiver_pic || '',
+    expedition_courier: payload.expedition_courier || 'Armada Internal SCGA',
+    tracking_number: payload.tracking_number || `TRK-${Date.now().toString().slice(-6)}`,
     items: payload.items || [],
-    notes: payload.notes,
-    created_at: new Date().toISOString(),
+    notes: payload.notes || '',
+    received_notes: payload.received_notes || '',
+    created_at: now.toISOString(),
   };
 
   if (admin) {
@@ -1248,6 +1242,94 @@ export async function createAssetTransfer(payload: Partial<AssetTransfer>): Prom
 
   cache.transfers.unshift(transfer);
   return transfer;
+}
+
+export async function updateAssetTransfer(id: string, payload: Partial<AssetTransfer>): Promise<AssetTransfer | null> {
+  const admin = getAdminClient();
+  if (admin) {
+    try {
+      const { data, error } = await admin
+        .from('asset_transfers')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single();
+      if (!error && data) {
+        cache.transfers = cache.transfers.map((t) => (t.id === id ? (data as AssetTransfer) : t));
+        return data as AssetTransfer;
+      }
+    } catch (err: any) {
+      console.error('[Supabase updateAssetTransfer exception]:', err.message);
+    }
+  }
+
+  let updated: AssetTransfer | null = null;
+  cache.transfers = cache.transfers.map((t) => {
+    if (t.id === id) {
+      updated = { ...t, ...payload };
+      return updated;
+    }
+    return t;
+  });
+  return updated;
+}
+
+export async function clearAllAssetTransfers(): Promise<{ success: boolean; count: number }> {
+  const admin = getAdminClient();
+  let count = 0;
+  if (admin) {
+    try {
+      const { data, error } = await admin
+        .from('asset_transfers')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000')
+        .select('id');
+      if (!error && data) {
+        count = data.length;
+      }
+    } catch (err: any) {
+      console.error('[Supabase clearAllAssetTransfers exception]:', err.message);
+    }
+  }
+
+  count = Math.max(count, cache.transfers.length);
+  cache.transfers = [];
+
+  return { success: true, count };
+}
+
+export async function resetAllSystemTransfers(): Promise<{ success: boolean; resetCount: number }> {
+  let resetCount = 0;
+  const admin = getAdminClient();
+  if (admin) {
+    try {
+      const { data, error } = await admin
+        .from('asset_requests')
+        .update({ is_system_transfer: false })
+        .eq('is_system_transfer', true)
+        .select('id');
+      if (!error && data) {
+        resetCount = data.length;
+      }
+    } catch (err: any) {
+      console.error('[Supabase resetAllSystemTransfers exception]:', err.message);
+    }
+  }
+
+  cache.items.forEach((it) => {
+    if (it.is_system_transfer) {
+      it.is_system_transfer = false;
+      resetCount++;
+    }
+  });
+
+  cache.manualEdits.forEach((edit) => {
+    if (edit.is_system_transfer) {
+      edit.is_system_transfer = false;
+    }
+  });
+
+  return { success: true, resetCount };
 }
 
 export async function createAssetRequest(payload: Partial<AssetRequest>): Promise<AssetRequest> {
