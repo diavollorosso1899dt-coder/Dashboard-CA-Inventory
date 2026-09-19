@@ -85,12 +85,12 @@ export default function PrintSuratJalanPage() {
         <div className="border-b-2 border-slate-900 pb-4 mb-6">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-xl tracking-wider">
-                CA
+              <div className="w-12 h-12 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm tracking-wider">
+                HNT
               </div>
               <div>
                 <h1 className="text-xl font-extrabold tracking-tight text-slate-900 uppercase">
-                  PT. COFFEE ARABICA INDONESIA
+                  HANTARAN
                 </h1>
                 <p className="text-xs text-slate-500 font-medium">
                   Divisi Central Asset Management & Logistik Distribusi Nasional

@@ -250,14 +250,14 @@ export function Navbar() {
                 <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-bold flex items-center justify-center text-sm shrink-0">
                   {user?.full_name 
                     ? user.full_name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase() 
-                    : 'CA'}
+                    : 'HNT'}
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
                     {user?.full_name || 'Pengguna Dashboard'}
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                    {user?.email || 'user@coffee-arabica.co.id'}
+                    {user?.email || 'user@hantaran.co.id'}
                   </div>
                   <div className="mt-1">
                     <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">

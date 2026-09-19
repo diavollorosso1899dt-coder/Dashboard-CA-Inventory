@@ -477,6 +477,9 @@ export async function getAssetRequests(options?: {
     try {
       const admin = getAdminClient();
       if (admin) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+
         const buildFilteredQuery = () => {
           let q = admin.from('asset_requests').select('*', { count: 'exact' }).abortSignal(controller.signal);
 

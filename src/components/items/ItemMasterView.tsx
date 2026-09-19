@@ -129,7 +129,7 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
               Kelola Item &amp; Master Aset
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Katalog referensi barang standar Coffee Arabica (CA), spesifikasi teknis, gambar, dan daftar item baru.
+              Katalog referensi barang standar HANTARAN, spesifikasi teknis, gambar, dan daftar item baru.
             </p>
           </div>
         </div>
