@@ -85,8 +85,9 @@ export function AssetDetailModal({
   }, [item.photo_url]);
 
   useEffect(() => {
-    const rawStatus = item.item_delivery_status || 'On Proses';
-    setDeliveryStatus(rawStatus === 'Lengkap' ? 'Terima Outlet' : rawStatus);
+    const rawStatus = (item.item_delivery_status || '').toLowerCase();
+    const isReady = rawStatus.includes('ready antar') || rawStatus.includes('ready');
+    setDeliveryStatus(isReady ? 'Ready Antar' : 'Belum Ready');
     setStockStatus(item.stock_status || 'Not Ready (Stok Kosong)');
     setPicReceiver(item.pic_receiver || '');
     setNotes(item.notes || '');
@@ -312,20 +313,12 @@ export function AssetDetailModal({
                   Status Pengiriman Barang
                 </label>
                 <select
-                  value={deliveryStatus === 'Lengkap' ? 'Terima Outlet' : deliveryStatus}
+                  value={deliveryStatus}
                   onChange={(e) => setDeliveryStatus(e.target.value)}
                   className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#282a2c] px-3 py-2 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
                 >
-                  <option value="Terima Outlet">Terima Outlet</option>
-                  <option value="Terima Outlet (SCGA)">Terima Outlet (SCGA)</option>
-                  <option value="Terima Outlet (Lokasi)">Terima Outlet (Lokasi)</option>
-                  <option value="Diterima Sebagian">Diterima Sebagian</option>
-                  <option value="Diterima Sebagian (Lokasi)">Diterima Sebagian (Lokasi)</option>
-                  <option value="On Proses">On Proses</option>
-                  <option value="On Proses (SCGA)">On Proses (SCGA)</option>
-                  <option value="On Proses (Lokasi)">On Proses (Lokasi)</option>
-                  <option value="Ready Gudang SCGA">Ready Gudang SCGA</option>
-                  <option value="Belum Proses">Belum Proses</option>
+                  <option value="Ready Antar">Ready Antar</option>
+                  <option value="Belum Ready">Belum Ready</option>
                 </select>
               </div>
 

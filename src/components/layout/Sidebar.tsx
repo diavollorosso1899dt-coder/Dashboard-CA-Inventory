@@ -64,7 +64,7 @@ export function Sidebar() {
       items: [
         { name: 'Monitoring Status (Daftar Aset)', href: '/monitoring/assets', icon: Layers },
         { name: 'Input Aset Baru', href: '/monitoring/input', icon: PlusCircle },
-        { name: 'Pemantauan Transfer Aset', href: '/monitoring/transfer', icon: ArrowRightLeft },
+        { name: 'Pemantauan Pendistribusian', href: '/monitoring/transfer', icon: ArrowRightLeft },
       ],
     },
     {

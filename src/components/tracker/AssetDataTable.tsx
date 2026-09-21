@@ -21,7 +21,8 @@ import {
   SlidersHorizontal,
   Eye,
   EyeOff,
-  Trash2
+  Trash2,
+  Truck
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import { formatDateTime, formatDateOnly, formatLeadTime } from '@/lib/utils/date-formatter';
@@ -273,14 +274,14 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
       if (quickFilter === 'OVERDUE' && (item.lead_time_days || 0) <= 14) return false;
       if (quickFilter === 'READY_STOCK' && (item.quantity_stock_allocated || 0) <= 0) return false;
       if (quickFilter === 'NEED_PR' && (item.quantity_pr || 0) <= 0) return false;
-      if (quickFilter === 'COMPLETED' && !(item.item_delivery_status || '').toLowerCase().includes('terima outlet') && !(item.item_delivery_status || '').toLowerCase().includes('lengkap')) return false;
+      if (quickFilter === 'COMPLETED' && !(item.item_delivery_status || '').toLowerCase().includes('ready antar') && !(item.item_delivery_status || '').toLowerCase().includes('ready')) return false;
       if (quickFilter === 'TRANSFER_SYSTEM' && !systemTransferIds.includes(item.id || item.external_id) && !item.is_system_transfer) return false;
 
       if (selectedStatus !== 'ALL') {
         const itemStatus = (item.item_delivery_status || '').toLowerCase();
-        if ((selectedStatus === 'TERIMA_OUTLET' || selectedStatus === 'LENGKAP') && !itemStatus.includes('terima outlet') && !itemStatus.includes('lengkap')) return false;
-        if (selectedStatus === 'SEBAGIAN' && !itemStatus.includes('sebagian')) return false;
-        if (selectedStatus === 'PROSES' && !itemStatus.includes('proses')) return false;
+        const isItemReady = itemStatus.includes('ready antar') || itemStatus.includes('ready') || itemStatus.includes('lengkap') || itemStatus.includes('terima outlet');
+        if (selectedStatus === 'READY_ANTAR' && !isItemReady) return false;
+        if (selectedStatus === 'BELUM_READY' && isItemReady) return false;
       }
 
       if (selectedStock !== 'ALL') {
@@ -343,13 +344,13 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
     try {
       setUpdatingRowId(id);
       
-      const isDone = newStatus.toLowerCase().includes('terima outlet') || newStatus.toLowerCase().includes('lengkap');
+      const isDone = newStatus.toLowerCase().includes('ready antar') || newStatus.toLowerCase().includes('ready');
       const updatedItem: AssetRequest = {
         ...item,
         item_delivery_status: newStatus,
         is_manually_edited: true,
         procurement_status: isDone ? 'selesai' : 'proses',
-        received_date: isDone ? new Date().toISOString() : item.received_date,
+        received_date: isDone ? new Date().toISOString() : null,
       };
 
       setItems((prev) => prev.map((it) => ((it.id === id || it.external_id === id) ? updatedItem : it)));
@@ -382,7 +383,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
     try {
       setIsBulkUpdating(true);
       
-      const isDone = status.toLowerCase().includes('terima outlet') || status.toLowerCase().includes('lengkap');
+      const isDone = status.toLowerCase().includes('ready antar') || status.toLowerCase().includes('ready');
       setItems((prev) =>
         prev.map((it) => {
           const itId = it.id || it.external_id;
@@ -583,8 +584,8 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
               : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#444746] dark:text-[#c4c7c5] hover:text-[#137333] dark:hover:text-[#6dd58c]'
           }`}
         >
-          <CheckCircle2 className="h-3.5 w-3.5 text-[#137333]" />
-          Terima Outlet
+          <Truck className="h-3.5 w-3.5 text-[#137333]" />
+          Ready Antar
         </button>
         <div className="flex items-center gap-1">
           <button
@@ -802,9 +803,8 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
               className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
             >
               <option value="ALL">Semua Status</option>
-              <option value="TERIMA_OUTLET">Terima Outlet</option>
-              <option value="SEBAGIAN">Diterima Sebagian</option>
-              <option value="PROSES">On Proses / Belum</option>
+              <option value="READY_ANTAR">Ready Antar</option>
+              <option value="BELUM_READY">Belum Ready</option>
             </select>
           </div>
 
@@ -858,28 +858,20 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
 
           <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => handleBulkUpdateStatus('Terima Outlet')}
+              onClick={() => handleBulkUpdateStatus('Ready Antar')}
               disabled={isBulkUpdating}
               className="flex items-center gap-1.5 rounded-full bg-[#137333] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#0f5223] transition-colors disabled:opacity-50 shadow-sm"
             >
-              {isBulkUpdating ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              Tandai Terima Outlet
+              {isBulkUpdating ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Truck className="h-3.5 w-3.5" />}
+              Tandai Ready Antar
             </button>
             <button
-              onClick={() => handleBulkUpdateStatus('Ready Gudang SCGA')}
-              disabled={isBulkUpdating}
-              className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#0842a0] transition-colors disabled:opacity-50 shadow-sm"
-            >
-              <Package className="h-3.5 w-3.5" />
-              Tandai Ready Gudang
-            </button>
-            <button
-              onClick={() => handleBulkUpdateStatus('On Proses PR')}
+              onClick={() => handleBulkUpdateStatus('Belum Ready')}
               disabled={isBulkUpdating}
               className="flex items-center gap-1.5 rounded-full bg-[#b06000] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#8f4e00] transition-colors disabled:opacity-50 shadow-sm"
             >
               <Clock className="h-3.5 w-3.5" />
-              Tandai On Proses PR
+              Tandai Belum Ready
             </button>
             <button
               onClick={() => {
@@ -890,7 +882,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
               className="flex items-center gap-1.5 rounded-full bg-[#6750a4] dark:bg-[#d0bcff] px-3.5 py-1.5 text-xs font-semibold text-white dark:text-[#381e72] hover:bg-[#523b8a] transition-colors shadow-sm"
             >
               <ArrowRightLeft className="h-3.5 w-3.5" />
-              Ke Pemantauan Transfer ({selectedIds.length})
+              Ke Pemantauan Pendistribusian ({selectedIds.length})
             </button>
             <button
               onClick={() => {
@@ -989,8 +981,9 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                 paginatedItems.map((item) => {
                   const itemId = item.id || item.external_id;
                   const isSelected = selectedIds.includes(itemId);
-                  const isCompleted = (item.item_delivery_status || '').toLowerCase().includes('terima outlet') || (item.item_delivery_status || '').toLowerCase().includes('lengkap');
-                  const isPartial = (item.item_delivery_status || '').toLowerCase().includes('sebagian');
+                  const rawStatus = (item.item_delivery_status || '').toLowerCase();
+                  const isReadyAntar = rawStatus.includes('ready antar') || rawStatus.includes('ready') || rawStatus.includes('lengkap') || rawStatus.includes('terima outlet');
+                  const isPartial = rawStatus.includes('sebagian');
                   const isReadyStock = (item.stock_status || '').toLowerCase().includes('ready');
                   const isUpdating = updatingRowId === itemId;
 
@@ -1103,22 +1096,17 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <select
-                              value={item.item_delivery_status === 'Lengkap' ? 'Terima Outlet' : (item.item_delivery_status || 'On Proses PR')}
+                              value={isReadyAntar ? 'Ready Antar' : 'Belum Ready'}
                               disabled={isUpdating}
                               onChange={(e) => handleInlineStatusChange(item, e.target.value)}
                               className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors focus:outline-none ${
-                                isCompleted
+                                isReadyAntar
                                   ? 'border-[#ceead6] dark:border-[#0f5223] bg-[#e6f4ea] dark:bg-[#0f5223]/40 text-[#137333] dark:text-[#6dd58c]'
-                                  : isPartial
-                                  ? 'border-[#d2e3fc] dark:border-[#004a77] bg-[#e8f0fe] dark:bg-[#004a77]/40 text-[#0b57d0] dark:text-[#a8c7fa]'
                                   : 'border-[#feeed9] dark:border-[#4a2800] bg-[#fef7e0] dark:bg-[#4a2800]/40 text-[#b06000] dark:text-[#ffb951]'
                               }`}
                             >
-                              <option value="Terima Outlet">✓ Terima Outlet</option>
-                              <option value="Ready Gudang SCGA">📦 Ready Gudang SCGA</option>
-                              <option value="Dalam Pengiriman (SCGA)">🚚 Dalam Pengiriman</option>
-                              <option value="Diterima Sebagian">⚡ Diterima Sebagian</option>
-                              <option value="On Proses PR">📝 On Proses PR</option>
+                              <option value="Ready Antar">🚚 Ready Antar</option>
+                              <option value="Belum Ready">⏳ Belum Ready</option>
                             </select>
                             {isUpdating && <RefreshCw className="h-3 w-3 animate-spin text-[#747775]" />}
                           </div>

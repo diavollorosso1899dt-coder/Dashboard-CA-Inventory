@@ -19,11 +19,11 @@ export default async function TransferAssetPage() {
         <div className="flex items-center gap-2">
           <ArrowRightLeft className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" />
           <h1 className="text-xl md:text-2xl font-bold text-[#1f1f1f] dark:text-[#e3e3e3] tracking-tight">
-            Pemantauan Transfer Aset
+            Pemantauan Pendistribusian
           </h1>
         </div>
         <p className="text-xs sm:text-sm text-[#444746] dark:text-[#c4c7c5] mt-1">
-          Pencatatan mutasi dan pemindahan inventaris antar cabang, dari Gudang Pusat SCGA ke Outlet, maupun relokasi aset antar outlet.
+          Pencatatan dan pemantauan distribusi aset siap antar ke outlet, penerbitan Surat Jalan Distribusi, hingga konfirmasi penerimaan di cabang.
         </p>
       </div>
 

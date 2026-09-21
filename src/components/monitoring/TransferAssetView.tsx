@@ -7,25 +7,19 @@ import {
   PlusCircle, 
   Search, 
   CheckCircle2, 
-  Clock, 
   Truck, 
-  Store, 
   X, 
   Package, 
-  UserCheck,
-  Printer,
-  Trash2,
-  FileText,
-  AlertTriangle,
-  RotateCcw,
-  Calendar,
-  Eye,
-  Building2,
-  Check,
-  ShieldAlert
+  Printer, 
+  Trash2, 
+  FileText, 
+  RotateCcw, 
+  Eye, 
+  Check, 
+  ShieldAlert 
 } from 'lucide-react';
 import { AssetTransfer, Outlet, AssetRequest, TransferStatus, TransferItem } from '@/lib/supabase/types';
-import { formatDateOnly, formatDateTime } from '@/lib/utils/date-formatter';
+import { formatDateOnly } from '@/lib/utils/date-formatter';
 
 interface TransferAssetViewProps {
   initialTransfers: AssetTransfer[];
@@ -50,8 +44,24 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
   const [selectedTransfer, setSelectedTransfer] = useState<AssetTransfer | null>(null);
 
-  // Queue from checklist in Asset Data Table
-  const [systemTransferAssets, setSystemTransferAssets] = useState<AssetRequest[]>([]);
+  // Automatic Queue of Assets with 'Ready Antar'
+  const readyDistributionAssets = useMemo(() => {
+    let storedIds: string[] = [];
+    try {
+      const saved = localStorage.getItem('ca_system_transfer_ids');
+      if (saved) {
+        storedIds = JSON.parse(saved);
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    return (initialAssets || []).filter((a) => {
+      const status = (a.item_delivery_status || '').trim().toLowerCase();
+      const aId = a.id || a.external_id;
+      return status === 'ready antar' || Boolean(a.is_system_transfer) || storedIds.includes(aId);
+    });
+  }, [initialAssets]);
 
   // Create Form State
   const [sourceType, setSourceType] = useState<'GUDANG_PUSAT' | 'OUTLET'>('GUDANG_PUSAT');
@@ -78,37 +88,6 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
   const [receivePic, setReceivePic] = useState('');
   const [receiveDate, setReceiveDate] = useState(new Date().toISOString().split('T')[0]);
   const [receiveNotes, setReceiveNotes] = useState('');
-
-  // Load checklist items from props and localStorage
-  const loadSystemTransferChecklist = () => {
-    let storedIds: string[] = [];
-    try {
-      const saved = localStorage.getItem('ca_system_transfer_ids');
-      if (saved) {
-        storedIds = JSON.parse(saved);
-      }
-    } catch (e) {
-      console.error('Failed reading system transfer ids in TransferAssetView:', e);
-    }
-
-    const filtered = (initialAssets || []).filter((a) => {
-      const aId = a.id || a.external_id;
-      return Boolean(a.is_system_transfer) || storedIds.includes(aId);
-    });
-
-    setSystemTransferAssets(filtered);
-  };
-
-  useEffect(() => {
-    loadSystemTransferChecklist();
-
-    const handleResetEvent = () => {
-      setSystemTransferAssets([]);
-      setTransfers([]);
-    };
-    window.addEventListener('ca_transfers_reset', handleResetEvent);
-    return () => window.removeEventListener('ca_transfers_reset', handleResetEvent);
-  }, [initialAssets]);
 
   // Handle URL search params from Asset Table multi-select
   useEffect(() => {
@@ -174,7 +153,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
   const handleProcessFromQueue = (selected: AssetRequest[]) => {
     const formattedItems: TransferItem[] = selected.map((a, idx) => ({
-      id: `ti-sys-${Date.now()}-${idx}`,
+      id: `ti-dist-${Date.now()}-${idx}`,
       asset_id: a.id || a.external_id,
       item_name: a.item_name,
       specification: a.classification,
@@ -186,23 +165,15 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
     if (selected[0]?.branch_name) {
       setToLocation(selected[0].branch_name);
     }
-    setNotes(`Dokumen Mutasi dibuat dari ${selected.length} item checklist Daftar Aset.`);
+    setNotes(`Surat Jalan Distribusi dibuat dari ${selected.length} aset berstatus Ready Antar.`);
     setIsCreateModalOpen(true);
   };
 
-  const handleClearQueue = () => {
-    try {
-      localStorage.removeItem('ca_system_transfer_ids');
-    } catch (e) {}
-    setSystemTransferAssets([]);
-    window.dispatchEvent(new Event('ca_transfers_reset'));
-  };
-
-  // Submit New Transfer
+  // Submit New Distribution Document
   const handleSubmitTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (itemsList.length === 0) {
-      alert('Tambahkan minimal 1 item untuk dimutasi / ditransfer.');
+      alert('Tambahkan minimal 1 item untuk didistribusikan.');
       return;
     }
 
@@ -212,8 +183,8 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
       const rand = Math.floor(1000 + Math.random() * 9000);
 
       const payload: Partial<AssetTransfer> = {
-        transfer_number: `TRF-MUT/${year}/${rand}`,
-        surat_jalan_number: `SJ-MUT/${year}/${rand}`,
+        transfer_number: `DIST/${year}/${rand}`,
+        surat_jalan_number: `SJ-DIST/${year}/${rand}`,
         source_type: sourceType,
         from_location: fromLocation,
         destination_type: destinationType,
@@ -242,7 +213,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         setNotes('');
         setTrackingNumber('');
       } else {
-        alert(json.error || 'Gagal membuat dokumen mutasi transfer');
+        alert(json.error || 'Gagal membuat dokumen surat jalan pendistribusian');
       }
     } catch (err: any) {
       console.error('Failed to submit transfer:', err);
@@ -257,7 +228,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
     setSelectedTransfer(transfer);
     setReceivePic(transfer.receiver_pic || '');
     setReceiveDate(new Date().toISOString().split('T')[0]);
-    setReceiveNotes('Aset diterima dalam kondisi lengkap dan baik sesuai Surat Jalan.');
+    setReceiveNotes('Aset diterima di cabang dalam kondisi lengkap dan baik sesuai Surat Jalan.');
     setIsReceiveModalOpen(true);
   };
 
@@ -265,7 +236,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
     e.preventDefault();
     if (!selectedTransfer) return;
     if (!receivePic.trim()) {
-      alert('Masukkan nama PIC Penerima di cabang tujuan.');
+      alert('Masukkan nama PIC Penerima di cabang outlet tujuan.');
       return;
     }
 
@@ -289,7 +260,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         setIsReceiveModalOpen(false);
         setSelectedTransfer(null);
       } else {
-        alert(json.error || 'Gagal mengonfirmasi penerimaan aset');
+        alert(json.error || 'Gagal mengonfirmasi penerimaan aset di outlet');
       }
     } catch (err: any) {
       console.error('Failed to update receive status:', err);
@@ -310,11 +281,10 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
           localStorage.removeItem('ca_system_transfer_ids');
         } catch (e) {}
         setTransfers([]);
-        setSystemTransferAssets([]);
         window.dispatchEvent(new Event('ca_transfers_reset'));
         setIsResetConfirmOpen(false);
       } else {
-        alert(json.error || 'Gagal mereset data transfer');
+        alert(json.error || 'Gagal mereset data pendistribusian');
       }
     } catch (err: any) {
       console.error('Error during full reset:', err);
@@ -329,8 +299,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
     const total = transfers.length;
     const inTransit = transfers.filter((t) => t.status === 'IN_TRANSIT').length;
     const received = transfers.filter((t) => t.status === 'RECEIVED' || t.status === 'COMPLETED').length;
-    const draft = transfers.filter((t) => t.status === 'DRAFT').length;
-    return { total, inTransit, received, draft };
+    return { total, inTransit, received };
   }, [transfers]);
 
   // Filtered transfers
@@ -361,27 +330,27 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         <div className="panel-card p-4 flex items-center justify-between border-l-4 border-l-[#0b57d0]">
           <div>
             <div className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] uppercase">
-              Total Mutasi Aset
+              Total Pendistribusian
             </div>
             <div className="text-2xl font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mt-0.5">
               {metrics.total}
             </div>
-            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Dokumen Terbit</div>
+            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Surat Jalan Diterbitkan</div>
           </div>
           <div className="h-10 w-10 rounded-2xl bg-[#e8f0fe] dark:bg-[#004a77]/40 flex items-center justify-center text-[#0b57d0] dark:text-[#a8c7fa]">
-            <ArrowRightLeft className="h-5 w-5" />
+            <FileText className="h-5 w-5" />
           </div>
         </div>
 
         <div className="panel-card p-4 flex items-center justify-between border-l-4 border-l-amber-500">
           <div>
             <div className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] uppercase">
-              Dalam Perjalanan
+              Dalam Pengiriman
             </div>
             <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-0.5">
               {metrics.inTransit}
             </div>
-            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Sedang Dikirim / Ekspedisi</div>
+            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Armada / Ekspedisi Berjalan</div>
           </div>
           <div className="h-10 w-10 rounded-2xl bg-amber-50 dark:bg-amber-950/40 flex items-center justify-center text-amber-600 dark:text-amber-400">
             <Truck className="h-5 w-5" />
@@ -391,30 +360,30 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         <div className="panel-card p-4 flex items-center justify-between border-l-4 border-l-emerald-500">
           <div>
             <div className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] uppercase">
-              Telah Diterima
+              Telah Diterima Outlet
             </div>
             <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
               {metrics.received}
             </div>
-            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Sampai di Lokasi Tujuan</div>
+            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Sampai di Cabang Tujuan</div>
           </div>
           <div className="h-10 w-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="h-5 w-5" />
           </div>
         </div>
 
-        <div className="panel-card p-4 flex items-center justify-between border-l-4 border-l-slate-400">
+        <div className="panel-card p-4 flex items-center justify-between border-l-4 border-l-blue-500">
           <div>
             <div className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] uppercase">
-              Draft / Persiapan
+              Aset Ready Antar
             </div>
-            <div className="text-2xl font-bold text-[#444746] dark:text-[#c4c7c5] mt-0.5">
-              {metrics.draft}
+            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-0.5">
+              {readyDistributionAssets.length}
             </div>
-            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Belum Dikirim</div>
+            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Antrean Siap Distribusi</div>
           </div>
-          <div className="h-10 w-10 rounded-2xl bg-[#f0f4f9] dark:bg-[#282a2c] flex items-center justify-center text-[#747775] dark:text-[#8e918f]">
-            <FileText className="h-5 w-5" />
+          <div className="h-10 w-10 rounded-2xl bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center text-blue-600 dark:text-blue-400">
+            <Package className="h-5 w-5" />
           </div>
         </div>
       </div>
@@ -428,13 +397,13 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cari No. Transfer, No. Surat Jalan, Asal, Tujuan, Kurir, Resi..."
+              placeholder="Cari No. Distribusi, No. Surat Jalan, Asal, Tujuan, Kurir, Resi..."
               className="w-full rounded-full border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] pl-10 pr-4 py-2 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none transition-all shadow-xs"
             />
           </div>
 
           <div className="flex items-center gap-1 bg-[#f0f4f9] dark:bg-[#1e1f20] p-1 rounded-full border border-[#e0e2ec] dark:border-[#444746] text-xs">
-            {(['ALL', 'IN_TRANSIT', 'RECEIVED', 'DRAFT'] as const).map((st) => (
+            {(['ALL', 'IN_TRANSIT', 'RECEIVED'] as const).map((st) => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
@@ -444,7 +413,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                     : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
                 }`}
               >
-                {st === 'ALL' ? 'Semua' : st === 'IN_TRANSIT' ? 'Perjalanan' : st === 'RECEIVED' ? 'Diterima' : 'Draft'}
+                {st === 'ALL' ? 'Semua' : st === 'IN_TRANSIT' ? 'Perjalanan' : 'Diterima'}
               </button>
             ))}
           </div>
@@ -454,10 +423,10 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
           <button
             onClick={() => setIsResetConfirmOpen(true)}
             className="flex items-center gap-1.5 rounded-full border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 px-3.5 py-2 text-xs font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/60 transition-colors shadow-xs"
-            title="Bersihkan seluruh data mutasi transfer dan reset checklist"
+            title="Bersihkan riwayat dokumen pendistribusian"
           >
             <RotateCcw className="h-3.5 w-3.5" />
-            <span>Bersihkan Data</span>
+            <span>Bersihkan Riwayat</span>
           </button>
 
           <button
@@ -469,49 +438,53 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
             className="flex items-center gap-2 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-4 py-2 text-xs font-semibold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-sm"
           >
             <PlusCircle className="h-4 w-4" />
-            <span>Buat Mutasi Aset Baru</span>
+            <span>Buat Surat Jalan Distribusi</span>
           </button>
         </div>
       </div>
 
-      {/* 3. Antrean Mutasi dari Checklist Daftar Aset */}
-      {systemTransferAssets.length > 0 && (
-        <div className="panel-card p-4 space-y-3 border-2 border-[#0b57d0]/30 dark:border-[#a8c7fa]/30 bg-[#e8f0fe]/30 dark:bg-[#004a77]/20">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#c2e7ff] dark:border-[#004a77] pb-2.5">
-            <div className="flex items-center gap-2">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-xs font-bold text-white dark:text-[#041e49]">
-                {systemTransferAssets.length}
-              </span>
-              <div>
-                <h3 className="font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-1.5">
-                  <ArrowRightLeft className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
-                  Item Masuk Antrean Mutasi (Checklist Daftar Aset)
-                </h3>
-                <p className="text-[11px] text-[#444746] dark:text-[#c4c7c5]">
-                  Daftar item aset yang dicentang dari halaman Monitoring Status: Daftar Aset dan siap dibuatkan Surat Jalan Mutasi.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 self-start sm:self-auto">
-              <button
-                onClick={handleClearQueue}
-                className="px-3 py-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] text-xs text-[#747775] hover:text-rose-600 transition-colors"
-              >
-                Kosongkan Antrean
-              </button>
-              <button
-                onClick={() => handleProcessFromQueue(systemTransferAssets)}
-                className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-4 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-sm"
-              >
-                <ArrowRightLeft className="h-3.5 w-3.5" />
-                Buat Mutasi ({systemTransferAssets.length} Item)
-              </button>
+      {/* 3. Antrean Distribusi Otomatis (Ready Antar) */}
+      <div className="panel-card p-4 space-y-3 border-2 border-[#0b57d0]/30 dark:border-[#a8c7fa]/30 bg-[#e8f0fe]/30 dark:bg-[#004a77]/20">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#c2e7ff] dark:border-[#004a77] pb-2.5">
+          <div className="flex items-center gap-2">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-xs font-bold text-white dark:text-[#041e49]">
+              {readyDistributionAssets.length}
+            </span>
+            <div>
+              <h3 className="font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-1.5">
+                <Truck className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                Antrean Aset Siap Distribusi (Status: Ready Antar)
+              </h3>
+              <p className="text-[11px] text-[#444746] dark:text-[#c4c7c5]">
+                Aset dengan status pengiriman <strong>Ready Antar</strong> otomatis masuk ke antrean ini dan siap diterbitkan Surat Jalan Distribusi.
+              </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-1 max-h-48 overflow-y-auto">
-            {systemTransferAssets.map((asset) => (
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            {readyDistributionAssets.length > 0 && (
+              <button
+                onClick={() => handleProcessFromQueue(readyDistributionAssets)}
+                className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-4 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-sm"
+              >
+                <Truck className="h-3.5 w-3.5" />
+                Terbitkan Surat Jalan ({readyDistributionAssets.length} Item)
+              </button>
+            )}
+          </div>
+        </div>
+
+        {readyDistributionAssets.length === 0 ? (
+          <div className="py-4 text-center text-xs text-[#747775] dark:text-[#8e918f]">
+            Belum ada aset dengan status <strong>Ready Antar</strong>. Ubah status pengiriman barang di{' '}
+            <a href="/monitoring/assets" className="text-[#0b57d0] dark:text-[#a8c7fa] underline font-semibold">
+              Monitoring Status Aset
+            </a>{' '}
+            menjadi &quot;Ready Antar&quot; agar otomatis muncul di sini.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-1 max-h-56 overflow-y-auto">
+            {readyDistributionAssets.map((asset) => (
               <div
                 key={asset.id || asset.external_id}
                 className="flex items-center justify-between rounded-xl border border-[#d2e3fc] dark:border-[#004a77] bg-[#ffffff] dark:bg-[#1e1f20] p-2.5 shadow-xs"
@@ -520,31 +493,36 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                   <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
                     {asset.item_name}
                   </div>
-                  <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] truncate">
-                    {asset.branch_name} • <strong className="text-[#0b57d0] dark:text-[#a8c7fa]">{asset.quantity_needed} unit</strong>
+                  <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] truncate flex items-center gap-1.5 mt-0.5">
+                    <span>{asset.branch_name}</span>
+                    <span>•</span>
+                    <strong className="text-[#0b57d0] dark:text-[#a8c7fa]">{asset.quantity_needed} unit</strong>
+                    <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/60 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 dark:text-emerald-300">
+                      Ready Antar
+                    </span>
                   </div>
                 </div>
 
                 <button
                   onClick={() => handleProcessFromQueue([asset])}
-                  className="rounded-full bg-[#e8f0fe] dark:bg-[#004a77]/50 px-2 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white transition-colors shrink-0"
+                  className="rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-2.5 py-1 text-[10px] font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] transition-colors shrink-0 shadow-xs"
                 >
-                  Mutasi Ini
+                  Kirim Ini
                 </button>
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* 4. Main Transfer Table */}
+      {/* 4. Main Distribution Table */}
       <div className="panel-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
             <thead className="bg-[#f0f4f9] dark:bg-[#1e1f20] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#444746]">
               <tr>
-                <th className="py-3.5 px-3">No. Dokumen &amp; SJ</th>
-                <th className="py-3.5 px-3">Rute Mutasi (Asal &rarr; Tujuan)</th>
+                <th className="py-3.5 px-3">No. Dokumen &amp; Surat Jalan</th>
+                <th className="py-3.5 px-3">Rute Distribusi (Asal &rarr; Tujuan)</th>
                 <th className="py-3.5 px-3">Tanggal &amp; Kurir</th>
                 <th className="py-3.5 px-3">PIC Pengirim / Penerima</th>
                 <th className="py-3.5 px-3 text-center">Item</th>
@@ -557,10 +535,10 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                 <tr>
                   <td colSpan={7} className="text-center py-12 text-[#747775] dark:text-[#8e918f]">
                     <div className="flex flex-col items-center justify-center gap-2">
-                      <ArrowRightLeft className="h-8 w-8 text-[#c4c7c5] dark:text-[#5e6062]" />
-                      <div className="font-semibold text-sm">Belum Ada Dokumen Mutasi Transfer Aset</div>
+                      <Truck className="h-8 w-8 text-[#c4c7c5] dark:text-[#5e6062]" />
+                      <div className="font-semibold text-sm">Belum Ada Dokumen Pendistribusian Aset</div>
                       <p className="text-xs max-w-md text-[#747775] dark:text-[#8e918f]">
-                        Data transfer saat ini bersih. Klik tombol <strong>&quot;Buat Mutasi Aset Baru&quot;</strong> di atas untuk mencatat pemindahan aset antar-cabang atau dari Gudang Pusat SCGA.
+                        Klik tombol <strong>&quot;Buat Surat Jalan Distribusi&quot;</strong> atau proses item dari antrean <strong>Ready Antar</strong> di atas untuk menerbitkan Surat Jalan Distribusi resmi.
                       </p>
                     </div>
                   </td>
@@ -584,7 +562,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                               setIsPrintModalOpen(true);
                             }}
                             className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline mt-0.5"
-                            title="Klik untuk cetak Surat Jalan Mutasi"
+                            title="Klik untuk cetak Surat Jalan Distribusi"
                           >
                             <Printer className="h-3 w-3" />
                             <span>{t.surat_jalan_number}</span>
@@ -629,7 +607,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                           {t.receiver_pic ? (
                             <strong className="text-emerald-700 dark:text-emerald-300">{t.receiver_pic}</strong>
                           ) : (
-                            <span className="italic text-[#747775]">Menunggu konfirmasi</span>
+                            <span className="italic text-[#747775]">Menunggu konfirmasi outlet</span>
                           )}
                         </div>
                       </td>
@@ -658,7 +636,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                         {isReceived && (
                           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
                             <CheckCircle2 className="h-3 w-3" />
-                            Diterima di Tujuan
+                            Diterima di Outlet
                           </span>
                         )}
                         {t.status === 'DRAFT' && (
@@ -676,7 +654,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                             <button
                               onClick={() => handleOpenReceiveModal(t)}
                               className="flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 text-xs font-semibold transition-colors shadow-xs"
-                              title="Konfirmasi Kedatangan Barang di Cabang Tujuan"
+                              title="Konfirmasi Kedatangan Barang di Outlet Tujuan"
                             >
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               <span>Konfirmasi Tiba</span>
@@ -689,7 +667,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                               setIsPrintModalOpen(true);
                             }}
                             className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors"
-                            title="Cetak Surat Jalan Mutasi"
+                            title="Cetak Surat Jalan Distribusi"
                           >
                             <Printer className="h-3.5 w-3.5" />
                           </button>
@@ -700,7 +678,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                               setIsDetailModalOpen(true);
                             }}
                             className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors"
-                            title="Lihat Detail Mutasi"
+                            title="Lihat Detail Distribusi"
                           >
                             <Eye className="h-3.5 w-3.5" />
                           </button>
@@ -715,18 +693,18 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         </div>
       </div>
 
-      {/* MODAL 1: BUAT MUTASI ASET BARU */}
+      {/* MODAL 1: BUAT SURAT JALAN DISTRIBUSI */}
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-6 animate-in fade-in">
           <div className="relative max-h-[90vh] w-full max-w-3xl flex flex-col rounded-3xl border border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] shadow-2xl overflow-hidden">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#282a2c] px-6 py-4">
               <div>
                 <h2 className="text-base sm:text-lg font-bold text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-2">
-                  <ArrowRightLeft className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-                  Buat Dokumen Mutasi Transfer Aset
+                  <Truck className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                  Buat Surat Jalan Pendistribusian Aset
                 </h2>
                 <p className="text-xs text-[#747775] dark:text-[#8e918f]">
-                  Catat pemindahan aset antar-cabang atau dari Gudang Pusat SCGA dan terbitkan Surat Jalan resmi.
+                  Catat pengiriman distribusi aset siap antar ke outlet cabang dan terbitkan Surat Jalan resmi.
                 </p>
               </div>
               <button
@@ -763,7 +741,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
                 <div>
                   <label className="block text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-1">
-                    Lokasi Tujuan (Penerima)
+                    Lokasi Outlet Tujuan (Penerima)
                   </label>
                   <select
                     value={toLocation}
@@ -784,7 +762,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
                 <div>
                   <label className="block text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-1">
-                    Tanggal Pengiriman / Mutasi
+                    Tanggal Pengiriman / Distribusi
                   </label>
                   <input
                     type="date"
@@ -811,7 +789,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
                 <div>
                   <label className="block text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-1">
-                    Kurir / Armada Ekspedisi
+                    Kurir / Armada Pengantaran
                   </label>
                   <input
                     type="text"
@@ -836,10 +814,10 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                 </div>
               </div>
 
-              {/* Form Input Item Mutasi */}
+              {/* Form Input Item Distribusi */}
               <div className="space-y-3 p-4 rounded-2xl bg-[#f0f4f9]/60 dark:bg-[#282a2c]/40 border border-[#e0e2ec] dark:border-[#444746]">
                 <div className="text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
-                  Tambah Item Aset yang Dimutasi
+                  Daftar Item Aset yang Didistribusikan
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
@@ -911,7 +889,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                         type="text"
                         value={itemNotes}
                         onChange={(e) => setItemNotes(e.target.value)}
-                        placeholder="Misal: No. seri, warna, kelengkapan kabel..."
+                        placeholder="Misal: No. seri, kelengkapan kabel, kardus..."
                         className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3]"
                       />
                       <button
@@ -963,13 +941,13 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
               {/* Catatan Dokumen */}
               <div>
                 <label className="block text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-1">
-                  Catatan Mutasi / Alasan Pemindahan
+                  Catatan Dokumen Surat Jalan
                 </label>
                 <textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   rows={2}
-                  placeholder="Catatan tambahan untuk surat jalan..."
+                  placeholder="Catatan tambahan untuk surat jalan distribusi..."
                   className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] px-3 py-2 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
                 />
               </div>
@@ -988,7 +966,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                   disabled={isSubmitting || itemsList.length === 0}
                   className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-5 py-2 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] transition-colors disabled:opacity-50 shadow-sm"
                 >
-                  <ArrowRightLeft className="h-4 w-4" />
+                  <Truck className="h-4 w-4" />
                   <span>{isSubmitting ? 'Memproses...' : 'Terbitkan Surat Jalan & Kirim'}</span>
                 </button>
               </div>
@@ -997,7 +975,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         </div>
       )}
 
-      {/* MODAL 2: KONFIRMASI PENERIMAAN DI LOKASI TUJUAN */}
+      {/* MODAL 2: KONFIRMASI PENERIMAAN DI OUTLET TUJUAN */}
       {isReceiveModalOpen && selectedTransfer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-6 animate-in fade-in">
           <div className="relative w-full max-w-lg rounded-3xl border border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] shadow-2xl overflow-hidden">
@@ -1005,7 +983,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                 <h2 className="text-base font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
-                  Konfirmasi Penerimaan Aset
+                  Konfirmasi Penerimaan Aset di Outlet
                 </h2>
               </div>
               <button
@@ -1019,7 +997,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
             <form onSubmit={handleSubmitReceive} className="p-6 space-y-4">
               <div className="p-3.5 rounded-2xl bg-[#f8fafd] dark:bg-[#282a2c]/60 border border-[#e0e2ec] dark:border-[#444746] text-xs space-y-1">
                 <div>
-                  No. Transfer: <strong className="font-mono text-[#0b57d0]">{selectedTransfer.transfer_number}</strong>
+                  No. Dokumen: <strong className="font-mono text-[#0b57d0]">{selectedTransfer.transfer_number}</strong>
                 </div>
                 {selectedTransfer.surat_jalan_number && (
                   <div>
@@ -1027,7 +1005,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                   </div>
                 )}
                 <div>
-                  Tujuan: <strong>{selectedTransfer.to_location}</strong> (dari {selectedTransfer.from_location})
+                  Outlet Tujuan: <strong>{selectedTransfer.to_location}</strong> (dari {selectedTransfer.from_location})
                 </div>
                 <div>
                   Total Item: <strong>{selectedTransfer.items?.length || 0} unit</strong>
@@ -1036,14 +1014,14 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
               <div>
                 <label className="block text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-1">
-                  Nama PIC Penerima di Lokasi Tujuan *
+                  Nama PIC Penerima di Outlet Tujuan *
                 </label>
                 <input
                   type="text"
                   required
                   value={receivePic}
                   onChange={(e) => setReceivePic(e.target.value)}
-                  placeholder="Nama manajer outlet / PIC penerima..."
+                  placeholder="Nama manajer outlet / staf penerima..."
                   className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] px-3 py-2 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
                 />
               </div>
@@ -1069,7 +1047,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                   rows={3}
                   value={receiveNotes}
                   onChange={(e) => setReceiveNotes(e.target.value)}
-                  placeholder="Kondisi fisik barang saat tiba..."
+                  placeholder="Kondisi fisik barang saat tiba di outlet..."
                   className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] px-3 py-2 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
                 />
               </div>
@@ -1096,7 +1074,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         </div>
       )}
 
-      {/* MODAL 3: CETAK SURAT JALAN MUTASI */}
+      {/* MODAL 3: CETAK SURAT JALAN DISTRIBUSI */}
       {isPrintModalOpen && selectedTransfer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-6 animate-in fade-in">
           <div className="relative max-h-[95vh] w-full max-w-3xl flex flex-col rounded-3xl border border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] shadow-2xl overflow-hidden">
@@ -1104,7 +1082,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
               <div className="flex items-center gap-2">
                 <Printer className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" />
                 <h2 className="text-base font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
-                  Pratinjau Surat Jalan Mutasi Aset
+                  Pratinjau Surat Jalan Pendistribusian Aset
                 </h2>
               </div>
               <div className="flex items-center gap-2">
@@ -1131,12 +1109,12 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                 <div className="flex justify-between items-start">
                   <div>
                     <h1 className="text-xl font-bold tracking-tight">HANTARAN</h1>
-                    <p className="text-xs text-gray-600">SISTEM MANAJEMEN INVENTARIS &amp; LOGISTIK ASET</p>
+                    <p className="text-xs text-gray-600">SISTEM MANAJEMEN PENDISTRIBUSIAN &amp; LOGISTIK ASET</p>
                     <p className="text-[11px] text-gray-500">Gudang Pusat SCGA Logistik</p>
                   </div>
                   <div className="text-right">
-                    <h2 className="text-lg font-bold uppercase text-[#0b57d0]">Surat Jalan Mutasi Aset</h2>
-                    <p className="font-mono text-xs font-bold">{selectedTransfer.surat_jalan_number || 'SJ-MUT-OFFICIAL'}</p>
+                    <h2 className="text-lg font-bold uppercase text-[#0b57d0]">Surat Jalan Pendistribusian Aset</h2>
+                    <p className="font-mono text-xs font-bold">{selectedTransfer.surat_jalan_number || 'SJ-DIST-OFFICIAL'}</p>
                     <p className="text-xs text-gray-600">Ref: {selectedTransfer.transfer_number}</p>
                     <p className="text-xs text-gray-600">Tanggal: {formatDateOnly(selectedTransfer.transfer_date)}</p>
                   </div>
@@ -1151,7 +1129,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                   <div className="text-gray-600 mt-0.5">PIC Pengirim: {selectedTransfer.sender_pic}</div>
                 </div>
                 <div>
-                  <div className="font-bold text-gray-700 uppercase text-[10px]">Lokasi Tujuan (Penerima):</div>
+                  <div className="font-bold text-gray-700 uppercase text-[10px]">Outlet Tujuan (Penerima):</div>
                   <div className="font-bold text-sm mt-0.5 text-[#0b57d0]">{selectedTransfer.to_location}</div>
                   <div className="text-gray-600 mt-0.5">
                     PIC Penerima: {selectedTransfer.receiver_pic || 'Staf / Manajer Outlet'}
@@ -1210,7 +1188,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                 <div>
                   <div className="text-gray-600 mb-14">Diserahkan Oleh (Pengirim),</div>
                   <div className="font-bold underline">{selectedTransfer.sender_pic}</div>
-                  <div className="text-[10px] text-gray-500">Logistik SCGA / Outlet Asal</div>
+                  <div className="text-[10px] text-gray-500">Logistik SCGA / Pengirim</div>
                 </div>
 
                 <div>
@@ -1222,7 +1200,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                 </div>
 
                 <div>
-                  <div className="text-gray-600 mb-14">Diterima Oleh (Penerima),</div>
+                  <div className="text-gray-600 mb-14">Diterima Oleh (PIC Outlet),</div>
                   <div className="font-bold underline">
                     {selectedTransfer.receiver_pic || '(..................................)'}
                   </div>
@@ -1234,14 +1212,14 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         </div>
       )}
 
-      {/* MODAL 4: DETAIL RINCIAN MUTASI */}
+      {/* MODAL 4: DETAIL RINCIAN DISTRIBUSI */}
       {isDetailModalOpen && selectedTransfer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-6 animate-in fade-in">
           <div className="relative max-h-[85vh] w-full max-w-xl rounded-3xl border border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] shadow-2xl overflow-hidden flex flex-col">
             <div className="flex items-center justify-between border-b border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#282a2c] px-6 py-4">
               <div>
                 <h3 className="text-base font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
-                  Rincian Dokumen Mutasi
+                  Rincian Dokumen Pendistribusian
                 </h3>
                 <p className="font-mono text-xs text-[#0b57d0] dark:text-[#a8c7fa]">
                   {selectedTransfer.transfer_number}
@@ -1258,7 +1236,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
             <div className="p-6 overflow-y-auto space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3 p-3 rounded-2xl bg-[#f8fafd] dark:bg-[#282a2c]/60 border border-[#e0e2ec] dark:border-[#444746]">
                 <div>
-                  <span className="text-[#747775]">Rute Mutasi:</span>
+                  <span className="text-[#747775]">Rute Distribusi:</span>
                   <div className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
                     {selectedTransfer.from_location} &rarr; {selectedTransfer.to_location}
                   </div>
@@ -1286,7 +1264,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                   Daftar Barang ({selectedTransfer.items?.length || 0})
                 </div>
                 <div className="divide-y divide-[#e0e2ec] dark:divide-[#444746] border border-[#e0e2ec] dark:border-[#444746] rounded-xl overflow-hidden">
-                  {selectedTransfer.items?.map((it, idx) => (
+                  {selectedTransfer.items?.map((it) => (
                     <div key={it.id} className="p-2.5 flex items-center justify-between">
                       <div>
                         <div className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">{it.item_name}</div>
@@ -1321,7 +1299,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         </div>
       )}
 
-      {/* MODAL 5: KONFIRMASI RESET SELURUH DATA TRANSFER */}
+      {/* MODAL 5: KONFIRMASI RESET SELURUH DATA DISTRIBUSI */}
       {isResetConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="w-full max-w-md rounded-3xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-[#1e1f20] p-6 shadow-2xl">
@@ -1331,7 +1309,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
               </div>
               <div>
                 <h3 className="font-bold text-base text-[#1f1f1f] dark:text-[#e3e3e3]">
-                  Bersihkan Seluruh Data Transfer?
+                  Bersihkan Seluruh Riwayat Pendistribusian?
                 </h3>
                 <p className="text-xs text-rose-600 dark:text-rose-400">Tindakan ini tidak dapat dibatalkan</p>
               </div>
@@ -1339,9 +1317,8 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
             <p className="text-xs text-[#444746] dark:text-[#c4c7c5] leading-relaxed mb-4">
               Aksi ini akan:
-              <br />• Menghapus seluruh riwayat dokumen transfer aset di basis data.
-              <br />• Me-reset seluruh checklist <strong>Role Transfer</strong> pada tabel aset menjadi 0.
-              <br />• Mengosongkan memori antrean transfer secara permanen.
+              <br />• Menghapus seluruh riwayat dokumen surat jalan pendistribusian di basis data.
+              <br />• Mengosongkan data riwayat pengiriman secara permanen.
             </p>
 
             <div className="flex items-center justify-end gap-2">
