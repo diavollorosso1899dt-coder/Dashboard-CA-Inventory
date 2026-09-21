@@ -22,7 +22,7 @@ export default async function SlaAnalyticsPage({ searchParams }: PageProps) {
 
   // Find overdue items (> 14 days and still not complete)
   const overdueItems = assetResponse.data.filter((item) => {
-    const isCompleted = (item.item_delivery_status || '').toLowerCase().includes('lengkap');
+    const isCompleted = (item.item_delivery_status || '').toLowerCase().includes('terima outlet') || (item.item_delivery_status || '').toLowerCase().includes('lengkap');
     return !isCompleted && item.lead_time_days > 14;
   });
 

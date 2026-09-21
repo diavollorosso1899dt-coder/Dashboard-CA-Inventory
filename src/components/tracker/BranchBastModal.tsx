@@ -109,7 +109,7 @@ export function BranchBastModal({
   if (!isOpen || !mounted) return null;
 
   const totalQtyNeeded = printableItems.reduce((acc, curr) => acc + (curr.quantity_needed || 0), 0);
-  const completedCount = printableItems.filter((i) => (i.item_delivery_status || '').toLowerCase().includes('lengkap')).length;
+  const completedCount = printableItems.filter((i) => (i.item_delivery_status || '').toLowerCase().includes('terima outlet') || (i.item_delivery_status || '').toLowerCase().includes('lengkap')).length;
   const currentDateFormatted = new Intl.DateTimeFormat('id-ID', {
     day: 'numeric',
     month: 'long',

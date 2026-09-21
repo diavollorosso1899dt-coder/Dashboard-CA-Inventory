@@ -273,12 +273,12 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
       if (quickFilter === 'OVERDUE' && (item.lead_time_days || 0) <= 14) return false;
       if (quickFilter === 'READY_STOCK' && (item.quantity_stock_allocated || 0) <= 0) return false;
       if (quickFilter === 'NEED_PR' && (item.quantity_pr || 0) <= 0) return false;
-      if (quickFilter === 'COMPLETED' && !(item.item_delivery_status || '').toLowerCase().includes('lengkap')) return false;
+      if (quickFilter === 'COMPLETED' && !(item.item_delivery_status || '').toLowerCase().includes('terima outlet') && !(item.item_delivery_status || '').toLowerCase().includes('lengkap')) return false;
       if (quickFilter === 'TRANSFER_SYSTEM' && !systemTransferIds.includes(item.id || item.external_id) && !item.is_system_transfer) return false;
 
       if (selectedStatus !== 'ALL') {
         const itemStatus = (item.item_delivery_status || '').toLowerCase();
-        if (selectedStatus === 'LENGKAP' && !itemStatus.includes('lengkap')) return false;
+        if ((selectedStatus === 'TERIMA_OUTLET' || selectedStatus === 'LENGKAP') && !itemStatus.includes('terima outlet') && !itemStatus.includes('lengkap')) return false;
         if (selectedStatus === 'SEBAGIAN' && !itemStatus.includes('sebagian')) return false;
         if (selectedStatus === 'PROSES' && !itemStatus.includes('proses')) return false;
       }
@@ -343,12 +343,13 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
     try {
       setUpdatingRowId(id);
       
+      const isDone = newStatus.toLowerCase().includes('terima outlet') || newStatus.toLowerCase().includes('lengkap');
       const updatedItem: AssetRequest = {
         ...item,
         item_delivery_status: newStatus,
         is_manually_edited: true,
-        procurement_status: newStatus.toLowerCase().includes('lengkap') ? 'selesai' : 'proses',
-        received_date: newStatus.toLowerCase().includes('lengkap') ? new Date().toISOString() : item.received_date,
+        procurement_status: isDone ? 'selesai' : 'proses',
+        received_date: isDone ? new Date().toISOString() : item.received_date,
       };
 
       setItems((prev) => prev.map((it) => ((it.id === id || it.external_id === id) ? updatedItem : it)));
@@ -358,8 +359,8 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           item_delivery_status: newStatus,
-          procurement_status: newStatus.toLowerCase().includes('lengkap') ? 'selesai' : 'proses',
-          received_date: newStatus.toLowerCase().includes('lengkap') ? new Date().toISOString() : null,
+          procurement_status: isDone ? 'selesai' : 'proses',
+          received_date: isDone ? new Date().toISOString() : null,
           is_manually_edited: true,
         }),
       });
@@ -381,6 +382,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
     try {
       setIsBulkUpdating(true);
       
+      const isDone = status.toLowerCase().includes('terima outlet') || status.toLowerCase().includes('lengkap');
       setItems((prev) =>
         prev.map((it) => {
           const itId = it.id || it.external_id;
@@ -389,7 +391,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
               ...it,
               item_delivery_status: status,
               is_manually_edited: true,
-              procurement_status: status.toLowerCase().includes('lengkap') ? 'selesai' : 'proses',
+              procurement_status: isDone ? 'selesai' : 'proses',
             };
           }
           return it;
@@ -403,7 +405,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
           ids: selectedIds,
           updates: {
             item_delivery_status: status,
-            procurement_status: status.toLowerCase().includes('lengkap') ? 'selesai' : 'proses',
+            procurement_status: isDone ? 'selesai' : 'proses',
             is_manually_edited: true,
           },
         }),
@@ -582,7 +584,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
           }`}
         >
           <CheckCircle2 className="h-3.5 w-3.5 text-[#137333]" />
-          Sudah Lengkap
+          Terima Outlet
         </button>
         <div className="flex items-center gap-1">
           <button
@@ -800,7 +802,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
               className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
             >
               <option value="ALL">Semua Status</option>
-              <option value="LENGKAP">Lengkap</option>
+              <option value="TERIMA_OUTLET">Terima Outlet</option>
               <option value="SEBAGIAN">Diterima Sebagian</option>
               <option value="PROSES">On Proses / Belum</option>
             </select>
@@ -856,12 +858,12 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
 
           <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => handleBulkUpdateStatus('Lengkap')}
+              onClick={() => handleBulkUpdateStatus('Terima Outlet')}
               disabled={isBulkUpdating}
               className="flex items-center gap-1.5 rounded-full bg-[#137333] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#0f5223] transition-colors disabled:opacity-50 shadow-sm"
             >
               {isBulkUpdating ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              Tandai Lengkap
+              Tandai Terima Outlet
             </button>
             <button
               onClick={() => handleBulkUpdateStatus('Ready Gudang SCGA')}
@@ -987,7 +989,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                 paginatedItems.map((item) => {
                   const itemId = item.id || item.external_id;
                   const isSelected = selectedIds.includes(itemId);
-                  const isCompleted = (item.item_delivery_status || '').toLowerCase().includes('lengkap');
+                  const isCompleted = (item.item_delivery_status || '').toLowerCase().includes('terima outlet') || (item.item_delivery_status || '').toLowerCase().includes('lengkap');
                   const isPartial = (item.item_delivery_status || '').toLowerCase().includes('sebagian');
                   const isReadyStock = (item.stock_status || '').toLowerCase().includes('ready');
                   const isUpdating = updatingRowId === itemId;
@@ -1101,7 +1103,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <select
-                              value={item.item_delivery_status || 'On Proses PR'}
+                              value={item.item_delivery_status === 'Lengkap' ? 'Terima Outlet' : (item.item_delivery_status || 'On Proses PR')}
                               disabled={isUpdating}
                               onChange={(e) => handleInlineStatusChange(item, e.target.value)}
                               className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors focus:outline-none ${
@@ -1112,7 +1114,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                                   : 'border-[#feeed9] dark:border-[#4a2800] bg-[#fef7e0] dark:bg-[#4a2800]/40 text-[#b06000] dark:text-[#ffb951]'
                               }`}
                             >
-                              <option value="Lengkap">✓ Lengkap</option>
+                              <option value="Terima Outlet">✓ Terima Outlet</option>
                               <option value="Ready Gudang SCGA">📦 Ready Gudang SCGA</option>
                               <option value="Dalam Pengiriman (SCGA)">🚚 Dalam Pengiriman</option>
                               <option value="Diterima Sebagian">⚡ Diterima Sebagian</option>

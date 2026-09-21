@@ -867,6 +867,7 @@ export async function getBranchOpeningSummaries(region: RegionType = 'ALL'): Pro
     for (const it of entry.items) {
       const isReadyOrDone =
         (it.quantity_stock_allocated >= it.quantity_needed && it.quantity_needed > 0) ||
+        (it.item_delivery_status || '').toLowerCase().includes('terima outlet') ||
         (it.item_delivery_status || '').toLowerCase().includes('lengkap') ||
         (it.item_delivery_status || '').toLowerCase().includes('ready gudang');
 
@@ -2415,7 +2416,7 @@ export async function getOperationalWorkflowSummary(region: RegionType = 'ALL'):
   };
 
   // 10. Selesai
-  const completedItems = items.filter((it) => (it.item_delivery_status || '').toLowerCase().includes('lengkap'));
+  const completedItems = items.filter((it) => (it.item_delivery_status || '').toLowerCase().includes('terima outlet') || (it.item_delivery_status || '').toLowerCase().includes('lengkap'));
   const selesaiStage: WorkflowStageDetail = {
     count: completedItems.length,
     label: 'Selesai',

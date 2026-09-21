@@ -184,14 +184,14 @@ export async function fetchJaboData(): Promise<{ items: AssetRequest[]; rawText:
     const agingDays = calculateAgingDays(orderDt, null);
 
     // KETENTUAN STATUS BARANG:
-    // 1. Jika Kolom AA (Terima Outlet) = TRUE -> Status Selesai / Lengkap
+    // 1. Jika Kolom AA (Terima Outlet) = TRUE -> Status Terima Outlet
     // 2. Jika Kolom Y (Pengiriman Aset) = TRUE -> Status Dalam Pengiriman / Ready SCGA
     // 3. Jika Stok Gudang >= Kebutuhan -> Status Ready Gudang SCGA
     // 4. Jika Stok Gudang > 0 -> Status Diterima Sebagian
     // 5. Lainnya -> Status On Proses PR
     let initialDeliveryStatus = 'On Proses PR';
     if (isReceivedAtOutlet) {
-      initialDeliveryStatus = 'Lengkap';
+      initialDeliveryStatus = 'Terima Outlet';
     } else if (isDirectShipment) {
       initialDeliveryStatus = 'Dalam Pengiriman (SCGA)';
     } else if (quantityStock >= quantityNeeded && quantityNeeded > 0) {
@@ -309,7 +309,7 @@ export async function fetchKalbarData(): Promise<{ items: AssetRequest[]; rawTex
 
     let initialDeliveryStatus = 'On Proses PR';
     if (isReceivedAtOutlet) {
-      initialDeliveryStatus = 'Lengkap';
+      initialDeliveryStatus = 'Terima Outlet';
     } else if (isDirectShipment) {
       initialDeliveryStatus = 'Dalam Pengiriman (SCGA)';
     } else if (quantityStock >= quantityNeeded && quantityNeeded > 0) {
