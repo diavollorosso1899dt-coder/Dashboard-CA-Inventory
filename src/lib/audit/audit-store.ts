@@ -1,5 +1,5 @@
 import { TrashItem, AuditLogEntry, TrashEntityType, AuditActionType } from '@/lib/supabase/types';
-import { getAdminClient } from '@/lib/supabase/server';
+import { getAdminClient, updateAssetRequest, updateAssetTransfer } from '@/lib/supabase/server';
 
 // In-Memory store fallback with initial seed logs for immediate usability
 interface AuditStoreState {
@@ -32,7 +32,9 @@ const initialSeedLogs: AuditLogEntry[] = [
     entity_type: 'ASET',
     entity_id: 'sample-2',
     entity_title: 'Meja Kasir Stainless 120cm',
-    details: 'Mengubah status pengiriman dari "On Proses PR" menjadi "Ready Gudang SCGA"',
+    details: 'Mengubah status pengiriman dari "Belum Ready" menjadi "Ready Antar"',
+    previous_state: { item_delivery_status: 'Belum Ready' },
+    new_state: { item_delivery_status: 'Ready Antar' },
   },
   {
     id: 'log-seed-3',
@@ -155,6 +157,63 @@ export async function getAuditLogs(options?: {
     data: list.slice(0, limit),
     total: list.length,
   };
+}
+
+/**
+ * Revert an audit log entry back to its previous state (Superuser Undo / Rollback)
+ */
+export async function revertAuditLog(
+  logId: string,
+  actorName: string,
+  actorRole: string
+): Promise<{ success: boolean; message: string; data?: AuditLogEntry }> {
+  const log = auditStore.logs.find((l) => l.id === logId);
+  if (!log) {
+    return { success: false, message: 'Catatan log tidak ditemukan.' };
+  }
+
+  if (!log.previous_state || Object.keys(log.previous_state).length === 0) {
+    return { 
+      success: false, 
+      message: 'Log ini tidak memiliki data kondisi sebelumnya (previous state) untuk dikembalikan.' 
+    };
+  }
+
+  try {
+    // 1. Rollback entity data based on entity_type
+    if (log.entity_type === 'ASET' && log.entity_id) {
+      const res = await updateAssetRequest(log.entity_id, log.previous_state);
+      if (!res.success) {
+        return { success: false, message: res.error || 'Gagal mengembalikan data aset di basis data.' };
+      }
+    } else if (log.entity_type === 'TRANSFER' && log.entity_id) {
+      await updateAssetTransfer(log.entity_id, log.previous_state);
+    }
+
+    // 2. Record new audit log for the REVERT action
+    const revertEntry = await recordAuditLog(
+      actorName || 'Super User',
+      actorRole || 'Super User',
+      'REVERT',
+      log.entity_type,
+      log.entity_title,
+      `Mengembalikan perubahan (${log.action_type}) ke kondisi sebelumnya dari log #${log.id.slice(-6)}. Nilai dikembalikan: ${JSON.stringify(log.previous_state)}`,
+      {
+        entityId: log.entity_id,
+        previousState: log.new_state,
+        newState: log.previous_state,
+      }
+    );
+
+    return {
+      success: true,
+      message: `Perubahan pada "${log.entity_title}" berhasil dikembalikan ke kondisi sebelumnya.`,
+      data: revertEntry,
+    };
+  } catch (err: any) {
+    console.error('Error reverting audit log:', err);
+    return { success: false, message: `Terjadi kesalahan saat revert: ${err.message}` };
+  }
 }
 
 // -------------------------------------------------------------

@@ -428,7 +428,8 @@ export type AuditActionType =
   | 'RESTORE' 
   | 'PERMANENT_DELETE' 
   | 'EMPTY_TRASH'
-  | 'STATUS_CHANGE';
+  | 'STATUS_CHANGE'
+  | 'REVERT';
 
 export interface AuditLogEntry {
   id: string;

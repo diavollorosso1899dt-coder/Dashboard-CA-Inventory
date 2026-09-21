@@ -591,6 +591,33 @@ export async function getAssetRequests(options?: {
 }
 
 /**
+ * Get single asset request by ID (UUID or external_id)
+ */
+export async function getAssetRequestById(id: string): Promise<AssetRequest | null> {
+  const cached = cache.items.find((item) => item.id === id || item.external_id === id);
+  if (cached) return cached;
+
+  try {
+    const admin = getAdminClient();
+    if (admin) {
+      let query = admin.from('asset_requests').select('*');
+      if (isUuid(id)) {
+        query = query.eq('id', id);
+      } else {
+        query = query.eq('external_id', id);
+      }
+      const { data, error } = await query.single();
+      if (!error && data) {
+        return data as AssetRequest;
+      }
+    }
+  } catch (e) {
+    console.error('Error fetching asset by id:', e);
+  }
+  return null;
+}
+
+/**
  * Update single asset request (Interactive editing from dashboard)
  */
 export async function updateAssetRequest(

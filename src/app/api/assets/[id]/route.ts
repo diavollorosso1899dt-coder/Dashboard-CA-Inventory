@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { updateAssetRequest, getAdminClient } from '@/lib/supabase/server';
+import { updateAssetRequest, getAssetRequestById, getAdminClient } from '@/lib/supabase/server';
 import { moveItemToTrash, recordAuditLog } from '@/lib/audit/audit-store';
 
 export const dynamic = 'force-dynamic';
@@ -15,15 +15,15 @@ export async function GET(
       return NextResponse.json({ error: 'Supabase client not configured' }, { status: 500 });
     }
 
-    const { data, error } = await client
-      .from('asset_requests')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (error || !data) {
-      return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
+    let query = client.from('asset_requests').select('*');
+    if (id.includes('-') && id.length === 36) {
+      query = query.eq('id', id);
+    } else {
+      query = query.eq('external_id', id);
     }
+
+    const { data, error } = await query.single();
+    if (error) throw error;
 
     return NextResponse.json({ success: true, data });
   } catch (error: any) {
@@ -41,29 +41,46 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json();
+
+    // Fetch existing asset state before update to support revert / rollback
+    const existing = await getAssetRequestById(id);
     const result = await updateAssetRequest(id, body);
 
     if (!result.success) {
       return NextResponse.json({ error: result.error || 'Update failed' }, { status: 400 });
     }
 
-    // Log update in audit trail
+    // Log update in audit trail with previous_state and new_state
     try {
       const actorName = request.headers.get('x-user-name') || 'User';
       const actorRole = request.headers.get('x-user-role') || 'User';
       const details = Object.entries(body)
         .map(([k, v]) => `${k}: ${v}`)
         .join(', ');
+
+      const previousState: Record<string, any> = {};
+      if (existing) {
+        Object.keys(body).forEach((key) => {
+          previousState[key] = (existing as any)[key];
+        });
+      }
+
       await recordAuditLog(
         actorName,
         actorRole,
-        'UPDATE',
+        body.item_delivery_status ? 'STATUS_CHANGE' : 'UPDATE',
         'ASET',
-        result.data?.item_name || 'Aset',
+        result.data?.item_name || existing?.item_name || 'Aset',
         `Pembaruan data aset: ${details}`,
-        { entityId: id, newState: body }
+        { 
+          entityId: id, 
+          previousState: Object.keys(previousState).length > 0 ? previousState : undefined,
+          newState: body 
+        }
       );
-    } catch {}
+    } catch (auditErr) {
+      console.error('Failed recording audit log:', auditErr);
+    }
 
     return NextResponse.json(result);
   } catch (error: any) {

@@ -86,8 +86,13 @@ export function AssetDetailModal({
 
   useEffect(() => {
     const rawStatus = (item.item_delivery_status || '').toLowerCase();
-    const isReady = rawStatus.includes('ready antar') || rawStatus.includes('ready');
-    setDeliveryStatus(isReady ? 'Ready Antar' : 'Belum Ready');
+    let normalized = 'Belum Ready';
+    if (rawStatus.includes('terima outlet') || rawStatus.includes('terima') || rawStatus.includes('lengkap')) {
+      normalized = 'Terima Outlet';
+    } else if (rawStatus.includes('ready antar') || rawStatus.includes('ready')) {
+      normalized = 'Ready Antar';
+    }
+    setDeliveryStatus(normalized);
     setStockStatus(item.stock_status || 'Not Ready (Stok Kosong)');
     setPicReceiver(item.pic_receiver || '');
     setNotes(item.notes || '');
@@ -319,6 +324,7 @@ export function AssetDetailModal({
                 >
                   <option value="Ready Antar">Ready Antar</option>
                   <option value="Belum Ready">Belum Ready</option>
+                  <option value="Terima Outlet">Terima Outlet</option>
                 </select>
               </div>
 

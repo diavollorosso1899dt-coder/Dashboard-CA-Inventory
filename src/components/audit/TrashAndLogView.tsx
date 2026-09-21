@@ -55,6 +55,8 @@ export function TrashAndLogView({
   const [logsLoading, setLogsLoading] = useState(false);
   const [logSearch, setLogSearch] = useState('');
   const [logActionFilter, setLogActionFilter] = useState<string>('ALL');
+  const [revertingLog, setRevertingLog] = useState<AuditLogEntry | null>(null);
+  const [isReverting, setIsReverting] = useState(false);
 
   // Feedback banner
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -271,6 +273,8 @@ export function TrashAndLogView({
         return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-400 border border-amber-200">KE SAMPAH</span>;
       case 'RESTORE':
         return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-400 border border-teal-200">DIPULIHKAN</span>;
+      case 'REVERT':
+        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200">DIKEMBALIKAN (REVERT)</span>;
       case 'PERMANENT_DELETE':
       case 'EMPTY_TRASH':
         return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-400 border border-rose-200">HAPUS PERMANEN</span>;
@@ -669,6 +673,7 @@ export function TrashAndLogView({
                 <option value="CREATE">Pembuatan Baru (CREATE)</option>
                 <option value="UPDATE">Pembaruan Data (UPDATE)</option>
                 <option value="STATUS_CHANGE">Ubah Status</option>
+                <option value="REVERT">Pengembalian Nilai (REVERT)</option>
                 <option value="DELETE_TO_TRASH">Hapus ke Sampah</option>
                 <option value="RESTORE">Pemulihan (RESTORE)</option>
                 <option value="PERMANENT_DELETE">Hapus Permanen</option>
@@ -706,12 +711,13 @@ export function TrashAndLogView({
                     <th className="py-3.5 px-3">Tipe Aksi</th>
                     <th className="py-3.5 px-3">Modul / Entitas</th>
                     <th className="py-3.5 px-4">Rincian Perubahan</th>
+                    <th className="py-3.5 px-4 text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
                   {filteredLogs.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-16 text-center text-slate-400">
+                      <td colSpan={6} className="py-16 text-center text-slate-400">
                         <History className="w-10 h-10 mx-auto opacity-30 mb-2 text-[#0b57d0]" />
                         <div className="font-semibold text-sm text-slate-600 dark:text-slate-300">
                           Tidak Ada Catatan Log
@@ -767,6 +773,22 @@ export function TrashAndLogView({
                           <p className="text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
                             {log.details}
                           </p>
+                        </td>
+
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          {log.previous_state && Object.keys(log.previous_state).length > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => setRevertingLog(log)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:text-indigo-300 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800 text-xs font-bold transition-colors shadow-xs"
+                              title="Kembalikan perubahan ini ke kondisi sebelumnya"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              <span>Kembalikan</span>
+                            </button>
+                          ) : (
+                            <span className="text-slate-400 text-[11px] italic">-</span>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -827,6 +849,124 @@ export function TrashAndLogView({
                 className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700"
               >
                 Pulihkan Item Ini
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revert Audit Log Confirmation Modal */}
+      {revertingLog && (
+        <div 
+          onClick={() => !isReverting && setRevertingLog(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()} 
+            className="w-full max-w-xl bg-white dark:bg-[#1e1f20] rounded-3xl border border-[#e0e2ec] dark:border-[#444746] overflow-hidden shadow-2xl p-6 space-y-4"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-[#1f1f1f] dark:text-[#e3e3e3]">
+                    Kembalikan Perubahan (Revert / Undo)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Pulihkan data ke nilai sebelum diubah untuk memperbaiki kesalahan input
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRevertingLog(null)}
+                disabled={isReverting}
+                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Entitas info */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs space-y-1">
+              <div>Entitas: <strong className="text-[#0b57d0] dark:text-[#a8c7fa]">{revertingLog.entity_title}</strong> <span className="text-[11px] text-slate-500">({revertingLog.entity_type})</span></div>
+              <div>Diubah oleh: <strong>{revertingLog.actor_name}</strong> ({revertingLog.actor_role}) pada {new Date(revertingLog.timestamp).toLocaleString('id-ID')} WIB</div>
+              <div>Keterangan perubahan: <span className="italic text-slate-600 dark:text-slate-400">{revertingLog.details}</span></div>
+            </div>
+
+            {/* Perbandingan Nilai Sebelum vs Sesudah */}
+            <div>
+              <div className="text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-2">
+                Perbandingan Nilai (Sebelum vs Sesudah):
+              </div>
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                <div className="grid grid-cols-3 bg-slate-100 dark:bg-slate-800/80 p-2.5 font-bold text-[11px] text-slate-600 dark:text-slate-300 uppercase">
+                  <div>Parameter / Field</div>
+                  <div className="text-emerald-700 dark:text-emerald-400">Nilai Sebelumnya (Dipulihkan)</div>
+                  <div className="text-rose-600 dark:text-rose-400">Nilai Saat Ini (Dibatalkan)</div>
+                </div>
+                {Object.entries(revertingLog.previous_state || {}).map(([key, oldVal]) => {
+                  const newVal = (revertingLog.new_state || {})[key];
+                  return (
+                    <div key={key} className="grid grid-cols-3 p-2.5 items-center">
+                      <div className="font-mono text-slate-600 dark:text-slate-400">{key}</div>
+                      <div className="font-bold text-emerald-700 dark:text-emerald-300">
+                        {typeof oldVal === 'object' ? JSON.stringify(oldVal) : String(oldVal ?? '-')}
+                      </div>
+                      <div className="text-slate-400 line-through">
+                        {typeof newVal === 'object' ? JSON.stringify(newVal) : String(newVal ?? '-')}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                disabled={isReverting}
+                onClick={() => setRevertingLog(null)}
+                className="px-4 py-2 rounded-xl border text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isReverting}
+                onClick={async () => {
+                  if (!revertingLog) return;
+                  try {
+                    setIsReverting(true);
+                    const res = await fetch('/api/audit/logs/revert', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        logId: revertingLog.id,
+                        actorName: user?.full_name || 'Super User',
+                        actorRole: user?.role || 'Super User',
+                      }),
+                    });
+                    const json = await res.json();
+                    if (json.success) {
+                      showFeedback(json.message || `Perubahan pada "${revertingLog.entity_title}" berhasil dikembalikan.`);
+                      setRevertingLog(null);
+                      loadLogs();
+                      router.refresh();
+                    } else {
+                      showFeedback(json.error || 'Gagal mengembalikan perubahan data.', 'error');
+                    }
+                  } catch (err: any) {
+                    showFeedback(`Terjadi kesalahan: ${err.message}`, 'error');
+                  } finally {
+                    setIsReverting(false);
+                  }
+                }}
+                className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors disabled:opacity-50 shadow-sm"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${isReverting ? 'animate-spin' : ''}`} />
+                <span>{isReverting ? 'Mengembalikan...' : 'Ya, Kembalikan ke Sebelumnya'}</span>
               </button>
             </div>
           </div>

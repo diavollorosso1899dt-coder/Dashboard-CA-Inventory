@@ -68,7 +68,7 @@ interface AssetDataTableProps {
   regionFilter?: RegionType;
 }
 
-type QuickFilterType = 'ALL' | 'OVERDUE' | 'READY_STOCK' | 'NEED_PR' | 'COMPLETED' | 'TRANSFER_SYSTEM';
+type QuickFilterType = 'ALL' | 'OVERDUE' | 'READY_STOCK' | 'NEED_PR' | 'COMPLETED' | 'TERIMA_OUTLET' | 'TRANSFER_SYSTEM';
 
 export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: AssetDataTableProps) {
   const [items, setItems] = useState<AssetRequest[]>(initialItems);
@@ -274,14 +274,17 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
       if (quickFilter === 'OVERDUE' && (item.lead_time_days || 0) <= 14) return false;
       if (quickFilter === 'READY_STOCK' && (item.quantity_stock_allocated || 0) <= 0) return false;
       if (quickFilter === 'NEED_PR' && (item.quantity_pr || 0) <= 0) return false;
-      if (quickFilter === 'COMPLETED' && !(item.item_delivery_status || '').toLowerCase().includes('ready antar') && !(item.item_delivery_status || '').toLowerCase().includes('ready')) return false;
+      if (quickFilter === 'COMPLETED' && (!(item.item_delivery_status || '').toLowerCase().includes('ready antar') && !(item.item_delivery_status || '').toLowerCase().includes('ready'))) return false;
+      if (quickFilter === 'TERIMA_OUTLET' && (!(item.item_delivery_status || '').toLowerCase().includes('terima outlet') && !(item.item_delivery_status || '').toLowerCase().includes('terima'))) return false;
       if (quickFilter === 'TRANSFER_SYSTEM' && !systemTransferIds.includes(item.id || item.external_id) && !item.is_system_transfer) return false;
 
       if (selectedStatus !== 'ALL') {
         const itemStatus = (item.item_delivery_status || '').toLowerCase();
-        const isItemReady = itemStatus.includes('ready antar') || itemStatus.includes('ready') || itemStatus.includes('lengkap') || itemStatus.includes('terima outlet');
+        const isItemTerima = itemStatus.includes('terima outlet') || itemStatus.includes('terima');
+        const isItemReady = !isItemTerima && (itemStatus.includes('ready antar') || itemStatus.includes('ready'));
+        if (selectedStatus === 'TERIMA_OUTLET' && !isItemTerima) return false;
         if (selectedStatus === 'READY_ANTAR' && !isItemReady) return false;
-        if (selectedStatus === 'BELUM_READY' && isItemReady) return false;
+        if (selectedStatus === 'BELUM_READY' && (isItemReady || isItemTerima)) return false;
       }
 
       if (selectedStock !== 'ALL') {
@@ -587,6 +590,17 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
           <Truck className="h-3.5 w-3.5 text-[#137333]" />
           Ready Antar
         </button>
+        <button
+          onClick={() => { setQuickFilter('TERIMA_OUTLET'); setCurrentPage(1); }}
+          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all ${
+            quickFilter === 'TERIMA_OUTLET'
+              ? 'bg-[#c2e7ff] dark:bg-[#004a77] border border-[#0b57d0] dark:border-[#a8c7fa] text-[#001d35] dark:text-[#c2e7ff]'
+              : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#444746] dark:text-[#c4c7c5] hover:text-[#0b57d0] dark:hover:text-[#a8c7fa]'
+          }`}
+        >
+          <Package className="h-3.5 w-3.5 text-[#0b57d0]" />
+          Terima Outlet
+        </button>
         <div className="flex items-center gap-1">
           <button
             onClick={() => { setQuickFilter('TRANSFER_SYSTEM'); setCurrentPage(1); }}
@@ -805,6 +819,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
               <option value="ALL">Semua Status</option>
               <option value="READY_ANTAR">Ready Antar</option>
               <option value="BELUM_READY">Belum Ready</option>
+              <option value="TERIMA_OUTLET">Terima Outlet</option>
             </select>
           </div>
 
@@ -872,6 +887,14 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
             >
               <Clock className="h-3.5 w-3.5" />
               Tandai Belum Ready
+            </button>
+            <button
+              onClick={() => handleBulkUpdateStatus('Terima Outlet')}
+              disabled={isBulkUpdating}
+              className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-3.5 py-1.5 text-xs font-semibold text-white dark:text-[#041e49] hover:bg-[#0842a0] transition-colors disabled:opacity-50 shadow-sm"
+            >
+              <Package className="h-3.5 w-3.5" />
+              Tandai Terima Outlet
             </button>
             <button
               onClick={() => {
@@ -982,8 +1005,8 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                   const itemId = item.id || item.external_id;
                   const isSelected = selectedIds.includes(itemId);
                   const rawStatus = (item.item_delivery_status || '').toLowerCase();
-                  const isReadyAntar = rawStatus.includes('ready antar') || rawStatus.includes('ready') || rawStatus.includes('lengkap') || rawStatus.includes('terima outlet');
-                  const isPartial = rawStatus.includes('sebagian');
+                  const isTerimaOutlet = rawStatus.includes('terima outlet') || rawStatus.includes('terima');
+                  const isReadyAntar = !isTerimaOutlet && (rawStatus.includes('ready antar') || rawStatus.includes('ready'));
                   const isReadyStock = (item.stock_status || '').toLowerCase().includes('ready');
                   const isUpdating = updatingRowId === itemId;
 
@@ -1096,17 +1119,20 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <select
-                              value={isReadyAntar ? 'Ready Antar' : 'Belum Ready'}
+                              value={isTerimaOutlet ? 'Terima Outlet' : isReadyAntar ? 'Ready Antar' : 'Belum Ready'}
                               disabled={isUpdating}
                               onChange={(e) => handleInlineStatusChange(item, e.target.value)}
                               className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors focus:outline-none ${
-                                isReadyAntar
+                                isTerimaOutlet
+                                  ? 'border-[#c2e7ff] dark:border-[#004a77] bg-[#e8f0fe] dark:bg-[#004a77]/40 text-[#0b57d0] dark:text-[#a8c7fa]'
+                                  : isReadyAntar
                                   ? 'border-[#ceead6] dark:border-[#0f5223] bg-[#e6f4ea] dark:bg-[#0f5223]/40 text-[#137333] dark:text-[#6dd58c]'
                                   : 'border-[#feeed9] dark:border-[#4a2800] bg-[#fef7e0] dark:bg-[#4a2800]/40 text-[#b06000] dark:text-[#ffb951]'
                               }`}
                             >
                               <option value="Ready Antar">🚚 Ready Antar</option>
                               <option value="Belum Ready">⏳ Belum Ready</option>
+                              <option value="Terima Outlet">📦 Terima Outlet</option>
                             </select>
                             {isUpdating && <RefreshCw className="h-3 w-3 animate-spin text-[#747775]" />}
                           </div>
