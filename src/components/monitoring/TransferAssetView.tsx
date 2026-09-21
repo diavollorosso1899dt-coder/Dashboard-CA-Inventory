@@ -16,7 +16,9 @@ import {
   RotateCcw, 
   Eye, 
   Check, 
-  ShieldAlert 
+  ShieldAlert,
+  Building2,
+  ChevronDown 
 } from 'lucide-react';
 import { AssetTransfer, Outlet, AssetRequest, TransferStatus, TransferItem } from '@/lib/supabase/types';
 import { formatDateOnly } from '@/lib/utils/date-formatter';
@@ -44,6 +46,10 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
   const [selectedTransfer, setSelectedTransfer] = useState<AssetTransfer | null>(null);
 
+  // Shortcut & Queue states
+  const [isOutletMenuOpen, setIsOutletMenuOpen] = useState(false);
+  const [selectedQueueOutlet, setSelectedQueueOutlet] = useState<string>('ALL');
+
   // Automatic Queue of Assets with 'Ready Antar'
   const readyDistributionAssets = useMemo(() => {
     let storedIds: string[] = [];
@@ -62,6 +68,26 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
       return status === 'ready antar' || Boolean(a.is_system_transfer) || storedIds.includes(aId);
     });
   }, [initialAssets]);
+
+  // Group ready assets by outlet/branch name
+  const groupedReadyAssets = useMemo(() => {
+    const groups: Record<string, AssetRequest[]> = {};
+    readyDistributionAssets.forEach((asset) => {
+      const branch = (asset.branch_name || 'Tanpa Outlet / Cabang').trim();
+      if (!groups[branch]) {
+        groups[branch] = [];
+      }
+      groups[branch].push(asset);
+    });
+    return groups;
+  }, [readyDistributionAssets]);
+
+  const outletGroups = useMemo(() => {
+    return Object.entries(groupedReadyAssets).map(([branchName, assets]) => {
+      const totalUnits = assets.reduce((sum, a) => sum + (a.quantity_needed || 1), 0);
+      return { branchName, assets, totalUnits, count: assets.length };
+    });
+  }, [groupedReadyAssets]);
 
   // Create Form State
   const [sourceType, setSourceType] = useState<'GUDANG_PUSAT' | 'OUTLET'>('GUDANG_PUSAT');
@@ -151,7 +177,8 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
     setItemsList((prev) => prev.filter((it) => it.id !== id));
   };
 
-  const handleProcessFromQueue = (selected: AssetRequest[]) => {
+  const handleProcessFromQueue = (selected: AssetRequest[], targetOutletName?: string) => {
+    const targetOutlet = targetOutletName || selected[0]?.branch_name || '';
     const formattedItems: TransferItem[] = selected.map((a, idx) => ({
       id: `ti-dist-${Date.now()}-${idx}`,
       asset_id: a.id || a.external_id,
@@ -162,10 +189,11 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
     }));
 
     setItemsList(formattedItems);
-    if (selected[0]?.branch_name) {
-      setToLocation(selected[0].branch_name);
+    setDestinationType('OUTLET');
+    if (targetOutlet) {
+      setToLocation(targetOutlet);
     }
-    setNotes(`Surat Jalan Distribusi dibuat dari ${selected.length} aset berstatus Ready Antar.`);
+    setNotes(`Surat Jalan Distribusi untuk outlet ${targetOutlet || 'Cabang'} (${selected.length} item aset).`);
     setIsCreateModalOpen(true);
   };
 
@@ -443,8 +471,8 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         </div>
       </div>
 
-      {/* 3. Antrean Distribusi Otomatis (Ready Antar) */}
-      <div className="panel-card p-4 space-y-3 border-2 border-[#0b57d0]/30 dark:border-[#a8c7fa]/30 bg-[#e8f0fe]/30 dark:bg-[#004a77]/20">
+      {/* 3. Antrean Distribusi Otomatis (Ready Antar) - Dikelompokkan Berdasarkan Nama Outlet */}
+      <div className="panel-card p-4 space-y-3.5 border-2 border-[#0b57d0]/30 dark:border-[#a8c7fa]/30 bg-[#e8f0fe]/30 dark:bg-[#004a77]/20">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#c2e7ff] dark:border-[#004a77] pb-2.5">
           <div className="flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-xs font-bold text-white dark:text-[#041e49]">
@@ -456,23 +484,106 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                 Antrean Aset Siap Distribusi (Status: Ready Antar)
               </h3>
               <p className="text-[11px] text-[#444746] dark:text-[#c4c7c5]">
-                Aset dengan status pengiriman <strong>Ready Antar</strong> otomatis masuk ke antrean ini dan siap diterbitkan Surat Jalan Distribusi.
+                Dikelompokkan berdasarkan nama outlet tujuan. Terbitkan Surat Jalan Distribusi per cabang secara otomatis.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto">
+          <div className="flex items-center gap-2 self-start sm:self-auto relative">
             {readyDistributionAssets.length > 0 && (
-              <button
-                onClick={() => handleProcessFromQueue(readyDistributionAssets)}
-                className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-4 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-sm"
-              >
-                <Truck className="h-3.5 w-3.5" />
-                Terbitkan Surat Jalan ({readyDistributionAssets.length} Item)
-              </button>
+              <>
+                {outletGroups.length === 1 ? (
+                  <button
+                    onClick={() => handleProcessFromQueue(outletGroups[0].assets, outletGroups[0].branchName)}
+                    className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-4 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-sm"
+                  >
+                    <Truck className="h-3.5 w-3.5" />
+                    Terbitkan Surat Jalan ({outletGroups[0].branchName} - {outletGroups[0].count} Item)
+                  </button>
+                ) : (
+                  <div className="relative">
+                    <button
+                      onClick={() => setIsOutletMenuOpen((prev) => !prev)}
+                      className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-4 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-sm"
+                    >
+                      <Truck className="h-3.5 w-3.5" />
+                      <span>Terbitkan Surat Jalan (Pilih Outlet)</span>
+                      <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isOutletMenuOpen ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {isOutletMenuOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-30"
+                          onClick={() => setIsOutletMenuOpen(false)}
+                        />
+                        <div className="absolute right-0 top-full mt-2 w-80 rounded-2xl bg-white dark:bg-[#1e1f20] border border-[#c2e7ff] dark:border-[#004a77] shadow-xl z-40 p-2 space-y-1">
+                          <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#747775] dark:text-[#8e918f]">
+                            Pilih Outlet Tujuan Penerbitan SJ:
+                          </div>
+                          {outletGroups.map((grp) => (
+                            <button
+                              key={grp.branchName}
+                              onClick={() => {
+                                setIsOutletMenuOpen(false);
+                                handleProcessFromQueue(grp.assets, grp.branchName);
+                              }}
+                              className="w-full flex items-center justify-between p-2.5 rounded-xl text-left hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/40 transition-colors group"
+                            >
+                              <div className="min-w-0 pr-2">
+                                <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] group-hover:text-[#0b57d0] dark:group-hover:text-[#a8c7fa] truncate">
+                                  {grp.branchName}
+                                </div>
+                                <div className="text-[10px] text-[#747775] dark:text-[#8e918f]">
+                                  {grp.count} item • Total {grp.totalUnits} unit
+                                </div>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-[#0b57d0]/10 dark:bg-[#a8c7fa]/20 text-[#0b57d0] dark:text-[#a8c7fa] text-[10px] font-bold px-2 py-1 flex items-center gap-1 group-hover:bg-[#0b57d0] group-hover:text-white dark:group-hover:bg-[#a8c7fa] dark:group-hover:text-[#041e49] transition-colors">
+                                Terbitkan ➔
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
+
+        {/* Filter Tab Berdasarkan Outlet */}
+        {outletGroups.length > 1 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+            <span className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] mr-1 shrink-0">
+              Filter Cabang:
+            </span>
+            <button
+              onClick={() => setSelectedQueueOutlet('ALL')}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all shrink-0 ${
+                selectedQueueOutlet === 'ALL'
+                  ? 'bg-[#0b57d0] text-white shadow-xs'
+                  : 'bg-white/70 dark:bg-[#1e1f20]/70 text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white border border-[#e0e2ec] dark:border-[#444746]'
+              }`}
+            >
+              Semua Cabang ({readyDistributionAssets.length})
+            </button>
+            {outletGroups.map((grp) => (
+              <button
+                key={grp.branchName}
+                onClick={() => setSelectedQueueOutlet(grp.branchName)}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all shrink-0 ${
+                  selectedQueueOutlet === grp.branchName
+                    ? 'bg-[#0b57d0] text-white shadow-xs'
+                    : 'bg-white/70 dark:bg-[#1e1f20]/70 text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white border border-[#e0e2ec] dark:border-[#444746]'
+                }`}
+              >
+                {grp.branchName} ({grp.count})
+              </button>
+            ))}
+          </div>
+        )}
 
         {readyDistributionAssets.length === 0 ? (
           <div className="py-4 text-center text-xs text-[#747775] dark:text-[#8e918f]">
@@ -483,34 +594,83 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
             menjadi &quot;Ready Antar&quot; agar otomatis muncul di sini.
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-1 max-h-56 overflow-y-auto">
-            {readyDistributionAssets.map((asset) => (
-              <div
-                key={asset.id || asset.external_id}
-                className="flex items-center justify-between rounded-xl border border-[#d2e3fc] dark:border-[#004a77] bg-[#ffffff] dark:bg-[#1e1f20] p-2.5 shadow-xs"
-              >
-                <div className="min-w-0 pr-2">
-                  <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
-                    {asset.item_name}
+          <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
+            {outletGroups
+              .filter((grp) => selectedQueueOutlet === 'ALL' || grp.branchName === selectedQueueOutlet)
+              .map((group) => (
+                <div
+                  key={group.branchName}
+                  className="rounded-2xl border border-[#c2e7ff] dark:border-[#004a77] bg-white/90 dark:bg-[#1e1f20]/95 p-3.5 shadow-xs space-y-2.5 transition-all hover:border-[#0b57d0]/60"
+                >
+                  {/* Outlet Group Header & Shortcut Action */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#e0e2ec]/80 dark:border-[#333538] pb-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="h-8 w-8 rounded-xl bg-[#0b57d0]/10 dark:bg-[#a8c7fa]/20 flex items-center justify-center text-[#0b57d0] dark:text-[#a8c7fa] shrink-0">
+                        <Building2 className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="font-bold text-xs sm:text-sm text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-2">
+                          <span>{group.branchName}</span>
+                          <span className="rounded-full bg-blue-100 dark:bg-blue-950/60 px-2 py-0.5 text-[10px] font-bold text-blue-800 dark:text-blue-300">
+                            {group.count} Item ({group.totalUnits} unit)
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-[#747775] dark:text-[#8e918f]">
+                          Semua aset siap antar untuk cabang tujuan {group.branchName}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleProcessFromQueue(group.assets, group.branchName)}
+                      className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-3.5 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-all shadow-xs self-start sm:self-auto group"
+                    >
+                      <Truck className="h-3.5 w-3.5 transition-transform group-hover:scale-110" />
+                      <span>Terbitkan Surat Jalan Outlet Ini ({group.count} Item)</span>
+                    </button>
                   </div>
-                  <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] truncate flex items-center gap-1.5 mt-0.5">
-                    <span>{asset.branch_name}</span>
-                    <span>•</span>
-                    <strong className="text-[#0b57d0] dark:text-[#a8c7fa]">{asset.quantity_needed} unit</strong>
-                    <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/60 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 dark:text-emerald-300">
-                      Ready Antar
-                    </span>
+
+                  {/* Asset Items Grid in Outlet */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                    {group.assets.map((asset) => (
+                      <div
+                        key={asset.id || asset.external_id}
+                        className="flex items-center justify-between rounded-xl border border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 p-2.5 hover:border-[#0b57d0]/40 transition-colors"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
+                            {asset.item_name}
+                          </div>
+                          <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] truncate flex items-center gap-1.5 mt-0.5">
+                            <strong className="text-[#0b57d0] dark:text-[#a8c7fa]">
+                              {asset.quantity_needed || 1} unit
+                            </strong>
+                            {asset.classification && (
+                              <>
+                                <span>•</span>
+                                <span className="text-[#747775] dark:text-[#8e918f] truncate max-w-[90px]">
+                                  {asset.classification}
+                                </span>
+                              </>
+                            )}
+                            <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/60 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 dark:text-emerald-300">
+                              Ready Antar
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleProcessFromQueue([asset], group.branchName)}
+                          className="rounded-full bg-white dark:bg-[#1e1f20] border border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors shrink-0 shadow-xs"
+                          title="Kirim hanya item ini"
+                        >
+                          Kirim Ini Saja
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
-
-                <button
-                  onClick={() => handleProcessFromQueue([asset])}
-                  className="rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-2.5 py-1 text-[10px] font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] transition-colors shrink-0 shadow-xs"
-                >
-                  Kirim Ini
-                </button>
-              </div>
-            ))}
+              ))}
           </div>
         )}
       </div>
@@ -751,6 +911,9 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
                     }}
                     className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] px-3 py-2 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
                   >
+                    {toLocation && !outlets.some((o) => o.branch_name === toLocation) && toLocation !== 'Gudang Pusat SCGA' && (
+                      <option value={toLocation}>{toLocation}</option>
+                    )}
                     {outlets.map((o) => (
                       <option key={o.id} value={o.branch_name}>
                         {o.branch_name}
