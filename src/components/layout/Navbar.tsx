@@ -20,6 +20,7 @@ import {
 import { useTheme } from '@/components/theme/ThemeContext';
 import { useNavigation } from './NavigationContext';
 import { useAuth } from '@/components/auth/AuthContext';
+import { SpeedingCarLogo } from '@/components/common/SpeedingCarLogo';
 
 export function Navbar() {
   const router = useRouter();
@@ -153,15 +154,15 @@ export function Navbar() {
           {isMobileOpen ? <X className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" /> : <Menu className="h-5 w-5" />}
         </button>
 
-        <Link href="/" className="flex h-10 w-10 items-center justify-center rounded-full bg-[#e8f0fe] dark:bg-[#004a77] text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#d3e3fd] dark:hover:bg-[#0842a0] transition-colors shadow-sm shrink-0">
+        <Link href="/" className="flex h-10 w-10 items-center justify-center rounded-full bg-[#e8f0fe] dark:bg-[#004a77] text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#d3e3fd] dark:hover:bg-[#0842a0] transition-colors shadow-sm shrink-0" title="HANTARAN Dashboard">
           <div className="relative flex h-5 w-5 items-center justify-center">
-            <Database className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+            <SpeedingCarLogo className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" />
           </div>
         </Link>
         <div>
           <div className="flex items-center gap-2">
-            <Link href="/" className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] text-base md:text-lg tracking-tight hover:text-[#0b57d0] dark:hover:text-[#a8c7fa] transition-colors">
-              Asset Control
+            <Link href="/" className="font-extrabold text-[#1f1f1f] dark:text-[#e3e3e3] text-base md:text-lg tracking-tight hover:text-[#0b57d0] dark:hover:text-[#a8c7fa] transition-colors">
+              HANTARAN
             </Link>
             <span className="hidden sm:inline-block rounded-full bg-[#e8f0fe] dark:bg-[#004a77] px-2.5 py-0.5 text-[11px] font-medium text-[#0b57d0] dark:text-[#c2e7ff]">
               Dashboard

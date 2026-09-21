@@ -14,6 +14,7 @@ import {
   Package,
   UserCheck
 } from 'lucide-react';
+import { SpeedingCarLogo } from '@/components/common/SpeedingCarLogo';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -45,8 +46,8 @@ export default function LoginPage() {
         
         {/* Brand Header */}
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-600 dark:bg-indigo-500 text-white shadow-xl shadow-indigo-600/25 mb-1">
-            <Package className="w-8 h-8" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[#0b57d0] dark:bg-[#004a77] text-white shadow-xl shadow-[#0b57d0]/25 mb-1">
+            <SpeedingCarLogo className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white uppercase">
             HANTARAN

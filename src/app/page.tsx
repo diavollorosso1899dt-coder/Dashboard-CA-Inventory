@@ -27,7 +27,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl md:text-2xl font-bold text-[#1f1f1f] dark:text-[#e3e3e3] tracking-tight">
-              Dashboard Asset Control
+              Dashboard HANTARAN
             </h1>
             <span className="rounded-full bg-[#e8f0fe] dark:bg-[#004a77] px-3 py-0.5 text-xs font-semibold text-[#0b57d0] dark:text-[#c2e7ff]">
               {region === 'ALL' ? 'Semua Wilayah' : region}

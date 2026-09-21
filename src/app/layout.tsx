@@ -7,8 +7,8 @@ import { AuthProvider } from '@/components/auth/AuthContext';
 import { AppShell } from '@/components/layout/AppShell';
 
 export const metadata: Metadata = {
-  title: 'Asset Control & Inventory Dashboard',
-  description: 'Sistem Pemantauan Aset, Kesiapan Outlet, SLA Pengadaan & Google Sheets Sync ke Supabase',
+  title: 'HANTARAN - Sistem Manajemen Inventaris & Logistik',
+  description: 'Sistem Pemantauan Aset, Pendistribusian Logistik, Kesiapan Outlet, dan SLA Pengadaan HANTARAN',
 };
 
 export default function RootLayout({
