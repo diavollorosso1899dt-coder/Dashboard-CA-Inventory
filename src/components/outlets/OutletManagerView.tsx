@@ -21,12 +21,30 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { TableSkeleton } from '@/components/ui/Skeleton';
+import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
+
+const OUTLET_COLUMNS: ColumnItem[] = [
+  { id: 'branch', label: 'Outlet / Cabang', defaultVisible: true, alwaysVisible: true },
+  { id: 'region', label: 'Region', defaultVisible: true },
+  { id: 'pic', label: 'PIC / Manager', defaultVisible: true },
+  { id: 'contact', label: 'Kontak', defaultVisible: true },
+  { id: 'opening', label: 'Target Opening', defaultVisible: true },
+  { id: 'status', label: 'Status', defaultVisible: true },
+  { id: 'actions', label: 'Aksi', defaultVisible: true, alwaysVisible: true },
+];
 
 export default function OutletManagerView() {
   const [outlets, setOutlets] = useState<Outlet[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [regionFilter, setRegionFilter] = useState('ALL');
+
+  // Column Visibility
+  const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
+    'ca_outlet_columns',
+    OUTLET_COLUMNS
+  );
+  const visibleColCount = OUTLET_COLUMNS.filter((c) => isVisible(c.id)).length;
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -203,7 +221,13 @@ export default function OutletManagerView() {
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full md:w-auto">
+        <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+          <ColumnVisibilityPicker
+            columns={OUTLET_COLUMNS}
+            visibleColumns={visibleColumns}
+            onChange={setVisibleColumns}
+            storageKey="ca_outlet_columns"
+          />
           {['ALL', 'JABO', 'KALBAR'].map((rf) => (
             <button
               key={rf}
@@ -229,19 +253,19 @@ export default function OutletManagerView() {
             <table className="w-full text-left border-collapse text-sm">
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/75 dark:bg-slate-800/60 text-xs uppercase font-semibold text-slate-500 dark:text-slate-400 tracking-wider">
-                  <th scope="col" className="py-3.5 px-4 font-semibold">Outlet / Cabang</th>
-                  <th scope="col" className="py-3.5 px-4 font-semibold">Region</th>
-                  <th scope="col" className="py-3.5 px-4 font-semibold">PIC / Manager</th>
-                  <th scope="col" className="py-3.5 px-4 font-semibold">Kontak</th>
-                  <th scope="col" className="py-3.5 px-4 font-semibold">Target Opening</th>
-                  <th scope="col" className="py-3.5 px-4 font-semibold">Status</th>
-                  <th scope="col" className="py-3.5 px-4 font-semibold text-right">Aksi</th>
+                  {isVisible('branch') && <th scope="col" className="py-3.5 px-4 font-semibold">Outlet / Cabang</th>}
+                  {isVisible('region') && <th scope="col" className="py-3.5 px-4 font-semibold">Region</th>}
+                  {isVisible('pic') && <th scope="col" className="py-3.5 px-4 font-semibold">PIC / Manager</th>}
+                  {isVisible('contact') && <th scope="col" className="py-3.5 px-4 font-semibold">Kontak</th>}
+                  {isVisible('opening') && <th scope="col" className="py-3.5 px-4 font-semibold">Target Opening</th>}
+                  {isVisible('status') && <th scope="col" className="py-3.5 px-4 font-semibold">Status</th>}
+                  {isVisible('actions') && <th scope="col" className="py-3.5 px-4 font-semibold text-right">Aksi</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredOutlets.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center">
+                  <td colSpan={visibleColCount} className="py-16 text-center">
                     <Building2 className="w-12 h-12 mx-auto text-slate-400 mb-3 opacity-60" />
                     <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">Outlet Tidak Ditemukan</h3>
                     <p className="text-sm text-slate-500 max-w-md mx-auto mt-1">
@@ -263,76 +287,90 @@ export default function OutletManagerView() {
                       className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors group"
                     >
                       {/* Outlet & Alamat */}
-                      <td className="py-3.5 px-4 align-top">
-                        <div className="font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
-                          {outletName}
-                        </div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex items-start gap-1 max-w-xs">
-                          <MapPin className="w-3 h-3 shrink-0 text-slate-400 mt-0.5" />
-                          <span className="line-clamp-2">{outletAddress || 'Alamat cabang belum didaftarkan'}</span>
-                        </div>
-                      </td>
+                      {isVisible('branch') && (
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                            {outletName}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex items-start gap-1 max-w-xs">
+                            <MapPin className="w-3 h-3 shrink-0 text-slate-400 mt-0.5" />
+                            <span className="line-clamp-2">{outletAddress || 'Alamat cabang belum didaftarkan'}</span>
+                          </div>
+                        </td>
+                      )}
 
                       {/* Region */}
-                      <td className="py-3.5 px-4 align-top whitespace-nowrap">
-                        <span className="px-2 py-0.5 rounded text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
-                          {outlet.region}
-                        </span>
-                      </td>
+                      {isVisible('region') && (
+                        <td className="py-3.5 px-4 align-top whitespace-nowrap">
+                          <span className="px-2 py-0.5 rounded text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
+                            {outlet.region}
+                          </span>
+                        </td>
+                      )}
 
                       {/* PIC */}
-                      <td className="py-3.5 px-4 align-top whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 font-medium text-slate-800 dark:text-slate-200">
-                          <User className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{picName || '-'}</span>
-                        </div>
-                      </td>
+                      {isVisible('pic') && (
+                        <td className="py-3.5 px-4 align-top whitespace-nowrap">
+                          <div className="flex items-center gap-1.5 font-medium text-slate-800 dark:text-slate-200">
+                            <User className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{picName || '-'}</span>
+                          </div>
+                        </td>
+                      )}
 
                       {/* Telepon */}
-                      <td className="py-3.5 px-4 align-top whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 font-mono text-xs text-slate-600 dark:text-slate-400">
-                          <Phone className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{picPhone || '-'}</span>
-                        </div>
-                      </td>
+                      {isVisible('contact') && (
+                        <td className="py-3.5 px-4 align-top whitespace-nowrap">
+                          <div className="flex items-center gap-1.5 font-mono text-xs text-slate-600 dark:text-slate-400">
+                            <Phone className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{picPhone || '-'}</span>
+                          </div>
+                        </td>
+                      )}
 
                       {/* Target Opening */}
-                      <td className="py-3.5 px-4 align-top whitespace-nowrap">
-                        {targetDate ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-900/50">
-                            <Calendar className="w-3 h-3" />
-                            {new Date(targetDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400 text-xs">-</span>
-                        )}
-                      </td>
+                      {isVisible('opening') && (
+                        <td className="py-3.5 px-4 align-top whitespace-nowrap">
+                          {targetDate ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-900/50">
+                              <Calendar className="w-3 h-3" />
+                              {new Date(targetDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs">-</span>
+                          )}
+                        </td>
+                      )}
 
                       {/* Status */}
-                      <td className="py-3.5 px-4 align-top whitespace-nowrap">
-                        {getStatusBadge(outlet.status)}
-                      </td>
+                      {isVisible('status') && (
+                        <td className="py-3.5 px-4 align-top whitespace-nowrap">
+                          {getStatusBadge(outlet.status)}
+                        </td>
+                      )}
 
                       {/* Actions */}
-                      <td className="py-3.5 px-4 align-top text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-2">
-                          <Link
-                            href={`/monitoring/assets?branch=${encodeURIComponent(outletName || '')}`}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition"
-                            title="Lihat Aset Toko"
-                          >
-                            <Boxes className="w-3.5 h-3.5" />
-                            <span>Aset</span>
-                          </Link>
-                          <Link
-                            href={`/opening-readiness?branch=${encodeURIComponent(outletName || '')}`}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded-lg transition"
-                          >
-                            <span>Kesiapan Buka</span>
-                            <ArrowRight className="w-3 h-3" />
-                          </Link>
-                        </div>
-                      </td>
+                      {isVisible('actions') && (
+                        <td className="py-3.5 px-4 align-top text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-2">
+                            <Link
+                              href={`/monitoring/assets?branch=${encodeURIComponent(outletName || '')}`}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition"
+                              title="Lihat Aset Toko"
+                            >
+                              <Boxes className="w-3.5 h-3.5" />
+                              <span>Aset</span>
+                            </Link>
+                            <Link
+                              href={`/opening-readiness?branch=${encodeURIComponent(outletName || '')}`}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded-lg transition"
+                            >
+                              <span>Kesiapan Buka</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </Link>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })

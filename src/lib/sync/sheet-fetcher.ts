@@ -108,18 +108,25 @@ function calculateAgingDays(orderDt: string | null, receivedDt: string | null): 
  * Fetch raw CSV text from Google Sheet
  */
 async function fetchSheetRawCsv(url: string): Promise<string> {
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AssetControlDashboard/1.0',
-    },
-    cache: 'no-store',
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AssetControlDashboard/1.0',
+      },
+      cache: 'no-store',
+      signal: controller.signal,
+    });
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch spreadsheet: ${response.status} ${response.statusText}`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch spreadsheet: ${response.status} ${response.statusText}`);
+    }
+
+    return await response.text();
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return await response.text();
 }
 
 /**

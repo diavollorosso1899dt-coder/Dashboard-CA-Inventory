@@ -14,6 +14,8 @@ import {
 } from './types';
 import { fetchAllSheetsData } from '../sync/sheet-fetcher';
 import { getDaysRemaining } from '../utils/date-formatter';
+import { getItemImageUrl } from '@/lib/assetImageHelper';
+import { getItemSpecification } from '@/lib/assetSpecHelper';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -952,7 +954,20 @@ function hashOutletBranch(str: string): string {
   return Math.abs(hash).toString(36);
 }
 
+// In-Memory Cache untuk Outlets (TTL 5 Menit)
+let outletsMemoryCache: { data: Outlet[]; timestamp: number } | null = null;
+const OUTLETS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export function invalidateOutletsCache() {
+  outletsMemoryCache = null;
+}
+
 export async function getOutlets(): Promise<Outlet[]> {
+  const now = Date.now();
+  if (outletsMemoryCache && now - outletsMemoryCache.timestamp < OUTLETS_CACHE_TTL_MS) {
+    return outletsMemoryCache.data;
+  }
+
   const admin = getAdminClient();
   let dbOutlets: Outlet[] = [];
   if (admin) {
@@ -1051,11 +1066,13 @@ export async function getOutlets(): Promise<Outlet[]> {
     }
   }
 
-  const result = Array.from(outletMap.values());
-  return result.sort((a, b) => a.branch_name.localeCompare(b.branch_name));
+  const result = Array.from(outletMap.values()).sort((a, b) => a.branch_name.localeCompare(b.branch_name));
+  outletsMemoryCache = { data: result, timestamp: Date.now() };
+  return result;
 }
 
 export async function saveOutlet(outletData: Partial<Outlet>): Promise<Outlet> {
+  invalidateOutletsCache();
   const admin = getAdminClient();
   const branchName = (outletData.branch_name || outletData.nama || 'Outlet Baru').trim();
   const region = (outletData.region === 'JABO' ? 'JABODETABEK' : outletData.region) || 'JABODETABEK';
@@ -1469,52 +1486,108 @@ export async function createAssetRequest(payload: Partial<AssetRequest>): Promis
 // ==============================================================================
 // 3. DISTRIBUSI: RO (REQUEST ORDER) & SURAT JALAN (SJ)
 // ==============================================================================
-// Helper: Guarantee strict deduplication on RO orders and internal items
 export function deduplicateOrderItems(orders: RequestOrder[]): RequestOrder[] {
   const seenRoNumbers = new Set<string>();
   const sanitizedOrders: RequestOrder[] = [];
 
   for (const ro of orders) {
-    const roKey = (ro.ro_number || ro.id || '').trim().toLowerCase();
+    const roKey = `${ro.region || ''}::${(ro.ro_number || ro.id || '').trim().toLowerCase()}`;
     if (!roKey || seenRoNumbers.has(roKey)) continue;
     seenRoNumbers.add(roKey);
 
-    // Deduplicate items inside this RO by: item_name + quantity_ordered
-    const seenItems = new Set<string>();
-    const cleanItems = [];
-    for (const it of (ro.items || [])) {
-      const itemKey = `${(it.item_name || '').trim().toLowerCase()}::${it.quantity_ordered ?? 1}`;
-      if (!seenItems.has(itemKey)) {
-        seenItems.add(itemKey);
-        cleanItems.push(it);
-      }
-    }
-
-    sanitizedOrders.push({
-      ...ro,
-      items: cleanItems,
-    });
+    sanitizedOrders.push(ro);
   }
 
   return sanitizedOrders;
 }
 
+// In-Memory Cache untuk Request Orders (TTL 60 Detik + Promise Deduplication)
+let roMemoryCache: { data: RequestOrder[]; timestamp: number } | null = null;
+let pendingRoFetch: Promise<RequestOrder[]> | null = null;
+const RO_CACHE_TTL_MS = 60 * 1000;
+
+export function invalidateRoCache() {
+  roMemoryCache = null;
+  pendingRoFetch = null;
+}
+
 export async function getRequestOrders(): Promise<RequestOrder[]> {
-  const admin = getAdminClient();
-  if (admin) {
-    try {
-      const { data, error } = await admin
-        .from('request_orders')
-        .select('*')
-        .order('request_date', { ascending: false })
-        .limit(10000);
-      if (!error && data && data.length > 0) return deduplicateOrderItems(data as RequestOrder[]);
-      if (error) console.error('[Supabase getRequestOrders error]:', error.message);
-    } catch (err: any) {
-      console.error('[Supabase getRequestOrders exception]:', err.message);
-    }
+  const now = Date.now();
+  if (roMemoryCache && now - roMemoryCache.timestamp < RO_CACHE_TTL_MS) {
+    return roMemoryCache.data;
   }
-  return deduplicateOrderItems(cache.requestOrders || []);
+
+  if (pendingRoFetch) {
+    return pendingRoFetch;
+  }
+
+  pendingRoFetch = (async () => {
+    const admin = getAdminClient();
+    if (admin) {
+      try {
+        // Query batch 0-999 dan 1000-1999 secara paralel untuk efisiensi transfer data
+        const [res1, res2] = await Promise.all([
+          admin
+            .from('request_orders')
+            .select('*')
+            .order('request_date', { ascending: false })
+            .range(0, 999),
+          admin
+            .from('request_orders')
+            .select('*')
+            .order('request_date', { ascending: false })
+            .range(1000, 1999),
+        ]);
+
+        const allOrders: RequestOrder[] = [];
+        if (res1.data) allOrders.push(...(res1.data as RequestOrder[]));
+        if (res2.data) allOrders.push(...(res2.data as RequestOrder[]));
+
+        // Jika data lebih dari 2000, ambil batch berikutnya
+        if (res2.data && res2.data.length === 1000) {
+          let from = 2000;
+          let hasMore = true;
+          while (hasMore) {
+            const { data } = await admin
+              .from('request_orders')
+              .select('*')
+              .order('request_date', { ascending: false })
+              .range(from, from + 999);
+            if (data && data.length > 0) {
+              allOrders.push(...(data as RequestOrder[]));
+              if (data.length < 1000) hasMore = false;
+              else from += 1000;
+            } else {
+              hasMore = false;
+            }
+          }
+        }
+
+        if (allOrders.length > 0) {
+          const deduplicated = deduplicateOrderItems(allOrders);
+          roMemoryCache = { data: deduplicated, timestamp: Date.now() };
+          return deduplicated;
+        }
+      } catch (err: any) {
+        console.error('[Supabase getRequestOrders exception]:', err.message);
+      }
+    }
+
+    if (!cache.requestOrders || cache.requestOrders.length === 0) {
+      try {
+        await syncRequestOrdersFromSheet();
+      } catch (e) {
+        console.error('Auto sync RO on getRequestOrders failed:', e);
+      }
+    }
+    const result = deduplicateOrderItems(cache.requestOrders || []);
+    roMemoryCache = { data: result, timestamp: Date.now() };
+    return result;
+  })().finally(() => {
+    pendingRoFetch = null;
+  });
+
+  return pendingRoFetch;
 }
 
 export async function createRequestOrder(payload: Partial<RequestOrder>): Promise<RequestOrder> {
@@ -1557,6 +1630,7 @@ export async function createRequestOrder(payload: Partial<RequestOrder>): Promis
         console.error('[Supabase createRequestOrder error]:', error.message);
       } else if (data) {
         cache.requestOrders.unshift(data as RequestOrder);
+        invalidateRoCache();
         return data as RequestOrder;
       }
     } catch (err: any) {
@@ -1565,6 +1639,7 @@ export async function createRequestOrder(payload: Partial<RequestOrder>): Promis
   }
 
   cache.requestOrders.unshift(ro);
+  invalidateRoCache();
   return ro;
 }
 
@@ -1591,6 +1666,17 @@ export async function updateRequestOrder(id: string, updates: Partial<RequestOrd
     }
   }
 
+  // Update in-memory cache secara langsung agar response super cepat tanpa lag
+  if (roMemoryCache && roMemoryCache.data) {
+    const memIdx = roMemoryCache.data.findIndex((r) => r.id === id || r.ro_number === id);
+    if (memIdx !== -1) {
+      roMemoryCache.data[memIdx] = {
+        ...roMemoryCache.data[memIdx],
+        ...updates,
+      };
+    }
+  }
+
   const idx = cache.requestOrders.findIndex((r) => r.id === id || r.ro_number === id);
   if (idx !== -1) {
     cache.requestOrders[idx] = {
@@ -1602,10 +1688,24 @@ export async function updateRequestOrder(id: string, updates: Partial<RequestOrd
   return true;
 }
 
-// SMART DEDUPLICATION & SPREADSHEET SYNC ENGINE
-const RO_GOOGLE_SHEET_CSV_URL =
-  process.env.GOOGLE_SHEET_RO_URL ||
-  'https://docs.google.com/spreadsheets/d/1xma83YRtP0WbjDnUFjmhgie3mWDgejV95HhlZX0sEvk/export?format=csv&gid=1158236044';
+// SMART DEDUPLICATION & SPREADSHEET SYNC ENGINE (MULTISOURCE: KALBAR & JABO)
+const RO_SOURCES: Array<{ name: string; region: 'KALBAR' | 'JABODETABEK'; url: string }> = [
+  {
+    name: 'RO KALBAR',
+    region: 'KALBAR',
+    url:
+      process.env.GOOGLE_SHEET_RO_KALBAR_URL ||
+      process.env.GOOGLE_SHEET_RO_URL ||
+      'https://docs.google.com/spreadsheets/d/1xma83YRtP0WbjDnUFjmhgie3mWDgejV95HhlZX0sEvk/export?format=csv&gid=1158236044',
+  },
+  {
+    name: 'RO JABODETABEK',
+    region: 'JABODETABEK',
+    url:
+      process.env.GOOGLE_SHEET_RO_JABO_URL ||
+      'https://docs.google.com/spreadsheets/d/1aXpTJqGvht-4cM4ZwG26hmMpg1LmY4K6_TX6iX0KczI/export?format=csv&gid=774931021',
+  },
+];
 
 function parseCSVLine(line: string): string[] {
   const result: string[] = [];
@@ -1624,6 +1724,86 @@ function parseCSVLine(line: string): string[] {
   }
   result.push(cur.trim());
   return result;
+}
+
+function parseIndoCurrency(val?: string): number {
+  if (!val) return 0;
+  const clean = val.trim();
+  const beforeComma = clean.split(',')[0];
+  const num = parseInt(beforeComma.replace(/[^\d]/g, ''), 10);
+  return isNaN(num) ? 0 : num;
+}
+
+function parseIndoQty(val?: string): number {
+  if (!val) return 1;
+  const clean = val.trim().split(',')[0];
+  const num = parseInt(clean.replace(/[^\d]/g, ''), 10);
+  return isNaN(num) || num < 0 ? 1 : num;
+}
+
+function detectRoColumns(headerLine: string, defaultRegion: 'KALBAR' | 'JABODETABEK') {
+  const cols = parseCSVLine(headerLine).map((c) => c.toLowerCase().trim());
+
+  let roIdIdx = cols.findIndex((c) => c === 'ro id' || c.includes('ro id') || c === 'id ro');
+  let itemNameIdx = cols.findIndex((c) => c.includes('nama item') || c.includes('nama barang'));
+  let qtyIdx = cols.findIndex((c) => c === 'jumlah' || c === 'qty');
+  let unitIdx = cols.findIndex((c) => c.includes('satuan'));
+  let hargaIdx = cols.findIndex((c) => c === 'harga');
+  let totalIdx = cols.findIndex((c) => c === 'total');
+  let tipeIdx = cols.findIndex((c) => c.includes('tipe'));
+  let outletIdx = cols.findIndex((c) => c === 'outlet' || c.includes('cabang'));
+  let warehouseIdx = cols.findIndex((c) => c === 'gudang');
+  let statusIdx = cols.findIndex((c) => c === 'status');
+  let skuIdx = cols.findIndex((c) => c === 'sku');
+  let inputDateIdx = cols.findIndex((c) => c.includes('tgl input') || c.includes('tanggal input'));
+  let reqDateIdx = cols.findIndex((c) => c.includes('tgl permintaan') || c.includes('tanggal permintaan'));
+
+  if (defaultRegion === 'KALBAR') {
+    if (roIdIdx === -1) roIdIdx = 3;
+    if (skuIdx === -1) skuIdx = 4;
+    if (itemNameIdx === -1) itemNameIdx = 5;
+    if (qtyIdx === -1) qtyIdx = 6;
+    if (unitIdx === -1) unitIdx = 7;
+    if (hargaIdx === -1) hargaIdx = 8;
+    if (totalIdx === -1) totalIdx = 9;
+    if (tipeIdx === -1) tipeIdx = 10;
+    if (outletIdx === -1) outletIdx = 11;
+    if (warehouseIdx === -1) warehouseIdx = 12;
+    if (statusIdx === -1) statusIdx = 13;
+    if (inputDateIdx === -1) inputDateIdx = 1;
+    if (reqDateIdx === -1) reqDateIdx = 2;
+  } else {
+    // JABODETABEK format:
+    // [0] Bulan, [1] tgl input, [2] tgl permintaan, [3] outlet/ro_id, [4] nama item, [5] qty, [6] unit, [7] harga, [8] total, [9] tipe, [10] outlet name, [11] gudang, [12] status
+    if (roIdIdx === -1) roIdIdx = 3;
+    if (itemNameIdx === -1) itemNameIdx = 4;
+    if (qtyIdx === -1) qtyIdx = 5;
+    if (unitIdx === -1) unitIdx = 6;
+    if (hargaIdx === -1) hargaIdx = 7;
+    if (totalIdx === -1) totalIdx = 8;
+    if (tipeIdx === -1) tipeIdx = 9;
+    if (outletIdx === 3 || outletIdx === -1) outletIdx = 10;
+    if (warehouseIdx === -1) warehouseIdx = 11;
+    if (statusIdx === -1) statusIdx = 12;
+    if (inputDateIdx === -1) inputDateIdx = 1;
+    if (reqDateIdx === -1) reqDateIdx = 2;
+  }
+
+  return {
+    roIdIdx,
+    skuIdx,
+    itemNameIdx,
+    qtyIdx,
+    unitIdx,
+    hargaIdx,
+    totalIdx,
+    tipeIdx,
+    outletIdx,
+    warehouseIdx,
+    statusIdx,
+    inputDateIdx,
+    reqDateIdx,
+  };
 }
 
 function parseIndoDate(dateStr?: string, fallbackToNull = false): string | null {
@@ -1656,103 +1836,111 @@ export interface RoSyncResult {
 
 export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
   try {
-    const response = await fetch(RO_GOOGLE_SHEET_CSV_URL, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      next: { revalidate: 0 },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Gagal mengunduh Spreadsheet (HTTP ${response.status})`);
-    }
-
-    const csvText = await response.text();
-    const rawLines = csvText.split('\n');
-    if (rawLines.length <= 1) {
-      throw new Error('Spreadsheet kosong atau format tidak sesuai.');
-    }
-
     let totalRowsScanned = 0;
     let duplicateRowsFiltered = 0;
     const seenFingerprints = new Set<string>();
     const groupedOrders = new Map<string, RequestOrder>();
+    const syncedSources: string[] = [];
 
-    // Scan each row (skip header at index 0)
-    for (let i = 1; i < rawLines.length; i++) {
-      const line = rawLines[i].trim();
-      if (!line) continue;
-      totalRowsScanned++;
-
-      const cols = parseCSVLine(line);
-      const rawRoId = cols[3]?.trim();
-      const itemName = cols[5]?.trim();
-      const qtyStr = cols[6]?.trim();
-      const outletName = cols[11]?.trim() || 'Outlet';
-
-      if (!rawRoId || !itemName) continue;
-
-      const qty = parseInt(qtyStr?.replace(/[^\d]/g, '') || '1') || 1;
-      const unit = cols[7]?.trim() || 'unit';
-      const harga = parseInt(cols[8]?.replace(/[^\d]/g, '') || '0') || 0;
-      const total = parseInt(cols[9]?.replace(/[^\d]/g, '') || '0') || (harga * qty);
-      const tipeItem = cols[10]?.trim() || 'Perlengkapan Tetap';
-      const rowNo = cols[0]?.trim() || String(i);
-      const sku = cols[4]?.trim() || '';
-      const inputDate = cols[1]?.trim();
-      const reqDate = cols[2]?.trim();
-      const warehouse = cols[12]?.trim() || '-';
-      const statusStr = cols[13]?.trim() || 'Diproses';
-
-      // Cek data double: RO ID + item + qty + nama outlet yang sama -> hanya tampilkan 1 saja
-      const fingerprint = `${rawRoId.toLowerCase().trim()}::${itemName.toLowerCase().trim()}::${qty}::${outletName.toLowerCase().trim()}`;
-      if (seenFingerprints.has(fingerprint)) {
-        duplicateRowsFiltered++;
-        continue; // Lewati duplikat
-      }
-      seenFingerprints.add(fingerprint);
-
-      const roNumber = `RO-${rawRoId}`;
-      const isKalbar = /singkawang|pontianak|serdam|merdeka|ketapang|ayani|sohor|johar|patimura|boedjang|semar|muara|tyga sapi|kokotuku|perdana/i.test(outletName);
-      const region: 'JABODETABEK' | 'KALBAR' = isKalbar ? 'KALBAR' : 'JABODETABEK';
-
-      const parsedRequestDate = parseIndoDate(inputDate || reqDate) || new Date().toISOString().split('T')[0];
-      const parsedTargetDate = parseIndoDate(reqDate || inputDate, true);
-
-      if (!groupedOrders.has(roNumber)) {
-        groupedOrders.set(roNumber, {
-          id: `ro-${rawRoId}`,
-          ro_number: roNumber,
-          raw_ro_id: rawRoId,
-          branch_name: outletName,
-          region,
-          requester_name: 'Logistik Outlet via Spreadsheet',
-          request_date: parsedRequestDate,
-          target_delivery_date: parsedTargetDate || undefined,
-          status: statusStr === 'Diterima' ? 'COMPLETED' : 'INPUT_SYSTEM',
-          current_stage: statusStr === 'Diterima' ? 'SELESAI' : 'REQUEST_ORDER',
-          source_type: 'GOOGLE_SHEET',
-          warehouse_name: warehouse,
-          items: [],
-          created_at: new Date().toISOString(),
+    for (const source of RO_SOURCES) {
+      try {
+        const response = await fetch(source.url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+          next: { revalidate: 0 },
         });
-      }
 
-      groupedOrders.get(roNumber)!.items.push({
-        id: `roi-${rawRoId}-${rowNo}-${groupedOrders.get(roNumber)!.items.length + 1}`,
-        item_name: itemName,
-        sku,
-        unit,
-        unit_price: harga,
-        total_price: total,
-        item_type: tipeItem,
-        quantity_ordered: qty,
-        quantity_fulfilled: statusStr === 'Diterima' ? qty : 0,
-        stock_source: 'GUDANG_SCGA',
-      });
+        if (!response.ok) {
+          console.warn(`[RO Sync] Gagal mengunduh spreadsheet ${source.name} (HTTP ${response.status})`);
+          continue;
+        }
+
+        const csvText = await response.text();
+        const rawLines = csvText.split('\n');
+        if (rawLines.length <= 1) continue;
+
+        const cols = detectRoColumns(rawLines[0], source.region);
+        syncedSources.push(source.name);
+
+        for (let i = 1; i < rawLines.length; i++) {
+          const line = rawLines[i].trim();
+          if (!line) continue;
+          totalRowsScanned++;
+
+          const parts = parseCSVLine(line);
+          const rawRoId = parts[cols.roIdIdx]?.trim();
+          const itemName = parts[cols.itemNameIdx]?.trim();
+          const qtyStr = parts[cols.qtyIdx]?.trim();
+          const outletName =
+            parts[cols.outletIdx]?.trim() ||
+            (source.region === 'JABODETABEK' ? 'Outlet Jabodetabek' : 'Outlet Kalbar');
+
+          if (!rawRoId || !itemName) continue;
+
+          const qty = parseIndoQty(qtyStr);
+          const unit = parts[cols.unitIdx]?.trim() || 'unit';
+          const harga = parseIndoCurrency(parts[cols.hargaIdx]);
+          const total = parseIndoCurrency(parts[cols.totalIdx]) || harga * qty;
+          const tipeItem = parts[cols.tipeIdx]?.trim() || 'Perlengkapan Tetap';
+          const rowNo = parts[0]?.trim() || String(i);
+          const sku = cols.skuIdx !== -1 ? parts[cols.skuIdx]?.trim() || '' : '';
+          const inputDate = parts[cols.inputDateIdx]?.trim();
+          const reqDate = parts[cols.reqDateIdx]?.trim();
+          const warehouse = parts[cols.warehouseIdx]?.trim() || '-';
+          const statusStr = parts[cols.statusIdx]?.trim() || 'Diproses';
+
+          // Catat statistik duplikasi tetapi tetap masukkan semua baris spreadsheet ke item RO
+          const fingerprint = `${source.region}::${rawRoId.toLowerCase().trim()}::${itemName.toLowerCase().trim()}::${qty}::${outletName.toLowerCase().trim()}`;
+          if (seenFingerprints.has(fingerprint)) {
+            duplicateRowsFiltered++;
+          }
+          seenFingerprints.add(fingerprint);
+
+          const roNumber = `RO-${rawRoId}`;
+          const region: 'JABODETABEK' | 'KALBAR' = source.region;
+
+          const parsedRequestDate = parseIndoDate(inputDate || reqDate) || new Date().toISOString().split('T')[0];
+          const parsedTargetDate = parseIndoDate(reqDate || inputDate, true);
+
+          if (!groupedOrders.has(roNumber)) {
+            groupedOrders.set(roNumber, {
+              id: `ro-${rawRoId}`,
+              ro_number: roNumber,
+              raw_ro_id: rawRoId,
+              branch_name: outletName,
+              region,
+              requester_name: `Logistik ${source.region === 'KALBAR' ? 'Kalbar' : 'Jabo'} via Spreadsheet`,
+              request_date: parsedRequestDate,
+              target_delivery_date: parsedTargetDate || undefined,
+              status: /diterima|selesai/i.test(statusStr) ? 'COMPLETED' : 'INPUT_SYSTEM',
+              current_stage: /diterima|selesai/i.test(statusStr) ? 'SELESAI' : 'REQUEST_ORDER',
+              source_type: 'GOOGLE_SHEET',
+              warehouse_name: warehouse,
+              items: [],
+              created_at: new Date().toISOString(),
+            });
+          }
+
+          groupedOrders.get(roNumber)!.items.push({
+            id: `roi-${rawRoId}-${rowNo}-${groupedOrders.get(roNumber)!.items.length + 1}`,
+            item_name: itemName,
+            sku,
+            unit,
+            unit_price: harga,
+            total_price: total,
+            item_type: tipeItem,
+            quantity_ordered: qty,
+            quantity_fulfilled: /diterima|selesai/i.test(statusStr) ? qty : 0,
+            stock_source: 'GUDANG_SCGA',
+          });
+        }
+      } catch (sourceErr: any) {
+        console.error(`[RO Sync] Error processing source ${source.name}:`, sourceErr);
+      }
     }
 
     const uniqueOrders = Array.from(groupedOrders.values());
     let totalItems = 0;
-    uniqueOrders.forEach(o => totalItems += o.items.length);
+    uniqueOrders.forEach((o) => (totalItems += o.items.length));
 
     // Upsert into Supabase request_orders table
     const admin = getAdminClient();
@@ -1779,6 +1967,7 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
 
     // Merge into in-memory cache
     cache.requestOrders = uniqueOrders;
+    roMemoryCache = { data: deduplicateOrderItems(uniqueOrders), timestamp: Date.now() };
 
     return {
       success: true,
@@ -1787,7 +1976,7 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
       uniqueOrdersCount: uniqueOrders.length,
       newOrdersAdded: totalItems,
       existingOrdersUpdated: 0,
-      message: `Deduplikasi Sukses: ${totalRowsScanned} baris dipindai. ${duplicateRowsFiltered} baris data double (RO ID + item + qty + outlet sama) disaring. Hanya 1 yang ditampilkan (${totalItems} item unik dalam ${uniqueOrders.length} dokumen RO).`,
+      message: `Sinkronisasi Multiregion (${syncedSources.join(' & ') || 'RO Sheet'}) Berhasil! ${totalRowsScanned} baris dipindai, ${duplicateRowsFiltered} duplikat disaring. Total ${totalItems} item unik dalam ${uniqueOrders.length} dokumen RO.`,
     };
   } catch (err: any) {
     console.error('Error syncing Request Orders from sheet:', err);
@@ -1819,6 +2008,7 @@ export function cleanDuplicateRequestOrders(): { cleanedCount: number; totalUniq
   }
 
   cache.requestOrders = uniqueOrders;
+  invalidateRoCache();
   return { cleanedCount, totalUnique: uniqueOrders.length };
 }
 
@@ -2066,7 +2256,7 @@ export interface MasterAssetItem {
 
 const MASTER_ASSET_GOOGLE_SHEET_CSV_URL =
   process.env.GOOGLE_SHEET_MASTER_ASSET_URL ||
-  'https://docs.google.com/spreadsheets/d/1xma83YRtP0WbjDnUFjmhgie3mWDgejV95HhlZX0sEvk/export?format=csv&gid=109322565';
+  'https://docs.google.com/spreadsheets/d/1ie4cLxARxPHDSwH-rERxYbxbmk99mQPMHy2wJUOgpIQ/export?format=csv&gid=529914403';
 let cachedMasterCatalog: MasterAssetItem[] | null = null;
 let masterCatalogLastFetched = 0;
 
@@ -2117,14 +2307,18 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
       const imgRaw = cols[10]?.trim();
       const specRaw = cols[11]?.trim();
 
-      let photoUrl: string | null = null;
-      let specification = specRaw || '';
+      // Prioritas 1: Ambil foto dari media hasil ekstraksi spreadsheet master
+      let photoUrl: string | null = getItemImageUrl(rawName);
+      const customSpec = getItemSpecification(rawName);
+      let specification = customSpec !== null ? customSpec : (specRaw || '');
 
-      if (imgRaw && (imgRaw.startsWith('http') || imgRaw.includes('drive.google.com'))) {
-        photoUrl = imgRaw;
-      } else if (specRaw && (specRaw.startsWith('http') && (specRaw.includes('drive.google.com') || /\.(png|jpe?g|webp|gif)/i.test(specRaw)))) {
-        photoUrl = specRaw;
-        specification = '';
+      if (!photoUrl) {
+        if (imgRaw && (imgRaw.startsWith('http') || imgRaw.includes('drive.google.com'))) {
+          photoUrl = imgRaw;
+        } else if (specRaw && (specRaw.startsWith('http') && (specRaw.includes('drive.google.com') || /\.(png|jpe?g|webp|gif)/i.test(specRaw)))) {
+          photoUrl = specRaw;
+          specification = '';
+        }
       }
 
       // Convert Google Drive view links to direct image preview links
@@ -2156,44 +2350,49 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
       });
     }
 
-    // Also supplement with any items from the RO sheet (New Data Mentah) so no requested item is missing
-    try {
-      const roResponse = await fetch(RO_GOOGLE_SHEET_CSV_URL, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      });
-      if (roResponse.ok) {
-        const roCsvText = await roResponse.text();
-        const roLines = roCsvText.split('\n');
-        for (let i = 1; i < roLines.length; i++) {
-          const rLine = roLines[i];
-          if (!rLine.trim()) continue;
-          const rCols = parseCSVLine(rLine);
-          const rItemName = rCols[5]?.trim();
-          if (!rItemName) continue;
-          const rKey = rItemName.toLowerCase();
-          if (!seenNames.has(rKey)) {
-            seenNames.add(rKey);
-            const rUnit = rCols[7]?.trim() || 'unit';
-            const rTipe = rCols[10]?.trim() || 'Perlengkapan Tetap';
-            classifications.add(rTipe);
-            items.push({
-              id: `mat-ro-${items.length + 1}`,
-              item_name: rItemName,
-              system_item_name: rItemName,
-              unit: rUnit,
-              classification: rTipe,
-              specification: '',
-              photo_url: null,
-              standard_rab_price: parseInt(rCols[8]?.replace(/[^\d]/g, '') || '0') || 0,
-              total_requests: 1,
-              total_units_needed: 1,
-              is_new_item: true,
-            });
+    // Also supplement with any items from the RO sheets (KALBAR & JABO) so no requested item is missing
+    for (const roSrc of RO_SOURCES) {
+      try {
+        const roResponse = await fetch(roSrc.url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        });
+        if (roResponse.ok) {
+          const roCsvText = await roResponse.text();
+          const roLines = roCsvText.split('\n');
+          if (roLines.length > 1) {
+            const cols = detectRoColumns(roLines[0], roSrc.region);
+            for (let i = 1; i < roLines.length; i++) {
+              const rLine = roLines[i];
+              if (!rLine.trim()) continue;
+              const rCols = parseCSVLine(rLine);
+              const rItemName = rCols[cols.itemNameIdx]?.trim();
+              if (!rItemName) continue;
+              const rKey = rItemName.toLowerCase();
+              if (!seenNames.has(rKey)) {
+                seenNames.add(rKey);
+                const rUnit = rCols[cols.unitIdx]?.trim() || 'unit';
+                const rTipe = rCols[cols.tipeIdx]?.trim() || 'Perlengkapan Tetap';
+                classifications.add(rTipe);
+                items.push({
+                  id: `mat-ro-${items.length + 1}`,
+                  item_name: rItemName,
+                  system_item_name: rItemName,
+                  unit: rUnit,
+                  classification: rTipe,
+                  specification: getItemSpecification(rItemName) || '',
+                  photo_url: getItemImageUrl(rItemName) || null,
+                  standard_rab_price: parseIndoCurrency(rCols[cols.hargaIdx]),
+                  total_requests: 1,
+                  total_units_needed: 1,
+                  is_new_item: true,
+                });
+              }
+            }
           }
         }
+      } catch (e) {
+        console.warn(`Could not supplement master catalog with items from ${roSrc.name}:`, e);
       }
-    } catch (e) {
-      console.warn('Could not supplement master catalog with RO items:', e);
     }
 
     items.sort((a, b) => a.item_name.localeCompare(b.item_name));

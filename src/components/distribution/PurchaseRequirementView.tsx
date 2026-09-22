@@ -17,6 +17,18 @@ import {
   FileCheck2
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
+import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
+
+const PR_COLUMNS: ColumnItem[] = [
+  { id: 'rab_branch', label: 'No. RAB & Cabang', defaultVisible: true, alwaysVisible: true },
+  { id: 'item_name', label: 'Nama Item Aset', defaultVisible: true },
+  { id: 'qty', label: 'Qty PR', defaultVisible: true },
+  { id: 'req_date', label: 'Tgl Permintaan', defaultVisible: true },
+  { id: 'pr_po_date', label: 'Tgl PR & PO', defaultVisible: true },
+  { id: 'vendor_deal', label: 'Vendor & Harga Deal', defaultVisible: true },
+  { id: 'status', label: 'Status Pengadaan', defaultVisible: true },
+  { id: 'actions', label: 'Aksi Tanggal', defaultVisible: true, alwaysVisible: true },
+];
 
 interface PurchaseRequirementViewProps {
   initialItems: AssetRequest[];
@@ -31,6 +43,13 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   const [items, setItems] = useState<AssetRequest[]>(initialItems);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+
+  // Column Visibility
+  const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
+    'ca_pr_columns',
+    PR_COLUMNS
+  );
+  const visibleColCount = PR_COLUMNS.filter((c) => isVisible(c.id)).length;
 
   // Input Data Tanggal Permintaan State (Modal / Form Edit)
   const [editingItem, setEditingItem] = useState<AssetRequest | null>(null);
@@ -189,7 +208,13 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+          <ColumnVisibilityPicker
+            columns={PR_COLUMNS}
+            visibleColumns={visibleColumns}
+            onChange={setVisibleColumns}
+            storageKey="ca_pr_columns"
+          />
           {['ALL', 'proses', 'po', 'selesai', 'belum'].map((st) => (
             <button
               key={st}
@@ -212,20 +237,20 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
           <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
             <thead className="bg-slate-50 dark:bg-slate-800/80 font-bold uppercase text-[11px] text-slate-500 border-b border-slate-200 dark:border-slate-800">
               <tr>
-                <th className="py-3.5 px-4">No. RAB &amp; Cabang</th>
-                <th className="py-3.5 px-4">Nama Item Aset</th>
-                <th className="py-3.5 px-4">Qty PR</th>
-                <th className="py-3.5 px-4">Tgl Permintaan</th>
-                <th className="py-3.5 px-4">Tgl PR &amp; PO</th>
-                <th className="py-3.5 px-4">Vendor &amp; Harga Deal</th>
-                <th className="py-3.5 px-4">Status Pengadaan</th>
-                <th className="py-3.5 px-4 text-right">Aksi Tanggal</th>
+                {isVisible('rab_branch') && <th className="py-3.5 px-4">No. RAB &amp; Cabang</th>}
+                {isVisible('item_name') && <th className="py-3.5 px-4">Nama Item Aset</th>}
+                {isVisible('qty') && <th className="py-3.5 px-4">Qty PR</th>}
+                {isVisible('req_date') && <th className="py-3.5 px-4">Tgl Permintaan</th>}
+                {isVisible('pr_po_date') && <th className="py-3.5 px-4">Tgl PR &amp; PO</th>}
+                {isVisible('vendor_deal') && <th className="py-3.5 px-4">Vendor &amp; Harga Deal</th>}
+                {isVisible('status') && <th className="py-3.5 px-4">Status Pengadaan</th>}
+                {isVisible('actions') && <th className="py-3.5 px-4 text-right">Aksi Tanggal</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
               {filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                  <td colSpan={visibleColCount} className="py-12 text-center text-slate-400">
                     Tidak ada data Purchase Requirement (PR) yang sesuai.
                   </td>
                 </tr>
@@ -237,54 +262,70 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
 
                   return (
                     <tr key={it.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3.5 px-4">
-                        <div className="font-mono font-bold text-blue-600 dark:text-blue-400">{it.rab_number || '-'}</div>
-                        <div className="text-[11px] text-slate-500">{it.branch_name} ({it.region})</div>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="font-semibold text-slate-900 dark:text-white">{it.item_name}</div>
-                        <div className="text-[11px] text-slate-400">{it.classification}</div>
-                      </td>
-                      <td className="py-3.5 px-4 font-bold">
-                        <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
-                          {it.quantity_pr || it.quantity_needed} Unit
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-600 dark:text-slate-400">
-                        {reqDate}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="text-[11px]"><strong>PR:</strong> {prDate}</div>
-                        <div className="text-[11px] text-slate-500"><strong>PO:</strong> {poDate}</div>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="font-medium text-slate-900 dark:text-white">{it.vendor_name || 'Belum Ditentukan'}</div>
-                        <div className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
-                          Rp {(it.deal_price || it.rab_price || 0).toLocaleString('id-ID')}
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                          it.procurement_status === 'selesai'
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-400'
-                            : it.procurement_status === 'po'
-                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-400'
-                            : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-400'
-                        }`}>
-                          {it.procurement_status === 'selesai' && <CheckCircle2 className="w-3 h-3" />}
-                          {it.procurement_status === 'proses' && <Clock className="w-3 h-3 animate-pulse" />}
-                          {it.procurement_status || 'proses'}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
-                        <button
-                          onClick={() => openEditModal(it)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-semibold transition"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          <span>Update</span>
-                        </button>
-                      </td>
+                      {isVisible('rab_branch') && (
+                        <td className="py-3.5 px-4">
+                          <div className="font-mono font-bold text-blue-600 dark:text-blue-400">{it.rab_number || '-'}</div>
+                          <div className="text-[11px] text-slate-500">{it.branch_name} ({it.region})</div>
+                        </td>
+                      )}
+                      {isVisible('item_name') && (
+                        <td className="py-3.5 px-4">
+                          <div className="font-semibold text-slate-900 dark:text-white">{it.item_name}</div>
+                          <div className="text-[11px] text-slate-400">{it.classification}</div>
+                        </td>
+                      )}
+                      {isVisible('qty') && (
+                        <td className="py-3.5 px-4 font-bold">
+                          <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
+                            {it.quantity_pr || it.quantity_needed} Unit
+                          </span>
+                        </td>
+                      )}
+                      {isVisible('req_date') && (
+                        <td className="py-3.5 px-4 font-mono text-slate-600 dark:text-slate-400">
+                          {reqDate}
+                        </td>
+                      )}
+                      {isVisible('pr_po_date') && (
+                        <td className="py-3.5 px-4">
+                          <div className="text-[11px]"><strong>PR:</strong> {prDate}</div>
+                          <div className="text-[11px] text-slate-500"><strong>PO:</strong> {poDate}</div>
+                        </td>
+                      )}
+                      {isVisible('vendor_deal') && (
+                        <td className="py-3.5 px-4">
+                          <div className="font-medium text-slate-900 dark:text-white">{it.vendor_name || 'Belum Ditentukan'}</div>
+                          <div className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
+                            Rp {(it.deal_price || it.rab_price || 0).toLocaleString('id-ID')}
+                          </div>
+                        </td>
+                      )}
+                      {isVisible('status') && (
+                        <td className="py-3.5 px-4">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            it.procurement_status === 'selesai'
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-400'
+                              : it.procurement_status === 'po'
+                              ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-400'
+                              : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-400'
+                          }`}>
+                            {it.procurement_status === 'selesai' && <CheckCircle2 className="w-3 h-3" />}
+                            {it.procurement_status === 'proses' && <Clock className="w-3 h-3 animate-pulse" />}
+                            {it.procurement_status || 'proses'}
+                          </span>
+                        </td>
+                      )}
+                      {isVisible('actions') && (
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            onClick={() => openEditModal(it)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-semibold transition"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>Update</span>
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })

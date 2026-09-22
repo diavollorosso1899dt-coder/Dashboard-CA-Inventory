@@ -15,7 +15,8 @@ import {
   ShieldCheck,
   Store,
   Package,
-  ChevronDown
+  ChevronDown,
+  RefreshCw
 } from 'lucide-react';
 import { useTheme } from '@/components/theme/ThemeContext';
 import { useNavigation } from './NavigationContext';
@@ -71,7 +72,10 @@ export function Navbar() {
     return () => clearInterval(interval);
   }, []);
 
-  // 2. Silent & Resilient Auto-Sync in background (safe polling without unhandled rejections)
+  const [isSyncingState, setIsSyncingState] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
+
+  // 2. Silent & Resilient Auto-Sync in background (Set to 5 minutes)
   useEffect(() => {
     let isMounted = true;
 
@@ -101,6 +105,7 @@ export function Navbar() {
 
       try {
         isSyncingRef.current = true;
+        if (isMounted) setIsSyncingState(true);
 
         const res = await fetch('/api/sync', {
           cache: 'no-store',
@@ -108,6 +113,9 @@ export function Navbar() {
 
         if (res && res.ok && isMounted) {
           const data = await res.json().catch(() => null);
+          if (isMounted) {
+            setLastSyncedTime(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
+          }
           if (data && data.success && data.changed && isMounted) {
             router.refresh();
           }
@@ -117,14 +125,18 @@ export function Navbar() {
       } finally {
         if (isMounted) {
           isSyncingRef.current = false;
+          setIsSyncingState(false);
         }
       }
     };
 
-    const timer = setInterval(runBackgroundSync, 60000);
+    // Run once on load after 3s, then poll every 5 minutes (300,000 ms)
+    const initialDelay = setTimeout(runBackgroundSync, 3000);
+    const timer = setInterval(runBackgroundSync, 300000);
     
     return () => {
       isMounted = false;
+      clearTimeout(initialDelay);
       clearInterval(timer);
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     };
@@ -176,6 +188,15 @@ export function Navbar() {
 
       {/* Action Controls */}
       <div className="flex items-center gap-2 sm:gap-3">
+        {/* Auto-Sync 5-Min Pill */}
+        <div 
+          className="hidden md:flex items-center gap-1.5 rounded-full bg-[#e9eef6] dark:bg-[#282a2c] px-3 py-1.5 text-[11px] text-[#444746] dark:text-[#c4c7c5] font-medium select-none"
+          title={lastSyncedTime ? `Auto-sync tiap 5 menit aktif. Terakhir diperbarui: ${lastSyncedTime} WIB.` : 'Auto-sync tiap 5 menit aktif.'}
+        >
+          <RefreshCw className={`h-3 w-3 text-[#0b57d0] dark:text-[#a8c7fa] ${isSyncingState ? 'animate-spin' : ''}`} />
+          <span>{isSyncingState ? 'Syncing...' : lastSyncedTime ? `Sync ${lastSyncedTime}` : 'Sync 5m'}</span>
+        </div>
+
         {/* Real-time Clock Pill */}
         <div className="hidden sm:flex items-center gap-1.5 rounded-full bg-[#e9eef6] dark:bg-[#282a2c] px-3.5 py-1.5 text-xs text-[#444746] dark:text-[#c4c7c5] font-medium">
           <Clock className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />

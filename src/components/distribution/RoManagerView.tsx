@@ -27,12 +27,23 @@ import {
   Boxes,
   HelpCircle,
   RefreshCw,
-  Trash2,
-  ExternalLink,
-  ChevronRight
+  Trash2, 
+  ExternalLink, 
+  ChevronRight,
+  ChevronDown,
+  MapPin,
+  ImageIcon,
+  Eye,
+  Upload,
+  FileEdit
 } from 'lucide-react';
 import { RequestOrder, Outlet, ROItem, ROStatus } from '@/lib/supabase/types';
 import { useRouter } from 'next/navigation';
+import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
+import { getItemSpecification, setItemSpecificationOverride } from '@/lib/assetSpecHelper';
+import UploadImageModal from '@/components/items/UploadImageModal';
+import EditSpecModal from '@/components/items/EditSpecModal';
+import ColumnVisibilityPicker, { ColumnItem } from '@/components/ui/ColumnVisibilityPicker';
 
 interface RoManagerViewProps {
   initialOrders?: RequestOrder[];
@@ -74,15 +85,53 @@ const WORKFLOW_STAGES: StageDefinition[] = [
   { key: 'SELESAI', stepNum: 10, label: 'Selesai', sub: 'Operasional Toko', color: 'border-emerald-500 bg-emerald-100 text-emerald-950 dark:border-emerald-500 dark:bg-emerald-900/50 dark:text-emerald-100', shape: 'pill' },
 ];
 
+const RO_COLUMNS: ColumnItem[] = [
+  { id: 'ro_number', label: 'No. RO / ID', alwaysVisible: true },
+  { id: 'order_date', label: 'Tanggal Order' },
+  { id: 'request_date', label: 'Tanggal Permintaan' },
+  { id: 'branch', label: 'Cabang Outlet' },
+  { id: 'items', label: 'Item & Alokasi' },
+  { id: 'images', label: 'Gambar' },
+  { id: 'stage', label: 'Tahapan Alur' },
+  { id: 'actions', label: 'Aksi Alur Kerja', alwaysVisible: true },
+];
+
 export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerViewProps) {
   const router = useRouter();
   const [orders, setOrders] = useState<RequestOrder[]>(initialOrders);
   const [outletList, setOutletList] = useState<Outlet[]>(outlets);
+  const [isLoading, setIsLoading] = useState(initialOrders.length === 0);
   const [search, setSearch] = useState('');
   const [selectedStage, setSelectedStage] = useState<StageKey>('ALL');
+  const [showPipelineStepper, setShowPipelineStepper] = useState(false);
   const [smartFilter, setSmartFilter] = useState<'ALL' | 'CLEAN' | 'DUPLICATES'>('ALL');
+  const [selectedRegion, setSelectedRegion] = useState<'ALL' | 'JABODETABEK' | 'KALBAR'>('ALL');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(50);
+
+  // Column Visibility state
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('ca_ro_columns');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      ro_number: true,
+      order_date: true,
+      request_date: true,
+      branch: true,
+      items: true,
+      images: true,
+      stage: true,
+      actions: true,
+    };
+  });
+
+  const visibleColCount = RO_COLUMNS.filter((c) => visibleColumns[c.id] !== false).length;
 
   // Modals state
   const [isRoModalOpen, setIsRoModalOpen] = useState(false);
@@ -96,6 +145,21 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [selectedRoForSj, setSelectedRoForSj] = useState<RequestOrder | null>(null);
   const [selectedRoForArrival, setSelectedRoForArrival] = useState<RequestOrder | null>(null);
   const [selectedRoForChecklist, setSelectedRoForChecklist] = useState<RequestOrder | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
+  const [uploadModalTarget, setUploadModalTarget] = useState<{ itemName: string; currentImageUrl?: string | null } | null>(null);
+  const [editingSpecItem, setEditingSpecItem] = useState<{ itemName: string; specification: string } | null>(null);
+
+  const handleUploadSuccess = (updatedItemName: string, newImageUrl: string) => {
+    setItemImageOverride(updatedItemName, newImageUrl);
+    setSyncFeedback(`Foto "${updatedItemName}" berhasil diunggah & disimpan ke Supabase!`);
+    setOrders((prev) => [...prev]);
+  };
+
+  const handleSpecSuccess = (updatedItemName: string, newSpec: string) => {
+    setItemSpecificationOverride(updatedItemName, newSpec);
+    setSyncFeedback(`Spesifikasi "${updatedItemName}" berhasil disimpan ke Supabase!`);
+    setOrders((prev) => [...prev]);
+  };
 
   // New RO form state
   const [branchName, setBranchName] = useState(outletList[0]?.branch_name || outletList[0]?.nama || 'CA - Grand Batam Mall');
@@ -128,15 +192,23 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   // Initial load
   useEffect(() => {
     if (orders.length === 0) {
+      setIsLoading(true);
       fetch('/api/distribution/ro')
         .then((res) => res.json())
-        .then((data) => { if (data.data) setOrders(data.data); })
-        .catch(console.error);
+        .then((data) => {
+          if (data.data) setOrders(data.data);
+        })
+        .catch(console.error)
+        .finally(() => setIsLoading(false));
+    } else {
+      setIsLoading(false);
     }
     if (outletList.length === 0) {
       fetch('/api/outlets')
         .then((res) => res.json())
-        .then((data) => { if (data.data) setOutletList(data.data); })
+        .then((data) => {
+          if (data.data) setOutletList(data.data);
+        })
         .catch(console.error);
     }
   }, []);
@@ -153,27 +225,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     return 'REQUEST_ORDER';
   };
 
-  // Smart deduplication analysis
-  const deduplicationMap = useMemo(() => {
+  // Single-pass high performance analysis for deduplication, stages, and regions
+  const { deduplicationMap, duplicateOrdersCount, stageCounts, regionStats } = useMemo(() => {
     const map = new Map<string, RequestOrder[]>();
-    for (const ro of orders) {
-      const key = (ro.raw_ro_id || ro.ro_number).toLowerCase().trim();
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(ro);
-    }
-    return map;
-  }, [orders]);
-
-  const duplicateOrdersCount = useMemo(() => {
-    let count = 0;
-    for (const [_, list] of deduplicationMap.entries()) {
-      if (list.length > 1) count += list.length;
-    }
-    return count;
-  }, [deduplicationMap]);
-
-  // Stage counts
-  const stageCounts = useMemo(() => {
     const counts: Record<StageKey, number> = {
       ALL: orders.length,
       REQUEST_ORDER: 0,
@@ -187,39 +241,88 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       UPDATE_SLA: 0,
       SELESAI: 0,
     };
-    for (const ro of orders) {
+    let jaboOrders = 0, jaboItems = 0;
+    let kalbarOrders = 0, kalbarItems = 0;
+
+    for (let i = 0; i < orders.length; i++) {
+      const ro = orders[i];
+      const key = (ro.raw_ro_id || ro.ro_number).toLowerCase().trim();
+      let list = map.get(key);
+      if (!list) {
+        list = [];
+        map.set(key, list);
+      }
+      list.push(ro);
+
       const st = getRoStage(ro);
       counts[st] = (counts[st] || 0) + 1;
+
+      const itLen = ro.items?.length || 0;
+      if (ro.region === 'JABODETABEK') {
+        jaboOrders++;
+        jaboItems += itLen;
+      } else if (ro.region === 'KALBAR') {
+        kalbarOrders++;
+        kalbarItems += itLen;
+      }
     }
-    return counts;
+
+    let dupeCount = 0;
+    for (const list of map.values()) {
+      if (list.length > 1) dupeCount += list.length;
+    }
+
+    return {
+      deduplicationMap: map,
+      duplicateOrdersCount: dupeCount,
+      stageCounts: counts,
+      regionStats: {
+        ALL: { orders: orders.length, items: jaboItems + kalbarItems },
+        JABODETABEK: { orders: jaboOrders, items: jaboItems },
+        KALBAR: { orders: kalbarOrders, items: kalbarItems },
+      },
+    };
   }, [orders]);
 
-  // Filtered orders
+  // Filtered orders dengan fast exit
   const filteredOrders = useMemo(() => {
+    const searchLower = search.toLowerCase().trim();
     return orders.filter((o) => {
-      const matchSearch =
-        o.ro_number.toLowerCase().includes(search.toLowerCase()) ||
-        o.branch_name.toLowerCase().includes(search.toLowerCase()) ||
-        (o.raw_ro_id && o.raw_ro_id.toLowerCase().includes(search.toLowerCase())) ||
-        o.requester_name.toLowerCase().includes(search.toLowerCase());
+      if (selectedRegion !== 'ALL' && o.region !== selectedRegion) return false;
 
       const roStage = getRoStage(o);
-      const matchStage = selectedStage === 'ALL' || roStage === selectedStage;
+      if (selectedStage !== 'ALL' && roStage !== selectedStage) return false;
 
-      // Smart deduplication filter
       const key = (o.raw_ro_id || o.ro_number).toLowerCase().trim();
       const isDupe = (deduplicationMap.get(key)?.length || 0) > 1;
 
-      let matchDeduplication = true;
-      if (smartFilter === 'CLEAN') {
-        matchDeduplication = !isDupe;
-      } else if (smartFilter === 'DUPLICATES') {
-        matchDeduplication = isDupe;
+      if (smartFilter === 'CLEAN' && isDupe) return false;
+      if (smartFilter === 'DUPLICATES' && !isDupe) return false;
+
+      if (searchLower) {
+        const matchSearch =
+          o.ro_number.toLowerCase().includes(searchLower) ||
+          o.branch_name.toLowerCase().includes(searchLower) ||
+          (o.raw_ro_id && o.raw_ro_id.toLowerCase().includes(searchLower)) ||
+          o.requester_name.toLowerCase().includes(searchLower);
+        if (!matchSearch) return false;
       }
 
-      return matchSearch && matchStage && matchDeduplication;
+      return true;
     });
-  }, [orders, search, selectedStage, smartFilter, deduplicationMap]);
+  }, [orders, search, selectedStage, smartFilter, selectedRegion, deduplicationMap]);
+
+  // Reset page to 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, selectedStage, smartFilter, selectedRegion]);
+
+  const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+  const paginatedOrders = useMemo(() => {
+    if (pageSize === -1) return filteredOrders;
+    const start = (currentPage - 1) * pageSize;
+    return filteredOrders.slice(start, start + pageSize);
+  }, [filteredOrders, currentPage, pageSize]);
 
   // Handler: Sync Google Sheet with Smart Deduplication
   const handleSyncSheet = async () => {
@@ -611,68 +714,99 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
   return (
     <div className="space-y-4">
-      {/* 1. TOP PIPELINE STEPPER BAR (9 TAHAP SESUAI DIAGRAM) */}
-      <div className="panel-card p-4 md:p-5 border border-[#e0e2ec] dark:border-[#444746] rounded-2xl bg-white dark:bg-[#1a1c1e] shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 mb-3 border-b border-[#e0e2ec] dark:border-[#35383a] pb-3">
-          <div className="flex items-center gap-2">
-            <GitMerge className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-            <div>
-              <h3 className="font-bold text-sm md:text-base text-[#1f1f1f] dark:text-[#e3e3e3]">
-                Alur Operasional Request Order (Pipeline 9-Tahap)
-              </h3>
-              <p className="text-[11px] text-[#444746] dark:text-[#c4c7c5]">
-                Klik tahapan diagram di bawah untuk menyaring daftar RO sesuai posisi antreannya saat ini:
+      {/* 1. TOP PIPELINE STEPPER BAR (9 TAHAP SESUAI DIAGRAM) - COLLAPSIBLE */}
+      <div className="panel-card p-3.5 md:p-4 border border-[#e0e2ec] dark:border-[#444746] rounded-2xl bg-white dark:bg-[#1a1c1e] shadow-xs transition-all">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-[#0b57d0] dark:text-[#a8c7fa] shrink-0">
+              <GitMerge className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-bold text-xs md:text-sm text-[#1f1f1f] dark:text-[#e3e3e3]">
+                  Alur Operasional RO (Pipeline 9-Tahap)
+                </h3>
+                {selectedStage !== 'ALL' ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-[#001d35] dark:bg-[#004a77] dark:text-[#c2e7ff]">
+                    Tahap: {WORKFLOW_STAGES.find((s) => s.key === selectedStage)?.label || selectedStage}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-[#747775] dark:text-[#8e918f] hidden md:inline">
+                    • Semua Tahap Aktif
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-[#747775] dark:text-[#8e918f] truncate">
+                {showPipelineStepper ? 'Klik kotak tahapan untuk memfilter tabel' : 'Klik tombol di kanan untuk membuka visual diagram alur'}
               </p>
             </div>
           </div>
 
-          {selectedStage !== 'ALL' && (
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+            {selectedStage !== 'ALL' && (
+              <button
+                type="button"
+                onClick={() => setSelectedStage('ALL')}
+                className="text-xs font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline"
+              >
+                Reset Filter
+              </button>
+            )}
+
             <button
-              onClick={() => setSelectedStage('ALL')}
-              className="text-xs font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline self-start md:self-auto"
+              type="button"
+              onClick={() => setShowPipelineStepper(!showPipelineStepper)}
+              className="interactive-tap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-[#e9eef6] dark:hover:bg-[#35383a] transition-all shadow-2xs"
             >
-              Reset Filter Tahap (Tampilkan Semua)
+              <span>{showPipelineStepper ? 'Sembunyikan Alur' : 'Buka Diagram Alur'}</span>
+              <ChevronDown
+                className={`h-3.5 w-3.5 text-[#747775] dark:text-[#8e918f] transition-transform duration-200 ${
+                  showPipelineStepper ? 'rotate-180' : ''
+                }`}
+              />
             </button>
-          )}
-        </div>
-
-        {/* Horizontal scrollable stepper */}
-        <div className="overflow-x-auto pb-2 -mx-2 px-2 custom-scrollbar">
-          <div className="min-w-[980px] flex items-center justify-between gap-2 py-1">
-            {WORKFLOW_STAGES.map((st, idx) => {
-              const isActive = selectedStage === st.key;
-              const count = stageCounts[st.key] || 0;
-              const isPill = st.shape === 'pill';
-              const isDiamond = st.shape === 'diamond';
-
-              return (
-                <React.Fragment key={st.key}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedStage(isActive ? 'ALL' : st.key)}
-                    className={`interactive-tap group relative flex flex-col items-center justify-center p-2 transition-all cursor-pointer text-center shrink-0 border-2 ${st.color} ${
-                      isPill ? 'rounded-full px-3 py-1.5' : isDiamond ? 'rounded-lg w-[84px] h-[64px]' : 'rounded-xl w-[92px] h-[64px]'
-                    } ${isActive ? 'ring-3 ring-blue-500 shadow-md scale-105' : 'hover:scale-102 hover:shadow-xs'}`}
-                  >
-                    <div className="flex items-center gap-1 font-bold text-[10px] leading-tight">
-                      <span>{st.label}</span>
-                    </div>
-                    <div className="text-[9px] opacity-75">{st.sub}</div>
-                    <span className="mt-0.5 inline-flex items-center justify-center px-1.5 rounded-full text-[9px] font-bold bg-slate-800 dark:bg-white text-white dark:text-slate-900">
-                      {count}
-                    </span>
-                  </button>
-
-                  {idx < WORKFLOW_STAGES.length - 1 && (
-                    <div className="flex items-center justify-center text-[#c4c7c5] dark:text-[#444746] shrink-0">
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </div>
-                  )}
-                </React.Fragment>
-              );
-            })}
           </div>
         </div>
+
+        {/* Collapsible Stepper Content */}
+        {showPipelineStepper && (
+          <div className="overflow-x-auto pt-3 mt-3 border-t border-[#e0e2ec] dark:border-[#35383a] custom-scrollbar animate-in fade-in duration-200">
+            <div className="min-w-[980px] flex items-center justify-between gap-2 py-1">
+              {WORKFLOW_STAGES.map((st, idx) => {
+                const isActive = selectedStage === st.key;
+                const count = stageCounts[st.key] || 0;
+                const isPill = st.shape === 'pill';
+                const isDiamond = st.shape === 'diamond';
+
+                return (
+                  <React.Fragment key={st.key}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStage(isActive ? 'ALL' : st.key)}
+                      className={`interactive-tap group relative flex flex-col items-center justify-center p-2 transition-all cursor-pointer text-center shrink-0 border-2 ${st.color} ${
+                        isPill ? 'rounded-full px-3 py-1.5' : isDiamond ? 'rounded-lg w-[84px] h-[64px]' : 'rounded-xl w-[92px] h-[64px]'
+                      } ${isActive ? 'ring-3 ring-blue-500 shadow-md scale-105' : 'hover:scale-102 hover:shadow-xs'}`}
+                    >
+                      <div className="flex items-center gap-1 font-bold text-[10px] leading-tight">
+                        <span>{st.label}</span>
+                      </div>
+                      <div className="text-[9px] opacity-75">{st.sub}</div>
+                      <span className="mt-0.5 inline-flex items-center justify-center px-1.5 rounded-full text-[9px] font-bold bg-slate-800 dark:bg-white text-white dark:text-slate-900">
+                        {count}
+                      </span>
+                    </button>
+
+                    {idx < WORKFLOW_STAGES.length - 1 && (
+                      <div className="flex items-center justify-center text-[#c4c7c5] dark:text-[#444746] shrink-0">
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 2. ACTIONS & SMART DEDUPLICATION TOOLBAR */}
@@ -711,6 +845,14 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               <span>Import CSV/Excel</span>
             </button>
 
+            {/* Column Visibility Picker */}
+            <ColumnVisibilityPicker
+              columns={RO_COLUMNS}
+              visibleColumns={visibleColumns}
+              onChange={setVisibleColumns}
+              storageKey="ca_ro_columns"
+            />
+
             {/* Buat RO Baru */}
             <button
               onClick={() => setIsRoModalOpen(true)}
@@ -722,12 +864,40 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
           </div>
         </div>
 
-        {/* SMART DEDUPLICATION CONTROLS BAR */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-[#e0e2ec] dark:border-[#35383a] text-xs">
-          <div className="flex items-center gap-2">
+        {/* REGION & SMART DEDUPLICATION CONTROLS BAR */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 pt-2.5 border-t border-[#e0e2ec] dark:border-[#35383a] text-xs">
+          {/* Region Tabs */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
+              <MapPin className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+              Wilayah / Area:
+            </span>
+            <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c]">
+              {(['ALL', 'JABODETABEK', 'KALBAR'] as const).map((reg) => {
+                const stat = regionStats[reg] || { orders: 0, items: 0 };
+                return (
+                  <button
+                    key={reg}
+                    onClick={() => setSelectedRegion(reg)}
+                    className={`interactive-tap px-3 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                      selectedRegion === reg
+                        ? 'bg-[#0b57d0] text-white shadow-xs'
+                        : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
+                    }`}
+                  >
+                    {reg === 'ALL' ? 'Semua Wilayah' : reg === 'JABODETABEK' ? 'Area Jabo' : 'Area Kalbar'}{' '}
+                    ({stat.orders} RO • {stat.items} Baris Item)
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Deduplication Controls */}
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-              Filter Pintar Duplikasi:
+              Filter Duplikasi:
             </span>
             <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c]">
               <button
@@ -755,17 +925,17 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                 Data Terduplikasi ({duplicateOrdersCount})
               </button>
             </div>
-          </div>
 
-          {duplicateOrdersCount > 0 && (
-            <button
-              onClick={handleCleanDuplicates}
-              className="flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:underline"
-            >
-              <Trash2 className="h-3 w-3" />
-              <span>Bersihkan Duplikat Otomatis</span>
-            </button>
-          )}
+            {duplicateOrdersCount > 0 && (
+              <button
+                onClick={handleCleanDuplicates}
+                className="flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:underline ml-1"
+              >
+                <Trash2 className="h-3 w-3" />
+                <span>Bersihkan Duplikat</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Sync Feedback Toast */}
@@ -788,23 +958,38 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
           <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
             <thead className="bg-[#f0f4f9] dark:bg-[#202225] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#444746]">
               <tr>
-                <th className="py-3.5 px-4">No. RO / ID</th>
-                <th className="py-3.5 px-4">Tanggal Order</th>
-                <th className="py-3.5 px-4">Cabang Outlet</th>
-                <th className="py-3.5 px-4">Item &amp; Alokasi</th>
-                <th className="py-3.5 px-4">Tahapan Alur Operasional</th>
-                <th className="py-3.5 px-4 text-right">Aksi Alur Kerja</th>
+                {visibleColumns.ro_number !== false && <th className="py-3.5 px-4">No. RO / ID</th>}
+                {visibleColumns.order_date !== false && <th className="py-3.5 px-4">Tanggal Order</th>}
+                {visibleColumns.request_date !== false && <th className="py-3.5 px-4">Tanggal Permintaan</th>}
+                {visibleColumns.branch !== false && <th className="py-3.5 px-4">Cabang Outlet</th>}
+                {visibleColumns.items !== false && <th className="py-3.5 px-4">Item &amp; Alokasi</th>}
+                {visibleColumns.images !== false && <th className="py-3.5 px-4 text-center">Gambar</th>}
+                {visibleColumns.stage !== false && <th className="py-3.5 px-4">Tahapan Alur Operasional</th>}
+                {visibleColumns.actions !== false && <th className="py-3.5 px-4 text-right">Aksi Alur Kerja</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
-              {filteredOrders.length === 0 ? (
+              {isLoading ? (
+                Array.from({ length: 8 }).map((_, idx) => (
+                  <tr key={idx} className="animate-pulse">
+                    {visibleColumns.ro_number !== false && <td className="py-4 px-4"><div className="h-4 w-20 bg-slate-200 dark:bg-slate-700/60 rounded"></div></td>}
+                    {visibleColumns.order_date !== false && <td className="py-4 px-4"><div className="h-4 w-20 bg-slate-200 dark:bg-slate-700/60 rounded"></div></td>}
+                    {visibleColumns.request_date !== false && <td className="py-4 px-4"><div className="h-4 w-20 bg-slate-200 dark:bg-slate-700/60 rounded"></div></td>}
+                    {visibleColumns.branch !== false && <td className="py-4 px-4"><div className="h-4 w-36 bg-slate-200 dark:bg-slate-700/60 rounded"></div></td>}
+                    {visibleColumns.items !== false && <td className="py-4 px-4"><div className="h-4 w-44 bg-slate-200 dark:bg-slate-700/60 rounded"></div></td>}
+                    {visibleColumns.images !== false && <td className="py-4 px-4 text-center"><div className="h-10 w-10 bg-slate-200 dark:bg-slate-700/60 rounded-lg mx-auto"></div></td>}
+                    {visibleColumns.stage !== false && <td className="py-4 px-4"><div className="h-6 w-28 bg-slate-200 dark:bg-slate-700/60 rounded-full"></div></td>}
+                    {visibleColumns.actions !== false && <td className="py-4 px-4 text-right"><div className="h-7 w-24 bg-slate-200 dark:bg-slate-700/60 rounded-full ml-auto"></div></td>}
+                  </tr>
+                ))
+              ) : filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
+                  <td colSpan={visibleColCount} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
                     Tidak ada dokumen Request Order (RO) yang cocok dengan filter aktif.
                   </td>
                 </tr>
               ) : (
-                filteredOrders.slice(0, 100).map((o) => {
+                paginatedOrders.map((o) => {
                   const stage = getRoStage(o);
                   const isCompleted = stage === 'SELESAI';
                   const isInDelivery = stage === 'SURAT_JALAN';
@@ -819,155 +1004,217 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                   return (
                     <tr key={o.id} className="hover:bg-[#f0f4f9]/50 dark:hover:bg-[#282a2c]/50 transition-colors">
                       {/* RO ID */}
-                      <td className="py-3.5 px-4 font-mono font-bold text-[#0b57d0] dark:text-[#a8c7fa]">
-                        <div>{o.ro_number}</div>
-                        {o.source_type === 'GOOGLE_SHEET' && (
-                          <span className="inline-block mt-0.5 text-[9px] px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                            Sheet Resmi
-                          </span>
-                        )}
-                        {isDupe && (
-                          <span className="inline-block mt-0.5 ml-1 text-[9px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 font-bold">
-                            Duplikat ID
-                          </span>
-                        )}
-                      </td>
+                      {visibleColumns.ro_number !== false && (
+                        <td className="py-3.5 px-4 font-mono font-bold text-[#0b57d0] dark:text-[#a8c7fa]">
+                          <div>{o.ro_number}</div>
+                          {o.source_type === 'GOOGLE_SHEET' && (
+                            <span className="inline-block mt-0.5 text-[9px] px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                              Sheet Resmi
+                            </span>
+                          )}
+                          {isDupe && (
+                            <span className="inline-block mt-0.5 ml-1 text-[9px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 font-bold">
+                              Duplikat ID
+                            </span>
+                          )}
+                        </td>
+                      )}
 
-                      {/* Dates */}
-                      <td className="py-3.5 px-4 text-[#444746] dark:text-[#c4c7c5] whitespace-nowrap">
-                        <div>{o.request_date}</div>
-                        <div className="text-[10px] text-[#747775]">Target: {o.target_delivery_date || '-'}</div>
-                      </td>
+                      {/* Tanggal Order */}
+                      {visibleColumns.order_date !== false && (
+                        <td className="py-3.5 px-4 text-[#444746] dark:text-[#c4c7c5] whitespace-nowrap">
+                          <div className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">{o.request_date || '-'}</div>
+                        </td>
+                      )}
+
+                      {/* Tanggal Permintaan (Data dari Sheet) */}
+                      {visibleColumns.request_date !== false && (
+                        <td className="py-3.5 px-4 text-[#444746] dark:text-[#c4c7c5] whitespace-nowrap">
+                          <div className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">{o.target_delivery_date || '-'}</div>
+                        </td>
+                      )}
 
                       {/* Branch & Region */}
-                      <td className="py-3.5 px-4">
-                        <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">{o.branch_name}</div>
-                        <div className="text-[10px] text-[#747775]">{o.region} &bull; {o.requester_name}</div>
-                      </td>
+                      {visibleColumns.branch !== false && (
+                        <td className="py-3.5 px-4">
+                          <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">{o.branch_name}</div>
+                          <div className="text-[10px] text-[#747775]">{o.region} &bull; {o.requester_name}</div>
+                        </td>
+                      )}
 
                       {/* Items */}
-                      <td className="py-3.5 px-4 max-w-xs">
-                        <div className="space-y-1">
-                          {o.items.slice(0, 3).map((it, idx) => (
-                            <div key={idx} className="flex items-center gap-1.5 text-[11px]">
-                              <Package className="h-3 w-3 text-[#0b57d0] dark:text-[#a8c7fa] shrink-0" />
-                              <span className="font-medium truncate">{it.item_name}</span>
-                              <span className="text-[#747775] shrink-0">
-                                (x{it.quantity_ordered} {it.unit || 'unit'})
+                      {visibleColumns.items !== false && (
+                        <td className="py-3.5 px-4 max-w-xs">
+                          <div className="space-y-1">
+                            {o.items.slice(0, 3).map((it, idx) => (
+                              <div key={idx} className="flex items-center gap-1.5 text-[11px]">
+                                <Package className="h-3 w-3 text-[#0b57d0] dark:text-[#a8c7fa] shrink-0" />
+                                <span className="font-medium truncate">{it.item_name}</span>
+                                <span className="text-[#747775] shrink-0">
+                                  (x{it.quantity_ordered} {it.unit || 'unit'})
+                                </span>
+                                {it.stock_source === 'PR_VENDOR' && (
+                                  <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-orange-100 dark:bg-orange-950/60 text-orange-800 dark:text-orange-300 border border-orange-200 dark:border-orange-800">
+                                    PR
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                            {o.items.length > 3 && (
+                              <span className="text-[10px] font-semibold text-[#0b57d0]">
+                                +{o.items.length - 3} item lainnya
                               </span>
-                              <span className={`text-[9px] px-1 rounded font-bold ${
-                                it.stock_source === 'GUDANG_SCGA'
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : 'bg-orange-100 text-orange-800'
-                              }`}>
-                                {it.stock_source === 'GUDANG_SCGA' ? 'Stok' : 'PR'}
+                            )}
+                          </div>
+                        </td>
+                      )}
+
+                      {/* Kolom Gambar (Sesuai Master Aset) */}
+                      {visibleColumns.images !== false && (
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-1.5 flex-wrap max-w-[130px]">
+                            {o.items.slice(0, 3).map((it, idx) => {
+                              const imgUrl = getItemImageUrl(it.item_name);
+                              return (
+                                <div key={idx} className="relative group">
+                                  {imgUrl ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setPreviewImage({ url: imgUrl, title: it.item_name })}
+                                      className="relative block w-10 h-10 rounded-lg border border-[#e0e2ec] dark:border-[#444746] overflow-hidden hover:ring-2 hover:ring-[#0b57d0] hover:scale-110 transition-all shadow-2xs bg-white dark:bg-[#282a2c] shrink-0"
+                                      title={`Klik perbesar: ${it.item_name}`}
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={imgUrl}
+                                        alt={it.item_name}
+                                        className="w-full h-full object-cover"
+                                        loading="lazy"
+                                      />
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => setUploadModalTarget({ itemName: it.item_name, currentImageUrl: null })}
+                                      className="w-10 h-10 rounded-lg border border-dashed border-amber-300 dark:border-amber-700/80 bg-amber-50/60 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/40 flex flex-col items-center justify-center text-amber-700 dark:text-amber-400 text-[8px] shrink-0 transition group/upload"
+                                      title={`Klik untuk upload foto ke Supabase (maks 100 KB): ${it.item_name}`}
+                                    >
+                                      <Upload className="h-3.5 w-3.5 mb-0.5 group-hover/upload:scale-110 transition-transform" />
+                                      <span className="font-semibold text-[8px]">Upload</span>
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {o.items.length > 3 && (
+                              <span className="text-[10px] text-[#747775] font-semibold">
+                                +{o.items.length - 3}
                               </span>
-                            </div>
-                          ))}
-                          {o.items.length > 3 && (
-                            <span className="text-[10px] font-semibold text-[#0b57d0]">
-                              +{o.items.length - 3} item lainnya
-                            </span>
-                          )}
-                        </div>
-                      </td>
+                            )}
+                          </div>
+                        </td>
+                      )}
 
                       {/* Stage Progress Badge */}
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                          isCompleted
-                            ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                            : isInDelivery
-                            ? 'bg-teal-100 text-teal-900 border border-teal-300'
-                            : isReadyStock
-                            ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
-                            : isNeedPr
-                            ? 'bg-orange-100 text-orange-950 border border-orange-300'
-                            : isChecklist
-                            ? 'bg-cyan-100 text-cyan-950 border border-cyan-300'
-                            : 'bg-blue-50 text-blue-900 border border-blue-200'
-                        }`}>
-                          {isCompleted ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> :
-                           isInDelivery ? <Truck className="h-3.5 w-3.5 text-teal-600" /> :
-                           isReadyStock ? <Boxes className="h-3.5 w-3.5 text-emerald-600" /> :
-                           isNeedPr ? <Clock className="h-3.5 w-3.5 text-orange-600" /> :
-                           <GitMerge className="h-3.5 w-3.5 text-blue-600" />}
-                          <span>{WORKFLOW_STAGES.find(s => s.key === stage)?.label || stage}</span>
-                        </span>
-                      </td>
+                      {visibleColumns.stage !== false && (
+                        <td className="py-3.5 px-4 whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                            isCompleted
+                              ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                              : isInDelivery
+                              ? 'bg-teal-100 text-teal-900 border border-teal-300'
+                              : isReadyStock
+                              ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                              : isNeedPr
+                              ? 'bg-orange-100 text-orange-950 border border-orange-300'
+                              : isChecklist
+                              ? 'bg-cyan-100 text-cyan-950 border border-cyan-300'
+                              : 'bg-blue-50 text-blue-900 border border-blue-200'
+                          }`}>
+                            {isCompleted ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> :
+                             isInDelivery ? <Truck className="h-3.5 w-3.5 text-teal-600" /> :
+                             isReadyStock ? <Boxes className="h-3.5 w-3.5 text-emerald-600" /> :
+                             isNeedPr ? <Clock className="h-3.5 w-3.5 text-orange-600" /> :
+                             <GitMerge className="h-3.5 w-3.5 text-blue-600" />}
+                            <span>{WORKFLOW_STAGES.find(s => s.key === stage)?.label || stage}</span>
+                          </span>
+                        </td>
+                      )}
 
                       {/* Contextual Action Buttons */}
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {/* 1. Tahap Pilih Proses */}
-                          {isPilihProses && (
-                            <button
-                              onClick={() => setSelectedRoForProcess(o)}
-                              className="rounded-full bg-[#0b57d0] text-white px-3 py-1 text-[11px] font-semibold hover:bg-[#0842a0] shadow-xs flex items-center gap-1"
-                            >
-                              <GitMerge className="h-3 w-3" />
-                              <span>Pilih Proses</span>
-                            </button>
-                          )}
+                      {visibleColumns.actions !== false && (
+                        <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* 1. Tahap Pilih Proses */}
+                            {isPilihProses && (
+                              <button
+                                onClick={() => setSelectedRoForProcess(o)}
+                                className="rounded-full bg-[#0b57d0] text-white px-3 py-1 text-[11px] font-semibold hover:bg-[#0842a0] shadow-xs flex items-center gap-1"
+                              >
+                                <GitMerge className="h-3 w-3" />
+                                <span>Pilih Proses</span>
+                              </button>
+                            )}
 
-                          {/* 2. Tahap Kelola PR */}
-                          {isNeedPr && (
-                            <button
-                              onClick={() => {
-                                setSelectedRoForPr(o);
-                                setPrVendor(o.pr_vendor_name || '');
-                                setPrPoNo(o.pr_po_number || '');
-                                setPrArrivalTarget(o.pr_estimated_arrival || '');
-                              }}
-                              className="rounded-full bg-orange-600 text-white px-3 py-1 text-[11px] font-semibold hover:bg-orange-700 shadow-xs flex items-center gap-1"
-                            >
-                              <Clock className="h-3 w-3" />
-                              <span>Kelola PR &amp; Kedatangan</span>
-                            </button>
-                          )}
+                            {/* 2. Tahap Kelola PR */}
+                            {isNeedPr && (
+                              <button
+                                onClick={() => {
+                                  setSelectedRoForPr(o);
+                                  setPrVendor(o.pr_vendor_name || '');
+                                  setPrPoNo(o.pr_po_number || '');
+                                  setPrArrivalTarget(o.pr_estimated_arrival || '');
+                                }}
+                                className="rounded-full bg-orange-600 text-white px-3 py-1 text-[11px] font-semibold hover:bg-orange-700 shadow-xs flex items-center gap-1"
+                              >
+                                <Clock className="h-3 w-3" />
+                                <span>Kelola PR &amp; Kedatangan</span>
+                              </button>
+                            )}
 
-                          {/* 3. Tahap Ready Stock -> Buat SJ */}
-                          {isReadyStock && (
-                            <button
-                              onClick={() => setSelectedRoForSj(o)}
-                              className="rounded-full bg-emerald-700 text-white px-3 py-1 text-[11px] font-semibold hover:bg-emerald-800 shadow-xs flex items-center gap-1"
-                            >
-                              <Printer className="h-3 w-3" />
-                              <span>Terbitkan Surat Jalan</span>
-                            </button>
-                          )}
+                            {/* 3. Tahap Ready Stock -> Buat SJ */}
+                            {isReadyStock && (
+                              <button
+                                onClick={() => setSelectedRoForSj(o)}
+                                className="rounded-full bg-emerald-700 text-white px-3 py-1 text-[11px] font-semibold hover:bg-emerald-800 shadow-xs flex items-center gap-1"
+                              >
+                                <Printer className="h-3 w-3" />
+                                <span>Terbitkan Surat Jalan</span>
+                              </button>
+                            )}
 
-                          {/* 4. Tahap Dalam Kirim -> Konfirmasi Sampai? */}
-                          {isInDelivery && (
-                            <button
-                              onClick={() => setSelectedRoForArrival(o)}
-                              className="rounded-full bg-teal-700 text-white px-3 py-1 text-[11px] font-semibold hover:bg-teal-800 shadow-xs flex items-center gap-1"
-                            >
-                              <HelpCircle className="h-3 w-3" />
-                              <span>Aset Sampai?</span>
-                            </button>
-                          )}
+                            {/* 4. Tahap Dalam Kirim -> Konfirmasi Sampai? */}
+                            {isInDelivery && (
+                              <button
+                                onClick={() => setSelectedRoForArrival(o)}
+                                className="rounded-full bg-teal-700 text-white px-3 py-1 text-[11px] font-semibold hover:bg-teal-800 shadow-xs flex items-center gap-1"
+                              >
+                                <HelpCircle className="h-3 w-3" />
+                                <span>Aset Sampai?</span>
+                              </button>
+                            )}
 
-                          {/* 5. Tahap Checklist Penerimaan */}
-                          {isChecklist && (
-                            <button
-                              onClick={() => openChecklistModal(o)}
-                              className="rounded-full bg-cyan-700 text-white px-3 py-1 text-[11px] font-semibold hover:bg-cyan-800 shadow-xs flex items-center gap-1"
-                            >
-                              <CheckSquare className="h-3 w-3" />
-                              <span>Checklist Diterima</span>
-                            </button>
-                          )}
+                            {/* 5. Tahap Checklist Penerimaan */}
+                            {isChecklist && (
+                              <button
+                                onClick={() => openChecklistModal(o)}
+                                className="rounded-full bg-cyan-700 text-white px-3 py-1 text-[11px] font-semibold hover:bg-cyan-800 shadow-xs flex items-center gap-1"
+                              >
+                                <CheckSquare className="h-3 w-3" />
+                                <span>Checklist Diterima</span>
+                              </button>
+                            )}
 
-                          {/* 6. Completed */}
-                          {isCompleted && (
-                            <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                              <span>Selesai</span>
-                            </span>
-                          )}
-                        </div>
-                      </td>
+                            {/* 6. Completed */}
+                            {isCompleted && (
+                              <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                <span>Selesai</span>
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })
@@ -975,6 +1222,68 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             </tbody>
           </table>
         </div>
+
+        {/* PAGINATION BAR */}
+        {filteredOrders.length > 0 && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 border-t border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#1a1c1e] text-xs">
+            <div className="text-[#444746] dark:text-[#c4c7c5]">
+              Menampilkan{' '}
+              <strong className="text-[#1f1f1f] dark:text-white">
+                {pageSize === -1 ? 1 : (currentPage - 1) * pageSize + 1}
+              </strong>{' '}
+              -{' '}
+              <strong className="text-[#1f1f1f] dark:text-white">
+                {pageSize === -1 ? filteredOrders.length : Math.min(currentPage * pageSize, filteredOrders.length)}
+              </strong>{' '}
+              dari <strong className="text-[#0b57d0] dark:text-[#a8c7fa]">{filteredOrders.length} Dokumen RO</strong>{' '}
+              <span className="text-[#747775]">
+                (Total {filteredOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0)} Baris Item)
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 self-end sm:self-auto flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-[#747775]">Tampilkan:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#202225] px-2 py-1 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:outline-none"
+                >
+                  <option value={25}>25 per hal</option>
+                  <option value={50}>50 per hal</option>
+                  <option value={100}>100 per hal</option>
+                  <option value={250}>250 per hal</option>
+                  <option value={-1}>Semua Data</option>
+                </select>
+              </div>
+
+              {pageSize !== -1 && totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="px-2.5 py-1 rounded-md border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#202225] font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors"
+                  >
+                    Sebelumnya
+                  </button>
+                  <span className="px-2 py-1 text-[11px] font-bold text-[#0b57d0] dark:text-[#a8c7fa]">
+                    Hal {currentPage} dari {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-2.5 py-1 rounded-md border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#202225] font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors"
+                  >
+                    Selanjutnya
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ========================================================= */}
@@ -1001,40 +1310,91 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             </div>
 
             <div className="text-xs space-y-3">
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border space-y-1">
-                <div><strong>No. RO:</strong> {selectedRoForProcess.ro_number}</div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-[#e0e2ec] dark:border-[#35383a] space-y-1">
+                <div className="flex justify-between items-center">
+                  <div><strong>No. RO:</strong> {selectedRoForProcess.ro_number}</div>
+                  <div className="text-[11px] text-[#747775]"><strong>Target Permintaan:</strong> {selectedRoForProcess.target_delivery_date || '-'}</div>
+                </div>
                 <div><strong>Cabang:</strong> {selectedRoForProcess.branch_name} ({selectedRoForProcess.region})</div>
               </div>
 
               <div className="space-y-2">
-                <div className="font-bold text-xs">Atur Alokasi Sumber Tiap Item:</div>
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-xs">Pilih Status Ketersediaan Tiap Item:</div>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = selectedRoForProcess.items.map(it => ({ ...it, stock_source: 'GUDANG_SCGA' as const }));
+                        setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
+                      }}
+                      className="text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 hover:bg-emerald-200"
+                    >
+                      Semua Stok
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = selectedRoForProcess.items.map(it => ({ ...it, stock_source: 'PR_VENDOR' as const }));
+                        setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
+                      }}
+                      className="text-[10px] px-2 py-0.5 rounded font-semibold bg-orange-100 dark:bg-orange-950/60 text-orange-800 dark:text-orange-300 border border-orange-300 hover:bg-orange-200"
+                    >
+                      Semua PR
+                    </button>
+                  </div>
+                </div>
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                  {selectedRoForProcess.items.map((it, idx) => (
-                    <div key={it.id || idx} className="flex items-center justify-between p-2.5 rounded-lg border bg-white dark:bg-[#282a2c]">
-                      <div>
-                        <div className="font-semibold">{it.item_name}</div>
-                        <div className="text-[10px] text-[#747775]">Jumlah: {it.quantity_ordered} {it.unit || 'unit'}</div>
-                      </div>
+                  {selectedRoForProcess.items.map((it, idx) => {
+                    const imgUrl = getItemImageUrl(it.item_name);
+                    return (
+                      <div key={it.id || idx} className="flex items-center justify-between p-2.5 rounded-lg border border-[#e0e2ec] dark:border-[#35383a] bg-white dark:bg-[#282a2c]">
+                        <div className="flex items-center gap-2.5 pr-2 min-w-0">
+                          {imgUrl ? (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewImage({ url: imgUrl, title: it.item_name })}
+                              className="shrink-0 w-10 h-10 rounded-lg border border-[#e0e2ec] dark:border-[#444746] overflow-hidden hover:scale-105 transition-transform"
+                              title="Klik untuk memperbesar foto"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={imgUrl} alt={it.item_name} className="w-full h-full object-cover" />
+                            </button>
+                          ) : (
+                            <div className="shrink-0 w-10 h-10 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-center text-slate-400">
+                              <ImageIcon className="h-4 w-4 opacity-40" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] truncate">{it.item_name}</div>
+                            <div className="text-[10px] text-[#747775]">Jumlah: {it.quantity_ordered} {it.unit || 'unit'}</div>
+                          </div>
+                        </div>
                       <select
-                        value={it.stock_source}
+                        value={it.stock_source || 'GUDANG_SCGA'}
                         onChange={(e) => {
                           const val = e.target.value as any;
                           const updated = [...selectedRoForProcess.items];
                           updated[idx] = { ...updated[idx], stock_source: val };
                           setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
                         }}
-                        className="rounded-lg border px-2 py-1 text-xs font-semibold"
+                        className={`rounded-lg border px-2 py-1 text-xs font-semibold outline-hidden transition-colors ${
+                          it.stock_source === 'PR_VENDOR'
+                            ? 'bg-orange-50 border-orange-300 text-orange-800 dark:bg-orange-950/50 dark:border-orange-700 dark:text-orange-200'
+                            : 'bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-700 dark:text-emerald-200'
+                        }`}
                       >
                         <option value="GUDANG_SCGA">Ready Stock (Gudang SCGA)</option>
                         <option value="PR_VENDOR">Belum Tersedia (Butuh PR)</option>
                       </select>
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
             </div>
+          </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t">
+          <div className="flex items-center justify-end gap-2 pt-3 border-t">
               <button
                 type="button"
                 onClick={() => setSelectedRoForProcess(null)}
@@ -1618,6 +1978,123 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             </div>
           </div>
         </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 6: LIGHTBOX PREVIEW GAMBAR ITEM (MASTER ASET)       */}
+      {/* ========================================================= */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div 
+            className="spring-pop panel-card relative bg-white dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-[#e0e2ec] dark:border-[#35383a]">
+              <div className="flex items-center gap-2 min-w-0 pr-2">
+                <ImageIcon className="h-4 w-4 text-[#0b57d0] shrink-0" />
+                <h4 className="font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
+                  {previewImage.title}
+                </h4>
+              </div>
+              <button 
+                onClick={() => setPreviewImage(null)} 
+                className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="w-full flex items-center justify-center overflow-hidden rounded-xl bg-slate-100 dark:bg-black/50 p-2 border border-[#e0e2ec] dark:border-[#35383a]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img 
+                src={previewImage.url} 
+                alt={previewImage.title} 
+                className="max-w-full max-h-[60vh] object-contain rounded-lg shadow-sm" 
+              />
+            </div>
+
+            {/* Rincian Spesifikasi Item */}
+            {(() => {
+              const spec = getItemSpecification(previewImage.title);
+              return (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#18191a] border border-[#e0e2ec] dark:border-[#35383a] text-xs space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-amber-600 dark:text-amber-400">Rincian Spesifikasi:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const title = previewImage.title;
+                        const currentSpec = getItemSpecification(title) || '';
+                        setPreviewImage(null);
+                        setEditingSpecItem({ itemName: title, specification: currentSpec });
+                      }}
+                      className="text-[11px] text-amber-600 hover:underline flex items-center gap-1 font-medium"
+                    >
+                      <FileEdit className="w-3 h-3" />
+                      <span>{spec ? 'Edit Spek' : '+ Tambah Spek'}</span>
+                    </button>
+                  </div>
+                  <p className="text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
+                    {spec || <span className="italic text-slate-400">Belum ada rincian spesifikasi untuk item ini.</span>}
+                  </p>
+                </div>
+              );
+            })()}
+
+            <div className="flex items-center justify-between text-[11px] text-[#747775] pt-1">
+              <span className="flex items-center gap-1">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                Terhubung dari Sheet Master Aset
+              </span>
+              <div className="flex items-center gap-2">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    const target = { itemName: previewImage.title, currentImageUrl: previewImage.url };
+                    setPreviewImage(null);
+                    setUploadModalTarget(target);
+                  }} 
+                  className="px-3 py-1.5 rounded-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center gap-1 transition-colors"
+                >
+                  <Upload className="w-3 h-3" />
+                  <span>Ganti Foto (&le; 100KB)</span>
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setPreviewImage(null)} 
+                  className="px-4 py-1.5 rounded-full bg-[#0b57d0] text-white text-xs font-semibold hover:bg-[#0842a0] transition-colors"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Upload & Kompresi Supabase (< 100 KB) */}
+      {uploadModalTarget && (
+        <UploadImageModal
+          isOpen={!!uploadModalTarget}
+          onClose={() => setUploadModalTarget(null)}
+          itemName={uploadModalTarget.itemName}
+          currentImageUrl={uploadModalTarget.currentImageUrl}
+          onUploadSuccess={handleUploadSuccess}
+        />
+      )}
+
+      {/* Modal Edit Spesifikasi Item */}
+      {editingSpecItem && (
+        <EditSpecModal
+          isOpen={!!editingSpecItem}
+          onClose={() => setEditingSpecItem(null)}
+          itemName={editingSpecItem.itemName}
+          currentSpecification={editingSpecItem.specification}
+          onSuccess={handleSpecSuccess}
+        />
       )}
     </div>
   );

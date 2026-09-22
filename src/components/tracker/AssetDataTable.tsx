@@ -22,7 +22,9 @@ import {
   Eye,
   EyeOff,
   Trash2,
-  Truck
+  Truck,
+  Filter,
+  ChevronDown
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import { formatDateTime, formatDateOnly, formatLeadTime } from '@/lib/utils/date-formatter';
@@ -79,6 +81,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   const [selectedStock, setSelectedStock] = useState<string>('ALL');
   const [selectedRab, setSelectedRab] = useState<string>('');
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>('ALL');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
@@ -263,6 +266,28 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
     });
     return Array.from(set).sort();
   }, [items]);
+
+  // Active filter count for advanced filters
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (selectedRegion !== 'ALL') count++;
+    if (selectedBranch !== 'ALL') count++;
+    if (selectedStatus !== 'ALL') count++;
+    if (selectedStock !== 'ALL') count++;
+    if (selectedRab && selectedRab.trim()) count++;
+    return count;
+  }, [selectedRegion, selectedBranch, selectedStatus, selectedStock, selectedRab]);
+
+  const handleResetFilters = () => {
+    setSelectedRegion('ALL');
+    setSelectedBranch('ALL');
+    setSelectedStatus('ALL');
+    setSelectedStock('ALL');
+    setSelectedRab('');
+    setQuickFilter('ALL');
+    setSearch('');
+    setCurrentPage(1);
+  };
 
   // Filtered Items
   const filteredItems = useMemo(() => {
@@ -531,14 +556,14 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   return (
     <div className="space-y-3.5">
       {/* 1. Google Material 3 Filter Chips Bar */}
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        <span className="text-xs font-semibold text-[#444746] dark:text-[#c4c7c5] mr-1 flex items-center gap-1.5">
+      <div className="flex items-center gap-2 pt-1 overflow-x-auto no-scrollbar py-1">
+        <span className="text-xs font-semibold text-[#444746] dark:text-[#c4c7c5] mr-1 flex items-center gap-1.5 shrink-0">
           <Clock className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
           Filter Cepat:
         </span>
         <button
           onClick={() => { setQuickFilter('ALL'); setCurrentPage(1); }}
-          className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-all ${
+          className={`rounded-full px-3 py-1 text-xs font-medium transition-all shrink-0 ${
             quickFilter === 'ALL'
               ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
               : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#444746] dark:text-[#c4c7c5] hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c]'
@@ -548,7 +573,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
         </button>
         <button
           onClick={() => { setQuickFilter('OVERDUE'); setCurrentPage(1); }}
-          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all ${
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all shrink-0 ${
             quickFilter === 'OVERDUE'
               ? 'bg-[#fce8e6] dark:bg-[#601410] border border-[#f9dedc] dark:border-[#601410] text-[#b3261e] dark:text-[#f2b8b5]'
               : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#444746] dark:text-[#c4c7c5] hover:text-[#b3261e] dark:hover:text-[#f2b8b5]'
@@ -559,7 +584,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
         </button>
         <button
           onClick={() => { setQuickFilter('READY_STOCK'); setCurrentPage(1); }}
-          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all ${
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all shrink-0 ${
             quickFilter === 'READY_STOCK'
               ? 'bg-[#e6f4ea] dark:bg-[#0f5223] border border-[#ceead6] dark:border-[#0f5223] text-[#137333] dark:text-[#6dd58c]'
               : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#444746] dark:text-[#c4c7c5] hover:text-[#137333] dark:hover:text-[#6dd58c]'
@@ -570,7 +595,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
         </button>
         <button
           onClick={() => { setQuickFilter('NEED_PR'); setCurrentPage(1); }}
-          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all ${
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all shrink-0 ${
             quickFilter === 'NEED_PR'
               ? 'bg-[#e8f0fe] dark:bg-[#004a77] border border-[#d2e3fc] dark:border-[#004a77] text-[#0b57d0] dark:text-[#c2e7ff]'
               : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#444746] dark:text-[#c4c7c5] hover:text-[#0b57d0] dark:hover:text-[#a8c7fa]'
@@ -581,7 +606,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
         </button>
         <button
           onClick={() => { setQuickFilter('COMPLETED'); setCurrentPage(1); }}
-          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all ${
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all shrink-0 ${
             quickFilter === 'COMPLETED'
               ? 'bg-[#c4eed0] dark:bg-[#072711] border border-[#137333] text-[#072711] dark:text-[#6dd58c]'
               : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#444746] dark:text-[#c4c7c5] hover:text-[#137333] dark:hover:text-[#6dd58c]'
@@ -592,7 +617,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
         </button>
         <button
           onClick={() => { setQuickFilter('TERIMA_OUTLET'); setCurrentPage(1); }}
-          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all ${
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all shrink-0 ${
             quickFilter === 'TERIMA_OUTLET'
               ? 'bg-[#c2e7ff] dark:bg-[#004a77] border border-[#0b57d0] dark:border-[#a8c7fa] text-[#001d35] dark:text-[#c2e7ff]'
               : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#444746] dark:text-[#c4c7c5] hover:text-[#0b57d0] dark:hover:text-[#a8c7fa]'
@@ -601,10 +626,10 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
           <Package className="h-3.5 w-3.5 text-[#0b57d0]" />
           Terima Outlet
         </button>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={() => { setQuickFilter('TRANSFER_SYSTEM'); setCurrentPage(1); }}
-            className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all ${
               quickFilter === 'TRANSFER_SYSTEM'
                 ? 'bg-[#c2e7ff] dark:bg-[#004a77] border border-[#0b57d0] dark:border-[#a8c7fa] text-[#001d35] dark:text-[#c2e7ff] shadow-sm'
                 : 'bg-[#ffffff] dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/30'
@@ -626,7 +651,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
       </div>
 
       {/* 2. Google M3 Search & Filter Card */}
-      <div className="panel-card p-4 space-y-3">
+      <div className="panel-card p-3.5 md:p-4 space-y-3">
         <div className="flex flex-col md:flex-row items-center justify-between gap-3">
           {/* Google Search Bar */}
           <div className="relative w-full md:w-96">
@@ -648,6 +673,25 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
             <span className="text-xs text-[#444746] dark:text-[#c4c7c5] font-medium mr-1">
               Total: <strong className="text-[#1f1f1f] dark:text-[#e3e3e3]">{filteredItems.length}</strong> baris
             </span>
+
+            {/* Filter Toggle Button */}
+            <button
+              type="button"
+              onClick={() => setShowAdvancedFilters((prev) => !prev)}
+              className={`interactive-tap flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors shadow-2xs ${
+                showAdvancedFilters || activeFilterCount > 0
+                  ? 'border-[#0b57d0] dark:border-[#a8c7fa] bg-[#e8f0fe] dark:bg-[#004a77]/40 text-[#0b57d0] dark:text-[#a8c7fa]'
+                  : 'border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c]'
+              }`}
+            >
+              <Filter className="h-3.5 w-3.5" />
+              <span>Filter</span>
+              {activeFilterCount > 0 && (
+                <span className="rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-white dark:text-[#041e49] px-1.5 py-0.2 text-[10px] font-bold">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
             
             {/* BAST Print Button */}
             <button
@@ -763,111 +807,131 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
           </div>
         </div>
 
-        {/* Filter Controls Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 pt-2 border-t border-[#e0e2ec] dark:border-[#444746]">
-          <div>
-            <label className="block text-[10px] font-bold uppercase text-[#444746] dark:text-[#c4c7c5] mb-1">
-              Wilayah
-            </label>
-            <select
-              value={selectedRegion}
-              onChange={(e) => {
-                setSelectedRegion(e.target.value as RegionType);
-                setCurrentPage(1);
-              }}
-              className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-            >
-              <option value="ALL">Semua Wilayah</option>
-              <option value="JABODETABEK">JABODETABEK</option>
-              <option value="KALBAR">KALBAR</option>
-            </select>
-          </div>
+        {/* Collapsible Advanced Filter Controls */}
+        {(showAdvancedFilters || activeFilterCount > 0) && (
+          <div className="pt-3 border-t border-[#e0e2ec] dark:border-[#444746] animate-in fade-in duration-150">
+            <div className="flex items-center justify-between pb-2 mb-1">
+              <span className="text-[11px] font-bold text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-1.5">
+                <Filter className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                Parameter Filter Lanjutan
+              </span>
+              {activeFilterCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  className="text-[11px] font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline"
+                >
+                  Reset Semua Filter ({activeFilterCount})
+                </button>
+              )}
+            </div>
 
-          <div>
-            <label className="block text-[10px] font-bold uppercase text-[#444746] dark:text-[#c4c7c5] mb-1">
-              Cabang
-            </label>
-            <select
-              value={selectedBranch}
-              onChange={(e) => {
-                setSelectedBranch(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-            >
-              <option value="ALL">Semua Cabang ({uniqueBranches.length})</option>
-              {uniqueBranches.map((br) => (
-                <option key={br} value={br}>
-                  {br}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-[#444746] dark:text-[#c4c7c5] mb-1">
+                  Wilayah
+                </label>
+                <select
+                  value={selectedRegion}
+                  onChange={(e) => {
+                    setSelectedRegion(e.target.value as RegionType);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                >
+                  <option value="ALL">Semua Wilayah</option>
+                  <option value="JABODETABEK">JABODETABEK</option>
+                  <option value="KALBAR">KALBAR</option>
+                </select>
+              </div>
 
-          <div>
-            <label className="block text-[10px] font-bold uppercase text-[#444746] dark:text-[#c4c7c5] mb-1">
-              Status Barang
-            </label>
-            <select
-              value={selectedStatus}
-              onChange={(e) => {
-                setSelectedStatus(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-            >
-              <option value="ALL">Semua Status</option>
-              <option value="READY_ANTAR">Ready Antar</option>
-              <option value="BELUM_READY">Belum Ready</option>
-              <option value="TERIMA_OUTLET">Terima Outlet</option>
-            </select>
-          </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-[#444746] dark:text-[#c4c7c5] mb-1">
+                  Cabang
+                </label>
+                <select
+                  value={selectedBranch}
+                  onChange={(e) => {
+                    setSelectedBranch(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                >
+                  <option value="ALL">Semua Cabang ({uniqueBranches.length})</option>
+                  {uniqueBranches.map((br) => (
+                    <option key={br} value={br}>
+                      {br}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          <div>
-            <label className="block text-[10px] font-bold uppercase text-[#444746] dark:text-[#c4c7c5] mb-1">
-              Status Stok Gudang
-            </label>
-            <select
-              value={selectedStock}
-              onChange={(e) => {
-                setSelectedStock(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-            >
-              <option value="ALL">Semua Stok</option>
-              <option value="READY">Ready (Gudang)</option>
-              <option value="KOSONG">Kosong (PR)</option>
-            </select>
-          </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-[#444746] dark:text-[#c4c7c5] mb-1">
+                  Status Barang
+                </label>
+                <select
+                  value={selectedStatus}
+                  onChange={(e) => {
+                    setSelectedStatus(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                >
+                  <option value="ALL">Semua Status</option>
+                  <option value="READY_ANTAR">Ready Antar</option>
+                  <option value="BELUM_READY">Belum Ready</option>
+                  <option value="TERIMA_OUTLET">Terima Outlet</option>
+                </select>
+              </div>
 
-          <div>
-            <label className="block text-[10px] font-bold uppercase text-[#444746] dark:text-[#c4c7c5] mb-1">
-              Filter No RAB
-            </label>
-            <input
-              type="text"
-              placeholder="Cari No RAB..."
-              value={selectedRab}
-              onChange={(e) => {
-                setSelectedRab(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-            />
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-[#444746] dark:text-[#c4c7c5] mb-1">
+                  Status Stok Gudang
+                </label>
+                <select
+                  value={selectedStock}
+                  onChange={(e) => {
+                    setSelectedStock(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                >
+                  <option value="ALL">Semua Stok</option>
+                  <option value="READY">Ready (Gudang)</option>
+                  <option value="KOSONG">Kosong (PR)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-[#444746] dark:text-[#c4c7c5] mb-1">
+                  Filter No RAB
+                </label>
+                <input
+                  type="text"
+                  placeholder="Cari No RAB..."
+                  value={selectedRab}
+                  onChange={(e) => {
+                    setSelectedRab(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                />
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* 3. Sticky Multi-Select Bulk Actions Bar (Google M3 Pill Floating Bar) */}
+      {/* 3. Sticky Multi-Select Bulk Actions Bar (Google M3 Tonal Floating Bar) */}
       {selectedIds.length > 0 && (
-        <div className="sticky top-20 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#d2e3fc] dark:border-[#004a77] bg-[#ffffff] dark:bg-[#1e1f20] px-5 py-3 shadow-lg animate-in fade-in slide-in-from-top-2">
+        <div className="sticky top-20 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#d2e3fc] dark:border-[#004a77] bg-white/95 dark:bg-[#1e1f20]/95 backdrop-blur-md px-4 py-2.5 shadow-lg animate-in fade-in slide-in-from-top-2">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-xs font-bold text-white dark:text-[#041e49] shadow-sm">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-xs font-bold text-white dark:text-[#041e49]">
               {selectedIds.length}
             </span>
             <span className="text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
-              Item dipilih untuk aksi massal:
+              Aksi Massal:
             </span>
           </div>
 
@@ -875,26 +939,26 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
             <button
               onClick={() => handleBulkUpdateStatus('Ready Antar')}
               disabled={isBulkUpdating}
-              className="flex items-center gap-1.5 rounded-full bg-[#137333] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#0f5223] transition-colors disabled:opacity-50 shadow-sm"
+              className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
             >
               {isBulkUpdating ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Truck className="h-3.5 w-3.5" />}
-              Tandai Ready Antar
+              Ready Antar
             </button>
             <button
               onClick={() => handleBulkUpdateStatus('Belum Ready')}
               disabled={isBulkUpdating}
-              className="flex items-center gap-1.5 rounded-full bg-[#b06000] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#8f4e00] transition-colors disabled:opacity-50 shadow-sm"
+              className="flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
             >
               <Clock className="h-3.5 w-3.5" />
-              Tandai Belum Ready
+              Belum Ready
             </button>
             <button
               onClick={() => handleBulkUpdateStatus('Terima Outlet')}
               disabled={isBulkUpdating}
-              className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-3.5 py-1.5 text-xs font-semibold text-white dark:text-[#041e49] hover:bg-[#0842a0] transition-colors disabled:opacity-50 shadow-sm"
+              className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 hover:bg-blue-100 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
             >
               <Package className="h-3.5 w-3.5" />
-              Tandai Terima Outlet
+              Terima Outlet
             </button>
             <button
               onClick={() => {
@@ -902,10 +966,10 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                 const itemsParam = encodeURIComponent(JSON.stringify(selectedSystemItems.map(i => ({ item_name: i.item_name, quantity: i.quantity_needed }))));
                 window.location.href = `/monitoring/transfer?items=${itemsParam}`;
               }}
-              className="flex items-center gap-1.5 rounded-full bg-[#6750a4] dark:bg-[#d0bcff] px-3.5 py-1.5 text-xs font-semibold text-white dark:text-[#381e72] hover:bg-[#523b8a] transition-colors shadow-sm"
+              className="flex items-center gap-1.5 rounded-full border border-purple-500/30 bg-purple-50 dark:bg-purple-950/40 text-purple-800 dark:text-purple-300 hover:bg-purple-100 px-3 py-1.5 text-xs font-semibold transition-colors"
             >
               <ArrowRightLeft className="h-3.5 w-3.5" />
-              Ke Pemantauan Pendistribusian ({selectedIds.length})
+              Kirim ke Distribusi
             </button>
             <button
               onClick={() => {
@@ -914,23 +978,23 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                 setBastBranch(branchToUse);
                 setIsBastModalOpen(true);
               }}
-              className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-3.5 py-1.5 text-xs font-semibold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-sm"
+              className="flex items-center gap-1.5 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#282a2c] text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-slate-50 px-3 py-1.5 text-xs font-semibold transition-colors"
             >
-              <Printer className="h-3.5 w-3.5" />
-              Cetak BAST ({selectedIds.length} Item)
+              <Printer className="h-3.5 w-3.5 text-[#0b57d0]" />
+              Cetak BAST
             </button>
             <button
               onClick={handleBulkDeleteToTrash}
               disabled={isBulkDeleting || isBulkUpdating}
-              className="flex items-center gap-1.5 rounded-full bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 shadow-sm"
+              className="flex items-center gap-1.5 rounded-full bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
               title="Pindahkan semua item terpilih ke Tempat Sampah"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              <span>{isBulkDeleting ? 'Menghapus...' : `Hapus (${selectedIds.length}) ke Sampah`}</span>
+              <span>{isBulkDeleting ? 'Menghapus...' : 'Hapus ke Sampah'}</span>
             </button>
             <button
               onClick={() => setSelectedIds([])}
-              className="flex items-center gap-1 rounded-full border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#282a2c] px-3 py-1.5 text-xs text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e0e2ec] transition-colors"
+              className="flex items-center gap-1 rounded-full border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#282a2c] px-2.5 py-1.5 text-xs text-[#747775] dark:text-[#8e918f] hover:text-[#1f1f1f] transition-colors"
             >
               <X className="h-3.5 w-3.5" />
               Batal
