@@ -10,6 +10,9 @@ export const metadata = {
 };
 
 export default async function RoPage() {
-  const outlets = await getOutlets();
-  return <RoManagerView initialOrders={[]} outlets={outlets} />;
+  const [orders, outlets] = await Promise.all([
+    getRequestOrders(),
+    getOutlets(),
+  ]);
+  return <RoManagerView initialOrders={orders} outlets={outlets} />;
 }

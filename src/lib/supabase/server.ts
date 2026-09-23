@@ -101,6 +101,30 @@ declare global {
     suratJalan: SuratJalan[];
     dispositions: DispositionRequest[];
   } | undefined;
+  // eslint-disable-next-line no-var
+  var __ASSET_REQUESTS_CACHE__: {
+    items: AssetRequest[];
+    timestamp: number;
+  } | undefined;
+  // eslint-disable-next-line no-var
+  var __ASSET_REQUESTS_PENDING__: Promise<AssetRequest[]> | null | undefined;
+  // eslint-disable-next-line no-var
+  var __RO_CACHE__: {
+    items: RequestOrder[];
+    timestamp: number;
+  } | undefined;
+  // eslint-disable-next-line no-var
+  var __RO_PENDING__: Promise<RequestOrder[]> | null | undefined;
+  // eslint-disable-next-line no-var
+  var __OUTLETS_CACHE__: {
+    items: Outlet[];
+    timestamp: number;
+  } | undefined;
+  // eslint-disable-next-line no-var
+  var __TRANSFERS_CACHE__: {
+    items: AssetTransfer[];
+    timestamp: number;
+  } | undefined;
 }
 
 if (!global.__LOCAL_ASSET_CACHE__) {
@@ -385,6 +409,7 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
       cache.items = items;
       cache.lastSynced = new Date().toISOString();
       cache.lastContentHash = contentHash;
+      global.__ASSET_REQUESTS_CACHE__ = { items, timestamp: Date.now() };
 
       return {
         success: true,
@@ -411,6 +436,7 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
       cache.items = mergedItems;
       cache.lastSynced = new Date().toISOString();
       cache.lastContentHash = contentHash;
+      global.__ASSET_REQUESTS_CACHE__ = { items: mergedItems, timestamp: Date.now() };
 
       const log: SyncLog = {
         id: `log-${Date.now()}`,
@@ -446,8 +472,89 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
   }
 }
 
+const ASSET_REQUESTS_CACHE_TTL_MS = 3 * 60 * 1000; // 3 menit
+
 /**
- * Get all asset requests with optional filtering
+ * Low-level cached fetcher for raw asset requests from Supabase with TTL and Promise deduplication
+ */
+export async function getAllAssetRequestsRaw(force = false): Promise<AssetRequest[]> {
+  const now = Date.now();
+  if (
+    !force &&
+    global.__ASSET_REQUESTS_CACHE__ &&
+    now - global.__ASSET_REQUESTS_CACHE__.timestamp < ASSET_REQUESTS_CACHE_TTL_MS &&
+    global.__ASSET_REQUESTS_CACHE__.items.length > 0
+  ) {
+    return global.__ASSET_REQUESTS_CACHE__.items;
+  }
+
+  if (global.__ASSET_REQUESTS_PENDING__) {
+    return global.__ASSET_REQUESTS_PENDING__;
+  }
+
+  global.__ASSET_REQUESTS_PENDING__ = (async () => {
+    try {
+      if (isSupabaseHealthy !== false && isServerSupabaseConfigured()) {
+        const admin = getAdminClient();
+        if (admin) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+          try {
+            // Fetch batches paralel (3300 baris = 4 batch x 1000)
+            const [b0, b1, b2, b3] = await Promise.all([
+              admin.from('asset_requests').select('*').order('order_datetime', { ascending: false, nullsFirst: false }).range(0, 999).abortSignal(controller.signal),
+              admin.from('asset_requests').select('*').order('order_datetime', { ascending: false, nullsFirst: false }).range(1000, 1999).abortSignal(controller.signal),
+              admin.from('asset_requests').select('*').order('order_datetime', { ascending: false, nullsFirst: false }).range(2000, 2999).abortSignal(controller.signal),
+              admin.from('asset_requests').select('*').order('order_datetime', { ascending: false, nullsFirst: false }).range(3000, 3999).abortSignal(controller.signal),
+            ]);
+            clearTimeout(timeoutId);
+
+            const all: AssetRequest[] = [];
+            if (b0.data) all.push(...(b0.data as AssetRequest[]));
+            if (b1.data) all.push(...(b1.data as AssetRequest[]));
+            if (b2.data) all.push(...(b2.data as AssetRequest[]));
+            if (b3.data) all.push(...(b3.data as AssetRequest[]));
+
+            if (b3.data && b3.data.length === 1000) {
+              const b4 = await admin.from('asset_requests').select('*').order('order_datetime', { ascending: false, nullsFirst: false }).range(4000, 4999);
+              if (b4.data) all.push(...(b4.data as AssetRequest[]));
+            }
+
+            if (all.length > 0) {
+              global.__ASSET_REQUESTS_CACHE__ = { items: all, timestamp: Date.now() };
+              cache.items = all;
+              return all;
+            }
+          } catch {
+            clearTimeout(timeoutId);
+          }
+        }
+      }
+    } finally {
+      global.__ASSET_REQUESTS_PENDING__ = null;
+    }
+
+    // Fallback: If cache items is empty, trigger sheet sync in background (do not block request)
+    if (cache.items.length === 0) {
+      syncGoogleSheetsToSupabase().catch((err) =>
+        console.warn('[Background Sync Error]', err?.message)
+      );
+    }
+
+    return cache.items || [];
+  })();
+
+  return global.__ASSET_REQUESTS_PENDING__;
+}
+
+export function invalidateAssetRequestsCache() {
+  global.__ASSET_REQUESTS_CACHE__ = undefined;
+  global.__ASSET_REQUESTS_PENDING__ = null;
+}
+
+/**
+ * Get all asset requests with optional filtering (Ultra-fast in-memory filter)
  */
 export async function getAssetRequests(options?: {
   region?: RegionType;
@@ -458,112 +565,19 @@ export async function getAssetRequests(options?: {
   limit?: number;
   offset?: number;
 }): Promise<{ data: AssetRequest[]; total: number; lastSynced: string | null }> {
-  if (isSupabaseHealthy !== false && isServerSupabaseConfigured()) {
-    try {
-      const admin = getAdminClient();
-      if (admin) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-        const buildFilteredQuery = () => {
-          let q = admin.from('asset_requests').select('*', { count: 'exact' }).abortSignal(controller.signal);
-
-          if (options?.region && options.region !== 'ALL') {
-            q = q.eq('region', options.region);
-          }
-          if (options?.branch && options.branch !== 'ALL') {
-            q = q.eq('branch_name', options.branch);
-          }
-          if (options?.rabNumber) {
-            q = q.ilike('rab_number', `%${options.rabNumber}%`);
-          }
-          if (options?.isSystemTransfer) {
-            q = q.eq('is_system_transfer', true);
-          }
-          if (options?.search) {
-            q = q.or(
-              `item_name.ilike.%${options.search}%,branch_name.ilike.%${options.search}%,requester_name.ilike.%${options.search}%,rab_number.ilike.%${options.search}%`
-            );
-          }
-
-          return q.order('order_datetime', { ascending: false, nullsFirst: false });
-        };
-
-        const targetLimit = options?.limit;
-        const targetOffset = options?.offset || 0;
-
-        // If specific small slice is requested (e.g. limit <= 1000)
-        if (targetLimit && targetLimit <= 1000) {
-          const { data, count, error } = await buildFilteredQuery()
-            .range(targetOffset, targetOffset + targetLimit - 1);
-          clearTimeout(timeoutId);
-
-          if (!error && data) {
-            return {
-              data: data as AssetRequest[],
-              total: count || data.length,
-              lastSynced: cache.lastSynced,
-            };
-          }
-        } else {
-          // Fetch all items or up to targetLimit (handling Supabase PostgREST 1000-row cap per request)
-          const pageSize = 1000;
-          const { data: page0, count, error } = await buildFilteredQuery()
-            .range(targetOffset, targetOffset + pageSize - 1);
-
-          if (!error && page0) {
-            let allData = [...page0] as AssetRequest[];
-            const totalCount = count || allData.length;
-            const effectiveLimit = targetLimit ? Math.min(targetLimit, totalCount) : totalCount;
-
-            if (effectiveLimit > allData.length) {
-              const promises = [];
-              const totalPages = Math.ceil(effectiveLimit / pageSize);
-              for (let p = 1; p < totalPages; p++) {
-                const from = targetOffset + p * pageSize;
-                const to = Math.min(targetOffset + (p + 1) * pageSize - 1, targetOffset + effectiveLimit - 1);
-                promises.push(
-                  buildFilteredQuery()
-                    .range(from, to)
-                    .then((res) => (res.data || []) as AssetRequest[])
-                );
-              }
-              const remainingPages = await Promise.all(promises);
-              for (const batch of remainingPages) {
-                allData = allData.concat(batch);
-              }
-            }
-
-            clearTimeout(timeoutId);
-            return {
-              data: allData,
-              total: totalCount,
-              lastSynced: cache.lastSynced,
-            };
-          }
-        }
-        clearTimeout(timeoutId);
-      }
-    } catch {
-      // Gracefully fall through to local cache
-    }
-  }
-
-  // Fallback to local memory cache / live fetch if empty
-  if (cache.items.length === 0) {
-    await syncGoogleSheetsToSupabase();
-  }
-
-  let filtered = [...cache.items];
+  const allItems = await getAllAssetRequestsRaw();
+  let filtered = allItems;
 
   if (options?.region && options.region !== 'ALL') {
     filtered = filtered.filter((r) => r.region === options.region);
   }
   if (options?.branch && options.branch !== 'ALL') {
-    filtered = filtered.filter((r) => r.branch_name.toLowerCase() === options.branch!.toLowerCase());
+    const bLower = options.branch.toLowerCase();
+    filtered = filtered.filter((r) => r.branch_name && r.branch_name.toLowerCase() === bLower);
   }
   if (options?.rabNumber) {
-    filtered = filtered.filter((r) => r.rab_number.toLowerCase().includes(options.rabNumber!.toLowerCase()));
+    const rabLower = options.rabNumber.toLowerCase();
+    filtered = filtered.filter((r) => r.rab_number && r.rab_number.toLowerCase().includes(rabLower));
   }
   if (options?.isSystemTransfer) {
     filtered = filtered.filter((r) => r.is_system_transfer);
@@ -572,17 +586,17 @@ export async function getAssetRequests(options?: {
     const q = options.search.toLowerCase();
     filtered = filtered.filter(
       (r) =>
-        r.item_name.toLowerCase().includes(q) ||
-        r.branch_name.toLowerCase().includes(q) ||
-        r.requester_name.toLowerCase().includes(q) ||
-        r.rab_number.toLowerCase().includes(q) ||
-        r.vendor_name.toLowerCase().includes(q)
+        (r.item_name && r.item_name.toLowerCase().includes(q)) ||
+        (r.branch_name && r.branch_name.toLowerCase().includes(q)) ||
+        (r.requester_name && r.requester_name.toLowerCase().includes(q)) ||
+        (r.rab_number && r.rab_number.toLowerCase().includes(q)) ||
+        (r.vendor_name && r.vendor_name.toLowerCase().includes(q))
     );
   }
 
   const total = filtered.length;
   const offset = options?.offset || 0;
-  const limit = options?.limit || 100;
+  const limit = options?.limit ?? 100;
   const paginated = filtered.slice(offset, offset + limit);
 
   return {
@@ -955,31 +969,41 @@ function hashOutletBranch(str: string): string {
 }
 
 // In-Memory Cache untuk Outlets (TTL 5 Menit)
-let outletsMemoryCache: { data: Outlet[]; timestamp: number } | null = null;
 const OUTLETS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export function invalidateOutletsCache() {
-  outletsMemoryCache = null;
+  global.__OUTLETS_CACHE__ = undefined;
 }
 
 export async function getOutlets(): Promise<Outlet[]> {
   const now = Date.now();
-  if (outletsMemoryCache && now - outletsMemoryCache.timestamp < OUTLETS_CACHE_TTL_MS) {
-    return outletsMemoryCache.data;
+  if (
+    global.__OUTLETS_CACHE__ &&
+    now - global.__OUTLETS_CACHE__.timestamp < OUTLETS_CACHE_TTL_MS &&
+    global.__OUTLETS_CACHE__.items.length > 0
+  ) {
+    return global.__OUTLETS_CACHE__.items;
   }
 
   const admin = getAdminClient();
   let dbOutlets: Outlet[] = [];
   if (admin) {
     try {
-      const { data, error } = await admin.from('outlets').select('*').order('branch_name');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+      const { data, error } = await admin
+        .from('outlets')
+        .select('*')
+        .order('branch_name')
+        .abortSignal(controller.signal);
+      clearTimeout(timer);
       if (!error && data && data.length > 0) {
         dbOutlets = data as Outlet[];
       } else if (error) {
         console.error('[Supabase getOutlets error]:', error.message);
       }
-    } catch (err: any) {
-      console.error('[Supabase getOutlets exception]:', err.message);
+    } catch {
+      // Abort or error, proceed with local cache
     }
   }
 
@@ -1067,7 +1091,7 @@ export async function getOutlets(): Promise<Outlet[]> {
   }
 
   const result = Array.from(outletMap.values()).sort((a, b) => a.branch_name.localeCompare(b.branch_name));
-  outletsMemoryCache = { data: result, timestamp: Date.now() };
+  global.__OUTLETS_CACHE__ = { items: result, timestamp: Date.now() };
   return result;
 }
 
@@ -1229,15 +1253,40 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
 // ==============================================================================
 // 2. MONITORING: TRANSFER ASET & INPUT ASET
 // ==============================================================================
+const TRANSFERS_CACHE_TTL_MS = 3 * 60 * 1000;
+
+export function invalidateTransfersCache() {
+  global.__TRANSFERS_CACHE__ = undefined;
+}
+
 export async function getAssetTransfers(): Promise<AssetTransfer[]> {
+  const now = Date.now();
+  if (
+    global.__TRANSFERS_CACHE__ &&
+    now - global.__TRANSFERS_CACHE__.timestamp < TRANSFERS_CACHE_TTL_MS &&
+    global.__TRANSFERS_CACHE__.items.length > 0
+  ) {
+    return global.__TRANSFERS_CACHE__.items;
+  }
+
   const admin = getAdminClient();
   if (admin) {
     try {
-      const { data, error } = await admin.from('asset_transfers').select('*').order('transfer_date', { ascending: false });
-      if (!error && data && data.length > 0) return data as AssetTransfer[];
-      if (error) console.error('[Supabase getAssetTransfers error]:', error.message);
-    } catch (err: any) {
-      console.error('[Supabase getAssetTransfers exception]:', err.message);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+      const { data, error } = await admin
+        .from('asset_transfers')
+        .select('*')
+        .order('transfer_date', { ascending: false })
+        .abortSignal(controller.signal);
+      clearTimeout(timer);
+      if (!error && data && data.length > 0) {
+        const trfs = data as AssetTransfer[];
+        global.__TRANSFERS_CACHE__ = { items: trfs, timestamp: Date.now() };
+        return trfs;
+      }
+    } catch {
+      // Abort or error
     }
   }
   return cache.transfers || [];
@@ -1277,19 +1326,23 @@ export async function createAssetTransfer(payload: Partial<AssetTransfer>): Prom
       if (error) {
         console.error('[Supabase createAssetTransfer error]:', error.message);
       } else if (data) {
-        cache.transfers.unshift(data as AssetTransfer);
-        return data as AssetTransfer;
+        invalidateTransfersCache();
+        const saved = data as unknown as AssetTransfer;
+        cache.transfers.unshift(saved);
+        return saved;
       }
     } catch (err: any) {
       console.error('[Supabase createAssetTransfer exception]:', err.message);
     }
   }
 
+  invalidateTransfersCache();
   cache.transfers.unshift(transfer);
   return transfer;
 }
 
 export async function updateAssetTransfer(id: string, payload: Partial<AssetTransfer>): Promise<AssetTransfer | null> {
+  invalidateTransfersCache();
   const admin = getAdminClient();
   if (admin) {
     try {
@@ -1320,6 +1373,7 @@ export async function updateAssetTransfer(id: string, payload: Partial<AssetTran
 }
 
 export async function clearAllAssetTransfers(): Promise<{ success: boolean; count: number }> {
+  invalidateTransfersCache();
   const admin = getAdminClient();
   let count = 0;
   if (admin) {
@@ -1495,49 +1549,69 @@ export function deduplicateOrderItems(orders: RequestOrder[]): RequestOrder[] {
     if (!roKey || seenRoNumbers.has(roKey)) continue;
     seenRoNumbers.add(roKey);
 
-    sanitizedOrders.push(ro);
+    // Deduplikasi item ganda di dalam dokumen RO yang sama
+    const seenItemKeys = new Set<string>();
+    const uniqueItems = (ro.items || []).filter((it) => {
+      const itemKey = `${it.item_name.toLowerCase().trim()}::${it.quantity_ordered}`;
+      if (seenItemKeys.has(itemKey)) return false;
+      seenItemKeys.add(itemKey);
+      return true;
+    });
+
+    sanitizedOrders.push({
+      ...ro,
+      items: uniqueItems,
+    });
   }
 
   return sanitizedOrders;
 }
 
-// In-Memory Cache untuk Request Orders (TTL 60 Detik + Promise Deduplication)
-let roMemoryCache: { data: RequestOrder[]; timestamp: number } | null = null;
-let pendingRoFetch: Promise<RequestOrder[]> | null = null;
-const RO_CACHE_TTL_MS = 60 * 1000;
+// In-Memory Cache untuk Request Orders (TTL 3 Menit + Promise Deduplication)
+const RO_CACHE_TTL_MS = 3 * 60 * 1000;
 
 export function invalidateRoCache() {
-  roMemoryCache = null;
-  pendingRoFetch = null;
+  global.__RO_CACHE__ = undefined;
+  global.__RO_PENDING__ = null;
 }
 
 export async function getRequestOrders(): Promise<RequestOrder[]> {
   const now = Date.now();
-  if (roMemoryCache && now - roMemoryCache.timestamp < RO_CACHE_TTL_MS) {
-    return roMemoryCache.data;
+  if (
+    global.__RO_CACHE__ &&
+    now - global.__RO_CACHE__.timestamp < RO_CACHE_TTL_MS &&
+    global.__RO_CACHE__.items.length > 0
+  ) {
+    return global.__RO_CACHE__.items;
   }
 
-  if (pendingRoFetch) {
-    return pendingRoFetch;
+  if (global.__RO_PENDING__) {
+    return global.__RO_PENDING__;
   }
 
-  pendingRoFetch = (async () => {
+  global.__RO_PENDING__ = (async () => {
     const admin = getAdminClient();
     if (admin) {
       try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3500);
+
         // Query batch 0-999 dan 1000-1999 secara paralel untuk efisiensi transfer data
         const [res1, res2] = await Promise.all([
           admin
             .from('request_orders')
             .select('*')
             .order('request_date', { ascending: false })
-            .range(0, 999),
+            .range(0, 999)
+            .abortSignal(controller.signal),
           admin
             .from('request_orders')
             .select('*')
             .order('request_date', { ascending: false })
-            .range(1000, 1999),
+            .range(1000, 1999)
+            .abortSignal(controller.signal),
         ]);
+        clearTimeout(timer);
 
         const allOrders: RequestOrder[] = [];
         if (res1.data) allOrders.push(...(res1.data as RequestOrder[]));
@@ -1565,11 +1639,11 @@ export async function getRequestOrders(): Promise<RequestOrder[]> {
 
         if (allOrders.length > 0) {
           const deduplicated = deduplicateOrderItems(allOrders);
-          roMemoryCache = { data: deduplicated, timestamp: Date.now() };
+          global.__RO_CACHE__ = { items: deduplicated, timestamp: Date.now() };
           return deduplicated;
         }
-      } catch (err: any) {
-        console.error('[Supabase getRequestOrders exception]:', err.message);
+      } catch {
+        // Abort or error, proceed to fallback
       }
     }
 
@@ -1581,13 +1655,13 @@ export async function getRequestOrders(): Promise<RequestOrder[]> {
       }
     }
     const result = deduplicateOrderItems(cache.requestOrders || []);
-    roMemoryCache = { data: result, timestamp: Date.now() };
+    global.__RO_CACHE__ = { items: result, timestamp: Date.now() };
     return result;
   })().finally(() => {
-    pendingRoFetch = null;
+    global.__RO_PENDING__ = null;
   });
 
-  return pendingRoFetch;
+  return global.__RO_PENDING__;
 }
 
 export async function createRequestOrder(payload: Partial<RequestOrder>): Promise<RequestOrder> {
@@ -1667,11 +1741,11 @@ export async function updateRequestOrder(id: string, updates: Partial<RequestOrd
   }
 
   // Update in-memory cache secara langsung agar response super cepat tanpa lag
-  if (roMemoryCache && roMemoryCache.data) {
-    const memIdx = roMemoryCache.data.findIndex((r) => r.id === id || r.ro_number === id);
+  if (global.__RO_CACHE__ && global.__RO_CACHE__.items) {
+    const memIdx = global.__RO_CACHE__.items.findIndex((r: RequestOrder) => r.id === id || r.ro_number === id);
     if (memIdx !== -1) {
-      roMemoryCache.data[memIdx] = {
-        ...roMemoryCache.data[memIdx],
+      global.__RO_CACHE__.items[memIdx] = {
+        ...global.__RO_CACHE__.items[memIdx],
         ...updates,
       };
     }
@@ -1695,7 +1769,6 @@ const RO_SOURCES: Array<{ name: string; region: 'KALBAR' | 'JABODETABEK'; url: s
     region: 'KALBAR',
     url:
       process.env.GOOGLE_SHEET_RO_KALBAR_URL ||
-      process.env.GOOGLE_SHEET_RO_URL ||
       'https://docs.google.com/spreadsheets/d/1xma83YRtP0WbjDnUFjmhgie3mWDgejV95HhlZX0sEvk/export?format=csv&gid=1158236044',
   },
   {
@@ -1888,10 +1961,11 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
           const warehouse = parts[cols.warehouseIdx]?.trim() || '-';
           const statusStr = parts[cols.statusIdx]?.trim() || 'Diproses';
 
-          // Catat statistik duplikasi tetapi tetap masukkan semua baris spreadsheet ke item RO
+          // Deduplikasi baris identik spreadsheet
           const fingerprint = `${source.region}::${rawRoId.toLowerCase().trim()}::${itemName.toLowerCase().trim()}::${qty}::${outletName.toLowerCase().trim()}`;
           if (seenFingerprints.has(fingerprint)) {
             duplicateRowsFiltered++;
+            continue;
           }
           seenFingerprints.add(fingerprint);
 
@@ -1967,7 +2041,7 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
 
     // Merge into in-memory cache
     cache.requestOrders = uniqueOrders;
-    roMemoryCache = { data: deduplicateOrderItems(uniqueOrders), timestamp: Date.now() };
+    global.__RO_CACHE__ = { items: deduplicateOrderItems(uniqueOrders), timestamp: Date.now() };
 
     return {
       success: true,
@@ -2003,7 +2077,14 @@ export function cleanDuplicateRequestOrders(): { cleanedCount: number; totalUniq
       cleanedCount++;
     } else {
       seenNumbers.add(key);
-      uniqueOrders.push(ro);
+      const seenItemKeys = new Set<string>();
+      const cleanItems = (ro.items || []).filter((it) => {
+        const itemKey = `${it.item_name.toLowerCase().trim()}::${it.quantity_ordered}`;
+        if (seenItemKeys.has(itemKey)) return false;
+        seenItemKeys.add(itemKey);
+        return true;
+      });
+      uniqueOrders.push({ ...ro, items: cleanItems });
     }
   }
 

@@ -241,7 +241,8 @@ export type ROStatus =
   | 'COMPLETED' 
   | 'PENDING' 
   | 'APPROVED' 
-  | 'REJECTED';
+  | 'REJECTED'
+  | 'CANCELLED';
 
 export interface ROItem {
   id: string;
@@ -250,7 +251,7 @@ export interface ROItem {
   specification?: string;
   quantity_ordered: number;
   quantity_fulfilled: number;
-  stock_source: 'GUDANG_SCGA' | 'PR_VENDOR';
+  stock_source: 'GUDANG_SCGA' | 'PR_VENDOR' | 'CANCELLED';
   
   // Spreadsheet integration fields
   sku?: string;
@@ -305,7 +306,8 @@ export interface RequestOrder {
     | 'ASET_SAMPAI'
     | 'CHECKLIST'
     | 'UPDATE_SLA'
-    | 'SELESAI';
+    | 'SELESAI'
+    | 'DIBATALKAN';
   pr_vendor_name?: string | null;
   pr_po_number?: string | null;
   pr_estimated_arrival?: string | null;
@@ -315,6 +317,8 @@ export interface RequestOrder {
   checklist_notes?: string | null;
   sla_lead_time_days?: number | null;
   sla_status?: 'ON_TIME' | 'DELAYED' | 'PENDING';
+  rejection_reason?: string | null;
+  rejected_at?: string | null;
   created_at: string;
 }
 

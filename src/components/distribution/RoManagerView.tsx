@@ -35,7 +35,8 @@ import {
   ImageIcon,
   Eye,
   Upload,
-  FileEdit
+  FileEdit,
+  Ban
 } from 'lucide-react';
 import { RequestOrder, Outlet, ROItem, ROStatus } from '@/lib/supabase/types';
 import { useRouter } from 'next/navigation';
@@ -44,6 +45,7 @@ import { getItemSpecification, setItemSpecificationOverride } from '@/lib/assetS
 import UploadImageModal from '@/components/items/UploadImageModal';
 import EditSpecModal from '@/components/items/EditSpecModal';
 import ColumnVisibilityPicker, { ColumnItem } from '@/components/ui/ColumnVisibilityPicker';
+import { Toast, ToastMessage } from '@/components/ui/Toast';
 
 interface RoManagerViewProps {
   initialOrders?: RequestOrder[];
@@ -61,7 +63,8 @@ type StageKey =
   | 'ASET_SAMPAI'
   | 'CHECKLIST'
   | 'UPDATE_SLA'
-  | 'SELESAI';
+  | 'SELESAI'
+  | 'DIBATALKAN';
 
 interface StageDefinition {
   key: StageKey;
@@ -83,6 +86,7 @@ const WORKFLOW_STAGES: StageDefinition[] = [
   { key: 'CHECKLIST', stepNum: 8, label: 'Checklist Diterima', sub: 'Cek Fisik Toko', color: 'border-cyan-400 bg-cyan-50 text-cyan-950 dark:border-cyan-600 dark:bg-cyan-950/50 dark:text-cyan-200', shape: 'rect' },
   { key: 'UPDATE_SLA', stepNum: 9, label: 'Update SLA', sub: 'Lead Time', color: 'border-purple-400 bg-purple-50 text-purple-950 dark:border-purple-600 dark:bg-purple-950/50 dark:text-purple-200', shape: 'rect' },
   { key: 'SELESAI', stepNum: 10, label: 'Selesai', sub: 'Operasional Toko', color: 'border-emerald-500 bg-emerald-100 text-emerald-950 dark:border-emerald-500 dark:bg-emerald-900/50 dark:text-emerald-100', shape: 'pill' },
+  { key: 'DIBATALKAN', stepNum: 0, label: 'Dibatalkan', sub: 'RO Ditolak', color: 'border-rose-400 bg-rose-50 text-rose-950 dark:border-rose-600 dark:bg-rose-950/50 dark:text-rose-200', shape: 'pill' },
 ];
 
 const RO_COLUMNS: ColumnItem[] = [
@@ -96,6 +100,16 @@ const RO_COLUMNS: ColumnItem[] = [
   { id: 'actions', label: 'Aksi Alur Kerja', alwaysVisible: true },
 ];
 
+export function getUniqueRoItems(items: ROItem[]): ROItem[] {
+  const seen = new Set<string>();
+  return (items || []).filter((it) => {
+    const key = it.item_name.toLowerCase().trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerViewProps) {
   const router = useRouter();
   const [orders, setOrders] = useState<RequestOrder[]>(initialOrders);
@@ -106,6 +120,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [showPipelineStepper, setShowPipelineStepper] = useState(false);
   const [smartFilter, setSmartFilter] = useState<'ALL' | 'CLEAN' | 'DUPLICATES'>('ALL');
   const [selectedRegion, setSelectedRegion] = useState<'ALL' | 'JABODETABEK' | 'KALBAR'>('ALL');
+  const [selectedSource, setSelectedSource] = useState<'ALL' | 'KALBAR_SHEET' | 'JABO_SHEET' | 'MANUAL'>('ALL');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
 
@@ -148,6 +163,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
   const [uploadModalTarget, setUploadModalTarget] = useState<{ itemName: string; currentImageUrl?: string | null } | null>(null);
   const [editingSpecItem, setEditingSpecItem] = useState<{ itemName: string; specification: string } | null>(null);
+  const [rejectReasonModalOpen, setRejectReasonModalOpen] = useState(false);
+  const [rejectReasonText, setRejectReasonText] = useState('');
+  const [toast, setToast] = useState<ToastMessage | null>(null);
 
   const handleUploadSuccess = (updatedItemName: string, newImageUrl: string) => {
     setItemImageOverride(updatedItemName, newImageUrl);
@@ -215,18 +233,21 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
   // Helper to determine active stage of an RO
   const getRoStage = (ro: RequestOrder): StageKey => {
+    if (ro.status === 'REJECTED' || (ro.status as string) === 'CANCELLED' || ro.current_stage === 'DIBATALKAN') return 'DIBATALKAN';
+    const activeItems = (ro.items || []).filter(it => it.stock_source !== 'CANCELLED');
+    if (ro.items && ro.items.length > 0 && activeItems.length === 0) return 'DIBATALKAN';
     if (ro.current_stage) return ro.current_stage;
     if (ro.status === 'COMPLETED') return 'SELESAI';
     if (ro.status === 'IN_DELIVERY') return 'SURAT_JALAN';
     if (ro.status === 'CHECKLIST_DONE') return 'UPDATE_SLA';
-    if (ro.status === 'READY_STOCK' || ro.items.every(it => it.stock_source === 'GUDANG_SCGA')) return 'READY_STOCK';
-    if (ro.items.some(it => it.stock_source === 'PR_VENDOR')) return 'KELOLA_PR';
+    if (ro.status === 'READY_STOCK' || (activeItems.length > 0 && activeItems.every(it => it.stock_source === 'GUDANG_SCGA'))) return 'READY_STOCK';
+    if (activeItems.some(it => it.stock_source === 'PR_VENDOR')) return 'KELOLA_PR';
     if (ro.status === 'APPROVED') return 'PILIH_PROSES';
     return 'REQUEST_ORDER';
   };
 
   // Single-pass high performance analysis for deduplication, stages, and regions
-  const { deduplicationMap, duplicateOrdersCount, stageCounts, regionStats } = useMemo(() => {
+  const { deduplicationMap, duplicateOrdersCount, stageCounts, regionStats, sourceStats } = useMemo(() => {
     const map = new Map<string, RequestOrder[]>();
     const counts: Record<StageKey, number> = {
       ALL: orders.length,
@@ -240,9 +261,11 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       CHECKLIST: 0,
       UPDATE_SLA: 0,
       SELESAI: 0,
+      DIBATALKAN: 0,
     };
     let jaboOrders = 0, jaboItems = 0;
     let kalbarOrders = 0, kalbarItems = 0;
+    let kalbarSheetCount = 0, jaboSheetCount = 0, manualCount = 0;
 
     for (let i = 0; i < orders.length; i++) {
       const ro = orders[i];
@@ -265,6 +288,13 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         kalbarOrders++;
         kalbarItems += itLen;
       }
+
+      if (ro.source_type === 'GOOGLE_SHEET') {
+        if (ro.region === 'KALBAR') kalbarSheetCount++;
+        else jaboSheetCount++;
+      } else {
+        manualCount++;
+      }
     }
 
     let dupeCount = 0;
@@ -281,6 +311,12 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         JABODETABEK: { orders: jaboOrders, items: jaboItems },
         KALBAR: { orders: kalbarOrders, items: kalbarItems },
       },
+      sourceStats: {
+        ALL: orders.length,
+        KALBAR_SHEET: kalbarSheetCount,
+        JABO_SHEET: jaboSheetCount,
+        MANUAL: manualCount,
+      },
     };
   }, [orders]);
 
@@ -289,6 +325,14 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     const searchLower = search.toLowerCase().trim();
     return orders.filter((o) => {
       if (selectedRegion !== 'ALL' && o.region !== selectedRegion) return false;
+
+      if (selectedSource === 'KALBAR_SHEET') {
+        if (o.source_type !== 'GOOGLE_SHEET' || o.region !== 'KALBAR') return false;
+      } else if (selectedSource === 'JABO_SHEET') {
+        if (o.source_type !== 'GOOGLE_SHEET' || o.region !== 'JABODETABEK') return false;
+      } else if (selectedSource === 'MANUAL') {
+        if (o.source_type === 'GOOGLE_SHEET') return false;
+      }
 
       const roStage = getRoStage(o);
       if (selectedStage !== 'ALL' && roStage !== selectedStage) return false;
@@ -310,12 +354,12 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
       return true;
     });
-  }, [orders, search, selectedStage, smartFilter, selectedRegion, deduplicationMap]);
+  }, [orders, search, selectedStage, smartFilter, selectedRegion, selectedSource, deduplicationMap]);
 
   // Reset page to 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, selectedStage, smartFilter, selectedRegion]);
+  }, [search, selectedStage, smartFilter, selectedRegion, selectedSource]);
 
   const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(filteredOrders.length / pageSize));
   const paginatedOrders = useMemo(() => {
@@ -362,20 +406,31 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         if (getData.data) setOrders(getData.data);
       }
     } catch (e: any) {
-      alert(e.message);
+      setToast({ type: 'error', message: e?.message || 'Gagal sinkronisasi data' });
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // Handler: Save Process Decision (Stok vs PR)
+  // Handler: Save Process Decision (Stok vs PR vs Batal)
   const handleSaveProcessDecision = async () => {
     if (!selectedRoForProcess) return;
     try {
       setIsSubmitting(true);
-      const allReady = selectedRoForProcess.items.every(it => it.stock_source === 'GUDANG_SCGA');
-      const nextStage: StageKey = allReady ? 'READY_STOCK' : 'KELOLA_PR';
-      const nextStatus: ROStatus = allReady ? 'READY_STOCK' : 'NEED_PR';
+      const activeItems = selectedRoForProcess.items.filter(it => it.stock_source !== 'CANCELLED');
+      const allCancelled = selectedRoForProcess.items.length > 0 && activeItems.length === 0;
+
+      let nextStage: StageKey;
+      let nextStatus: ROStatus;
+
+      if (allCancelled) {
+        nextStage = 'DIBATALKAN';
+        nextStatus = 'REJECTED';
+      } else {
+        const allReady = activeItems.every(it => it.stock_source === 'GUDANG_SCGA');
+        nextStage = allReady ? 'READY_STOCK' : 'KELOLA_PR';
+        nextStatus = allReady ? 'READY_STOCK' : 'NEED_PR';
+      }
 
       await fetch('/api/distribution/ro', {
         method: 'PATCH',
@@ -400,6 +455,95 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       setSelectedRoForProcess(null);
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Handler: Confirm Reject Whole RO from Process Modal
+  const handleConfirmRejectRo = async () => {
+    if (!selectedRoForProcess) return;
+    try {
+      setIsSubmitting(true);
+      const reason = rejectReasonText.trim() || 'Dibatalkan oleh logistik pada tahap Pilih Proses';
+      const rejectedItems = selectedRoForProcess.items.map(it => ({
+        ...it,
+        stock_source: 'CANCELLED' as const,
+      }));
+
+      await fetch('/api/distribution/ro', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: selectedRoForProcess.id,
+          updates: {
+            items: rejectedItems,
+            current_stage: 'DIBATALKAN',
+            status: 'REJECTED',
+            rejection_reason: reason,
+            rejected_at: new Date().toISOString(),
+          },
+        }),
+      });
+
+      setOrders(prev => prev.map(o => o.id === selectedRoForProcess.id ? {
+        ...o,
+        items: rejectedItems,
+        current_stage: 'DIBATALKAN',
+        status: 'REJECTED',
+        rejection_reason: reason,
+        rejected_at: new Date().toISOString(),
+      } : o));
+
+      setRejectReasonModalOpen(false);
+      setRejectReasonText('');
+      setToast({ type: 'info', message: `Dokumen ${selectedRoForProcess.ro_number} berhasil dibatalkan.` });
+      setSelectedRoForProcess(null);
+    } catch (e) {
+      console.error(e);
+      setToast({ type: 'error', message: 'Gagal membatalkan RO' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Handler: Restore Canceled RO back to Pilih Proses
+  const handleReactivateRo = async (ro: RequestOrder) => {
+    if (!confirm(`Pulihkan dan buka kembali dokumen RO ${ro.ro_number} ke tahap Pilih Proses?`)) return;
+    try {
+      setIsSubmitting(true);
+      const restoredItems = ro.items.map(it => ({
+        ...it,
+        stock_source: (it.stock_source === 'CANCELLED' ? 'GUDANG_SCGA' : it.stock_source) as any,
+      }));
+
+      await fetch('/api/distribution/ro', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: ro.id,
+          updates: {
+            items: restoredItems,
+            current_stage: 'PILIH_PROSES',
+            status: 'PENDING',
+            rejection_reason: null,
+            rejected_at: null,
+          },
+        }),
+      });
+
+      setOrders(prev => prev.map(o => o.id === ro.id ? {
+        ...o,
+        items: restoredItems,
+        current_stage: 'PILIH_PROSES',
+        status: 'PENDING',
+        rejection_reason: null,
+        rejected_at: null,
+      } : o));
+      setToast({ type: 'success', message: `Dokumen ${ro.ro_number} berhasil dipulihkan!` });
+    } catch (e) {
+      console.error(e);
+      setToast({ type: 'error', message: 'Gagal memulihkan RO' });
     } finally {
       setIsSubmitting(false);
     }
@@ -480,14 +624,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         sender_name: 'Staff SCGA Warehouse',
         receiver_name: `PIC ${selectedRoForSj.branch_name}`,
         status: 'SHIPPED',
-        items: selectedRoForSj.items.map((it) => ({
-          id: `sji-${Date.now()}-${Math.random().toString().slice(-4)}`,
-          item_name: it.item_name,
-          specification: it.specification,
-          quantity: it.quantity_ordered,
-          unit: it.unit || 'Unit',
-          notes: it.stock_source === 'GUDANG_SCGA' ? 'Dari Stok Gudang SCGA' : 'Pengadaan PR Vendor (Aset Tiba)',
-        })),
+        items: selectedRoForSj.items
+          .filter(it => it.stock_source !== 'CANCELLED')
+          .map((it) => ({
+            id: `sji-${Date.now()}-${Math.random().toString().slice(-4)}`,
+            item_name: it.item_name,
+            specification: it.specification,
+            quantity: it.quantity_ordered,
+            unit: it.unit || 'Unit',
+            notes: it.stock_source === 'GUDANG_SCGA' ? 'Dari Stok Gudang SCGA' : 'Pengadaan PR Vendor (Aset Tiba)',
+          })),
         notes: `Diterbitkan otomatis dari ${selectedRoForSj.ro_number}`,
       };
 
@@ -544,7 +690,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             },
           }),
         });
-        alert('Status diperbarui: Armada masih dalam perjalanan menuju cabang (Loopback Kirim).');
+        setToast({ type: 'info', message: 'Status diperbarui: Armada masih dalam perjalanan menuju cabang.' });
         setSelectedRoForArrival(null);
       } else {
         // Ya -> Lanjut Checklist
@@ -643,7 +789,10 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         sla_status: isSlaOnTime ? 'ON_TIME' : 'DELAYED',
       } : o));
 
-      alert(`Alur Selesai! Aset telah diterima di ${selectedRoForChecklist.branch_name}. Lead time SLA: ${leadTimeDays} hari (${isSlaOnTime ? 'SLA ON-TIME' : 'SLA DELAYED'}).`);
+      setToast({
+        type: 'success',
+        message: `Alur Selesai! Aset telah diterima di ${selectedRoForChecklist.branch_name}. Lead time SLA: ${leadTimeDays} hari (${isSlaOnTime ? 'ON-TIME' : 'DELAYED'}).`,
+      });
       setSelectedRoForChecklist(null);
     } catch (e) {
       console.error(e);
@@ -672,7 +821,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const handleSubmitRo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (itemsList.length === 0) {
-      alert('Tambahkan minimal 1 item untuk RO ini.');
+      setToast({ type: 'error', message: 'Tambahkan minimal 1 item untuk RO ini.' });
       return;
     }
 
@@ -864,77 +1013,121 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
           </div>
         </div>
 
-        {/* REGION & SMART DEDUPLICATION CONTROLS BAR */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 pt-2.5 border-t border-[#e0e2ec] dark:border-[#35383a] text-xs">
-          {/* Region Tabs */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
-              <MapPin className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-              Wilayah / Area:
-            </span>
-            <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c]">
-              {(['ALL', 'JABODETABEK', 'KALBAR'] as const).map((reg) => {
-                const stat = regionStats[reg] || { orders: 0, items: 0 };
-                return (
-                  <button
-                    key={reg}
-                    onClick={() => setSelectedRegion(reg)}
-                    className={`interactive-tap px-3 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                      selectedRegion === reg
-                        ? 'bg-[#0b57d0] text-white shadow-xs'
-                        : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
-                    }`}
-                  >
-                    {reg === 'ALL' ? 'Semua Wilayah' : reg === 'JABODETABEK' ? 'Area Jabo' : 'Area Kalbar'}{' '}
-                    ({stat.orders} RO • {stat.items} Baris Item)
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Deduplication Controls */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
-              <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-              Filter Duplikasi:
-            </span>
-            <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c]">
-              <button
-                onClick={() => setSmartFilter('ALL')}
-                className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                  smartFilter === 'ALL' ? 'bg-white dark:bg-[#1a1c1e] text-[#0b57d0] font-bold shadow-xs' : 'text-[#747775]'
-                }`}
-              >
-                Semua ({orders.length})
-              </button>
-              <button
-                onClick={() => setSmartFilter('CLEAN')}
-                className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                  smartFilter === 'CLEAN' ? 'bg-white dark:bg-[#1a1c1e] text-emerald-600 font-bold shadow-xs' : 'text-[#747775]'
-                }`}
-              >
-                Data Bersih Unik ({orders.length - (duplicateOrdersCount > 0 ? duplicateOrdersCount - deduplicationMap.size : 0)})
-              </button>
-              <button
-                onClick={() => setSmartFilter('DUPLICATES')}
-                className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                  smartFilter === 'DUPLICATES' ? 'bg-white dark:bg-[#1a1c1e] text-amber-600 font-bold shadow-xs' : 'text-[#747775]'
-                }`}
-              >
-                Data Terduplikasi ({duplicateOrdersCount})
-              </button>
+        {/* REGION, SOURCE & SMART DEDUPLICATION CONTROLS BAR */}
+        <div className="flex flex-col gap-2.5 pt-2.5 border-t border-[#e0e2ec] dark:border-[#35383a] text-xs">
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 flex-wrap">
+            {/* Region Tabs */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
+                <MapPin className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                Wilayah:
+              </span>
+              <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c]">
+                {(['ALL', 'JABODETABEK', 'KALBAR'] as const).map((reg) => {
+                  const stat = regionStats[reg] || { orders: 0, items: 0 };
+                  return (
+                    <button
+                      key={reg}
+                      onClick={() => setSelectedRegion(reg)}
+                      className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                        selectedRegion === reg
+                          ? 'bg-[#0b57d0] text-white shadow-xs'
+                          : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
+                      }`}
+                    >
+                      {reg === 'ALL' ? 'Semua Wilayah' : reg === 'JABODETABEK' ? 'Area Jabo' : 'Area Kalbar'}{' '}
+                      ({stat.orders})
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            {duplicateOrdersCount > 0 && (
-              <button
-                onClick={handleCleanDuplicates}
-                className="flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:underline ml-1"
-              >
-                <Trash2 className="h-3 w-3" />
-                <span>Bersihkan Duplikat</span>
-              </button>
-            )}
+            {/* Source Filter Tabs */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
+                <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+                Sumber:
+              </span>
+              <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c] flex-wrap">
+                <button
+                  onClick={() => setSelectedSource('ALL')}
+                  className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    selectedSource === 'ALL' ? 'bg-white dark:bg-[#1a1c1e] text-[#0b57d0] font-bold shadow-xs' : 'text-[#747775]'
+                  }`}
+                >
+                  Semua ({sourceStats.ALL})
+                </button>
+                <button
+                  onClick={() => setSelectedSource('KALBAR_SHEET')}
+                  className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    selectedSource === 'KALBAR_SHEET' ? 'bg-white dark:bg-[#1a1c1e] text-emerald-600 font-bold shadow-xs' : 'text-[#747775]'
+                  }`}
+                >
+                  Sheet Kalbar ({sourceStats.KALBAR_SHEET})
+                </button>
+                <button
+                  onClick={() => setSelectedSource('JABO_SHEET')}
+                  className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    selectedSource === 'JABO_SHEET' ? 'bg-white dark:bg-[#1a1c1e] text-blue-600 font-bold shadow-xs' : 'text-[#747775]'
+                  }`}
+                >
+                  Sheet Jabo ({sourceStats.JABO_SHEET})
+                </button>
+                <button
+                  onClick={() => setSelectedSource('MANUAL')}
+                  className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    selectedSource === 'MANUAL' ? 'bg-white dark:bg-[#1a1c1e] text-purple-600 font-bold shadow-xs' : 'text-[#747775]'
+                  }`}
+                >
+                  Manual ({sourceStats.MANUAL})
+                </button>
+              </div>
+            </div>
+
+            {/* Deduplication Controls */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                Duplikasi:
+              </span>
+              <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c]">
+                <button
+                  onClick={() => setSmartFilter('ALL')}
+                  className={`interactive-tap px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    smartFilter === 'ALL' ? 'bg-white dark:bg-[#1a1c1e] text-[#0b57d0] font-bold shadow-xs' : 'text-[#747775]'
+                  }`}
+                >
+                  Semua
+                </button>
+                <button
+                  onClick={() => setSmartFilter('CLEAN')}
+                  className={`interactive-tap px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    smartFilter === 'CLEAN' ? 'bg-white dark:bg-[#1a1c1e] text-emerald-600 font-bold shadow-xs' : 'text-[#747775]'
+                  }`}
+                >
+                  Bersih ({orders.length - (duplicateOrdersCount > 0 ? duplicateOrdersCount - deduplicationMap.size : 0)})
+                </button>
+                <button
+                  onClick={() => setSmartFilter('DUPLICATES')}
+                  className={`interactive-tap px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    smartFilter === 'DUPLICATES' ? 'bg-white dark:bg-[#1a1c1e] text-amber-600 font-bold shadow-xs' : 'text-[#747775]'
+                  }`}
+                >
+                  Duplikat ({duplicateOrdersCount})
+                </button>
+              </div>
+
+              {duplicateOrdersCount > 0 && (
+                <button
+                  onClick={handleCleanDuplicates}
+                  className="flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:underline ml-1"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  <span>Bersihkan</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -991,6 +1184,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               ) : (
                 paginatedOrders.map((o) => {
                   const stage = getRoStage(o);
+                  const isCancelled = stage === 'DIBATALKAN';
                   const isCompleted = stage === 'SELESAI';
                   const isInDelivery = stage === 'SURAT_JALAN';
                   const isReadyStock = stage === 'READY_STOCK';
@@ -1000,6 +1194,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
                   const key = (o.raw_ro_id || o.ro_number).toLowerCase().trim();
                   const isDupe = (deduplicationMap.get(key)?.length || 0) > 1;
+                  const uniqueItems = getUniqueRoItems(o.items);
 
                   return (
                     <tr key={o.id} className="hover:bg-[#f0f4f9]/50 dark:hover:bg-[#282a2c]/50 transition-colors">
@@ -1046,10 +1241,12 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       {visibleColumns.items !== false && (
                         <td className="py-3.5 px-4 max-w-xs">
                           <div className="space-y-1">
-                            {o.items.slice(0, 3).map((it, idx) => (
+                            {uniqueItems.slice(0, 3).map((it, idx) => (
                               <div key={idx} className="flex items-center gap-1.5 text-[11px]">
                                 <Package className="h-3 w-3 text-[#0b57d0] dark:text-[#a8c7fa] shrink-0" />
-                                <span className="font-medium truncate">{it.item_name}</span>
+                                <span className={`font-medium truncate ${it.stock_source === 'CANCELLED' ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
+                                  {it.item_name}
+                                </span>
                                 <span className="text-[#747775] shrink-0">
                                   (x{it.quantity_ordered} {it.unit || 'unit'})
                                 </span>
@@ -1058,11 +1255,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                                     PR
                                   </span>
                                 )}
+                                {it.stock_source === 'CANCELLED' && (
+                                  <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                                    Ditolak
+                                  </span>
+                                )}
                               </div>
                             ))}
-                            {o.items.length > 3 && (
+                            {uniqueItems.length > 3 && (
                               <span className="text-[10px] font-semibold text-[#0b57d0]">
-                                +{o.items.length - 3} item lainnya
+                                +{uniqueItems.length - 3} item lainnya
                               </span>
                             )}
                           </div>
@@ -1073,7 +1275,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       {visibleColumns.images !== false && (
                         <td className="py-3.5 px-4">
                           <div className="flex items-center gap-1.5 flex-wrap max-w-[130px]">
-                            {o.items.slice(0, 3).map((it, idx) => {
+                            {uniqueItems.slice(0, 3).map((it, idx) => {
                               const imgUrl = getItemImageUrl(it.item_name);
                               return (
                                 <div key={idx} className="relative group">
@@ -1106,9 +1308,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                                 </div>
                               );
                             })}
-                            {o.items.length > 3 && (
+                            {uniqueItems.length > 3 && (
                               <span className="text-[10px] text-[#747775] font-semibold">
-                                +{o.items.length - 3}
+                                +{uniqueItems.length - 3}
                               </span>
                             )}
                           </div>
@@ -1119,7 +1321,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       {visibleColumns.stage !== false && (
                         <td className="py-3.5 px-4 whitespace-nowrap">
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            isCompleted
+                            isCancelled
+                              ? 'bg-rose-100 text-rose-950 border border-rose-300 dark:bg-rose-950/60 dark:text-rose-200 dark:border-rose-800'
+                              : isCompleted
                               ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
                               : isInDelivery
                               ? 'bg-teal-100 text-teal-900 border border-teal-300'
@@ -1131,13 +1335,19 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                               ? 'bg-cyan-100 text-cyan-950 border border-cyan-300'
                               : 'bg-blue-50 text-blue-900 border border-blue-200'
                           }`}>
-                            {isCompleted ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> :
+                            {isCancelled ? <Ban className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" /> :
+                             isCompleted ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> :
                              isInDelivery ? <Truck className="h-3.5 w-3.5 text-teal-600" /> :
                              isReadyStock ? <Boxes className="h-3.5 w-3.5 text-emerald-600" /> :
                              isNeedPr ? <Clock className="h-3.5 w-3.5 text-orange-600" /> :
                              <GitMerge className="h-3.5 w-3.5 text-blue-600" />}
                             <span>{WORKFLOW_STAGES.find(s => s.key === stage)?.label || stage}</span>
                           </span>
+                          {isCancelled && o.rejection_reason && (
+                            <div className="text-[10px] text-rose-600 dark:text-rose-400 mt-0.5 max-w-[200px] truncate" title={o.rejection_reason}>
+                              Alasan: {o.rejection_reason}
+                            </div>
+                          )}
                         </td>
                       )}
 
@@ -1145,10 +1355,21 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       {visibleColumns.actions !== false && (
                         <td className="py-3.5 px-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
+                            {/* 0. Tahap Dibatalkan -> Pulihkan / Buka Kembali */}
+                            {isCancelled && (
+                              <button
+                                onClick={() => handleReactivateRo(o)}
+                                className="rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 px-3 py-1 text-[11px] font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 shadow-xs flex items-center gap-1"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                <span>Pulihkan RO</span>
+                              </button>
+                            )}
+
                             {/* 1. Tahap Pilih Proses */}
                             {isPilihProses && (
                               <button
-                                onClick={() => setSelectedRoForProcess(o)}
+                                onClick={() => setSelectedRoForProcess({ ...o, items: uniqueItems })}
                                 className="rounded-full bg-[#0b57d0] text-white px-3 py-1 text-[11px] font-semibold hover:bg-[#0842a0] shadow-xs flex items-center gap-1"
                               >
                                 <GitMerge className="h-3 w-3" />
@@ -1342,6 +1563,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                     >
                       Semua PR
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = selectedRoForProcess.items.map(it => ({ ...it, stock_source: 'CANCELLED' as const }));
+                        setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
+                      }}
+                      className="text-[10px] px-2 py-0.5 rounded font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 hover:bg-rose-200"
+                    >
+                      Semua Tolak
+                    </button>
                   </div>
                 </div>
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
@@ -1366,7 +1597,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                             </div>
                           )}
                           <div className="min-w-0">
-                            <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] truncate">{it.item_name}</div>
+                            <div className={`font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] truncate ${it.stock_source === 'CANCELLED' ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
+                              {it.item_name}
+                            </div>
                             <div className="text-[10px] text-[#747775]">Jumlah: {it.quantity_ordered} {it.unit || 'unit'}</div>
                           </div>
                         </div>
@@ -1379,13 +1612,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                           setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
                         }}
                         className={`rounded-lg border px-2 py-1 text-xs font-semibold outline-hidden transition-colors ${
-                          it.stock_source === 'PR_VENDOR'
+                          it.stock_source === 'CANCELLED'
+                            ? 'bg-rose-50 border-rose-300 text-rose-800 dark:bg-rose-950/50 dark:border-rose-700 dark:text-rose-200'
+                            : it.stock_source === 'PR_VENDOR'
                             ? 'bg-orange-50 border-orange-300 text-orange-800 dark:bg-orange-950/50 dark:border-orange-700 dark:text-orange-200'
                             : 'bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-700 dark:text-emerald-200'
                         }`}
                       >
                         <option value="GUDANG_SCGA">Ready Stock (Gudang SCGA)</option>
                         <option value="PR_VENDOR">Belum Tersedia (Butuh PR)</option>
+                        <option value="CANCELLED">Cancel / Tolak Item</option>
                       </select>
                     </div>
                   );
@@ -1394,21 +1630,89 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2 pt-3 border-t">
+          <div className="flex items-center justify-between gap-2 pt-3 border-t">
               <button
                 type="button"
-                onClick={() => setSelectedRoForProcess(null)}
-                className="rounded-full border px-4 py-2 text-xs font-semibold"
+                onClick={() => {
+                  setRejectReasonText('');
+                  setRejectReasonModalOpen(true);
+                }}
+                className="rounded-full border border-rose-300 text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/40 px-3.5 py-1.5 text-xs font-semibold flex items-center gap-1.5 transition-colors"
               >
-                Batal
+                <Ban className="h-3.5 w-3.5 text-rose-600" />
+                <span>Tolak / Batalkan RO</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRoForProcess(null)}
+                  className="rounded-full border px-4 py-2 text-xs font-semibold"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveProcessDecision}
+                  disabled={isSubmitting}
+                  className="rounded-full bg-[#0b57d0] text-white px-5 py-2 text-xs font-semibold hover:bg-[#0842a0]"
+                >
+                  {isSubmitting ? 'Menyimpan...' : 'Simpan Alur Keputusan'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL KONFIRMASI TOLAK / BATALKAN RO */}
+      {/* ========================================================= */}
+      {rejectReasonModalOpen && selectedRoForProcess && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="spring-pop panel-card w-full max-w-md p-5 space-y-4 border border-rose-200 dark:border-rose-900 rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
+            <div className="flex items-center gap-2.5 text-rose-600 dark:text-rose-400">
+              <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800">
+                <Ban className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">Tolak &amp; Batalkan RO</h3>
+                <p className="text-xs text-[#747775]">{selectedRoForProcess.ro_number} &bull; {selectedRoForProcess.branch_name}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#444746] dark:text-[#c4c7c5] leading-relaxed">
+              Dokumen RO ini akan ditandai sebagai <strong className="text-rose-600 dark:text-rose-400">DIBATALKAN</strong> dan tidak akan dilanjutkan ke Surat Jalan maupun Pengadaan PR.
+            </p>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">
+                Alasan Penolakan / Pembatalan:
+              </label>
+              <textarea
+                value={rejectReasonText}
+                onChange={(e) => setRejectReasonText(e.target.value)}
+                placeholder="Contoh: Stok tidak dapat dipenuhi / dibatalkan oleh pihak outlet..."
+                rows={3}
+                className="w-full text-xs p-2.5 rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-slate-50 dark:bg-[#282a2c] focus:outline-hidden focus:ring-2 focus:ring-rose-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#e0e2ec] dark:border-[#35383a]">
+              <button
+                type="button"
+                onClick={() => setRejectReasonModalOpen(false)}
+                className="rounded-full border px-4 py-2 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                Kembali
               </button>
               <button
                 type="button"
-                onClick={handleSaveProcessDecision}
+                onClick={handleConfirmRejectRo}
                 disabled={isSubmitting}
-                className="rounded-full bg-[#0b57d0] text-white px-5 py-2 text-xs font-semibold hover:bg-[#0842a0]"
+                className="rounded-full bg-rose-600 text-white px-5 py-2 text-xs font-semibold hover:bg-rose-700 shadow-xs"
               >
-                {isSubmitting ? 'Menyimpan...' : 'Simpan Alur Keputusan'}
+                {isSubmitting ? 'Memproses...' : 'Ya, Batalkan RO Ini'}
               </button>
             </div>
           </div>
@@ -1942,7 +2246,10 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       });
                     }
                   });
-                  if (parsed.length === 0) return alert('Format tidak valid');
+                  if (parsed.length === 0) {
+                    setToast({ type: 'error', message: 'Format teks Excel tidak valid.' });
+                    return;
+                  }
 
                   const branch = excelBranch || outletList[0]?.branch_name || 'Outlet';
                   const payload: Partial<RequestOrder> = {
@@ -1967,7 +2274,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                     setOrders(prev => [json.data, ...prev]);
                     setIsExcelModalOpen(false);
                     setExcelText('');
-                    alert(`Berhasil membuat ${json.data.ro_number} dengan ${parsed.length} item.`);
+                    setToast({ type: 'success', message: `Berhasil membuat ${json.data.ro_number} dengan ${parsed.length} item.` });
                   }
                 }}
                 className="flex items-center gap-1.5 rounded-full bg-emerald-600 text-white px-5 py-2 font-semibold hover:bg-emerald-700"
@@ -2096,6 +2403,8 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
           onSuccess={handleSpecSuccess}
         />
       )}
+
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

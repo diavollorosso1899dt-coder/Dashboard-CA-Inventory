@@ -16,7 +16,9 @@ import {
   X,
   FileCheck2,
   ImageIcon,
-  Upload
+  Upload,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
@@ -49,6 +51,10 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   const [items, setItems] = useState<AssetRequest[]>(initialItems);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+
+  // Client-side pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(50);
 
   // Image Preview & Upload Modal States
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
@@ -133,6 +139,11 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
     return matchSearch && matchStatus;
   });
 
+  const totalCount = filteredItems.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / (pageSize === 0 ? totalCount || 1 : pageSize)));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedItems = pageSize === 0 ? filteredItems : filteredItems.slice((safePage - 1) * pageSize, safePage * pageSize);
+
   // KPI Metrics
   const totalPrUnits = items.reduce((acc, it) => acc + (it.quantity_pr || it.quantity_needed || 0), 0);
   const totalPoCount = items.filter((it) => it.procurement_status === 'po' || it.po_date).length;
@@ -214,7 +225,10 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
             type="text"
             placeholder="Cari item, cabang, RAB, atau vendor..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setCurrentPage(1);
+            }}
             className="w-full pl-9 pr-4 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -229,7 +243,10 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
           {['ALL', 'proses', 'po', 'selesai', 'belum'].map((st) => (
             <button
               key={st}
-              onClick={() => setStatusFilter(st)}
+              onClick={() => {
+                setStatusFilter(st);
+                setCurrentPage(1);
+              }}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
                 statusFilter === st
                   ? 'bg-blue-600 text-white shadow-xs'
@@ -260,14 +277,14 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-              {filteredItems.length === 0 ? (
+              {paginatedItems.length === 0 ? (
                 <tr>
                   <td colSpan={visibleColCount} className="py-12 text-center text-slate-400">
                     Tidak ada data Purchase Requirement (PR) yang sesuai.
                   </td>
                 </tr>
               ) : (
-                filteredItems.map((it) => {
+                paginatedItems.map((it) => {
                   const reqDate = it.order_datetime ? new Date(it.order_datetime).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
                   const prDate = it.pr_datetime ? new Date(it.pr_datetime).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
                   const poDate = it.po_date ? new Date(it.po_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
@@ -379,6 +396,57 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination Bar */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 text-xs text-slate-500">
+          <div className="flex items-center gap-2">
+            <span>Baris per halaman:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-slate-800 dark:text-slate-200 font-medium"
+            >
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={0}>Semua</option>
+            </select>
+            <span>
+              Menampilkan {totalCount === 0 ? 0 : (safePage - 1) * (pageSize || totalCount) + 1} - {pageSize === 0 ? totalCount : Math.min(safePage * pageSize, totalCount)} dari {totalCount} data
+            </span>
+          </div>
+
+          {pageSize > 0 && totalPages > 1 && (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700 transition"
+                title="Halaman Sebelumnya"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              <span className="px-2 font-medium text-slate-700 dark:text-slate-300">
+                Halaman {safePage} dari {totalPages}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700 transition"
+                title="Halaman Selanjutnya"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

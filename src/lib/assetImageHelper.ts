@@ -3,6 +3,9 @@ import imageMapData from '@/data/masterAssetImageMap.json';
 const exactMap: Record<string, string> = imageMapData.exact || {};
 const normalizedMap: Record<string, string> = imageMapData.normalized || {};
 
+// Memoization cache for O(1) instantaneous lookups across table re-renders
+const imageMemo = new Map<string, string | null>();
+
 export function cleanItemName(str: string): string {
   if (!str) return '';
   return str
@@ -21,6 +24,8 @@ export function setItemImageOverride(itemName: string, imageUrl: string) {
   exactMap[itemName] = imageUrl;
   const clean = cleanItemName(itemName);
   if (clean) normalizedMap[clean] = imageUrl;
+  imageMemo.set(itemName.trim(), imageUrl);
+  if (clean) imageMemo.set(clean, imageUrl);
 }
 
 const conflictTokens = new Set([
@@ -51,6 +56,16 @@ export function getItemImageUrl(itemName?: string): string | null {
   if (!itemName || typeof itemName !== 'string') return null;
 
   const raw = itemName.trim();
+  if (imageMemo.has(raw)) {
+    return imageMemo.get(raw)!;
+  }
+
+  const result = resolveItemImageUrl(raw);
+  imageMemo.set(raw, result);
+  return result;
+}
+
+function resolveItemImageUrl(raw: string): string | null {
   if (exactMap[raw]) return exactMap[raw];
 
   // Case-insensitive exact lookup

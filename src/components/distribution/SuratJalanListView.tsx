@@ -20,8 +20,18 @@ import {
   PackageCheck
 } from 'lucide-react';
 
+import { Toast, ToastMessage } from '@/components/ui/Toast';
+
 interface SuratJalanListViewProps {
   isHistoryOnly?: boolean;
+}
+
+export function normalizeSjStatus(status?: string): 'PROCESSED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' {
+  const s = (status || '').toUpperCase().trim();
+  if (s === 'SELESAI' || s === 'DELIVERED') return 'DELIVERED';
+  if (s === 'DALAM PENGIRIMAN' || s === 'SHIPPED') return 'SHIPPED';
+  if (s === 'DIBATALKAN' || s === 'CANCELLED') return 'CANCELLED';
+  return 'PROCESSED';
 }
 
 export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalanListViewProps) {
@@ -30,6 +40,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>(isHistoryOnly ? 'Selesai' : 'ALL');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
 
   const fetchSj = async () => {
     try {
@@ -41,6 +52,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
       }
     } catch (err) {
       console.error('Failed to fetch Surat Jalan:', err);
+      setToast({ type: 'error', message: 'Gagal memuat daftar Surat Jalan' });
     } finally {
       setLoading(false);
     }
@@ -50,7 +62,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
     fetchSj();
   }, []);
 
-  const handleUpdateStatus = async (id: string, newStatus: string) => {
+  const handleUpdateStatus = async (id: string, newStatus: string, roRef?: string) => {
     setUpdatingId(id);
     try {
       const res = await fetch('/api/distribution/surat-jalan', {
@@ -59,26 +71,51 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
         body: JSON.stringify({
           id,
           status: newStatus,
-          catatan: `Status diupdate ke ${newStatus} pada ${new Date().toLocaleTimeString('id-ID')}`
+          catatan: `Status diupdate ke ${newStatus} pada ${new Date().toLocaleTimeString('id-ID')}`,
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setSjList(prev => prev.map(sj => sj.id === id ? { ...sj, status: newStatus as any } : sj));
+        setSjList((prev) => prev.map((sj) => (sj.id === id ? { ...sj, status: newStatus as any } : sj)));
+        setToast({
+          type: 'success',
+          message: `Surat Jalan berhasil diperbarui: ${newStatus === 'DELIVERED' || newStatus === 'Selesai' ? 'Diterima Cabang' : 'Sedang Dikirim'}!`,
+        });
+
+        // Auto-advance corresponding RO if reference exists
+        if (roRef && (newStatus === 'DELIVERED' || newStatus === 'Selesai')) {
+          fetch('/api/distribution/ro', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: roRef,
+              updates: {
+                status: 'CHECKLIST_DONE',
+                current_stage: 'CHECKLIST',
+                arrival_datetime: new Date().toISOString(),
+              },
+            }),
+          }).catch((e) => console.warn('Could not auto-advance RO:', e));
+        }
       } else {
-        alert(data.error || 'Gagal mengubah status');
+        setToast({ type: 'error', message: data.error || 'Gagal mengubah status' });
       }
-    } catch (err) {
-      alert('Terjadi kesalahan saat mengupdate status');
+    } catch {
+      setToast({ type: 'error', message: 'Terjadi kesalahan saat mengupdate status' });
     } finally {
       setUpdatingId(null);
     }
   };
 
-  const filteredList = sjList.filter(sj => {
-    if (isHistoryOnly && sj.status !== 'Selesai' && sj.status !== 'Dibatalkan') return false;
-    if (!isHistoryOnly && statusFilter !== 'ALL' && sj.status !== statusFilter) return false;
-    
+  const filteredList = sjList.filter((sj) => {
+    const norm = normalizeSjStatus(sj.status);
+    if (isHistoryOnly && norm !== 'DELIVERED' && norm !== 'CANCELLED') return false;
+    if (!isHistoryOnly && statusFilter !== 'ALL') {
+      if (statusFilter === 'Diproses' && norm !== 'PROCESSED') return false;
+      if (statusFilter === 'Dalam Pengiriman' && norm !== 'SHIPPED') return false;
+      if (statusFilter === 'Selesai' && norm !== 'DELIVERED') return false;
+    }
+
     const query = search.toLowerCase();
     const noSj = (sj.nomor_sj || sj.sj_number || '').toLowerCase();
     const roNo = (sj.ro_nomor || sj.ro_number || '').toLowerCase();
@@ -96,35 +133,30 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   });
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'Selesai':
+    const norm = normalizeSjStatus(status);
+    switch (norm) {
+      case 'DELIVERED':
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
             <CheckCircle2 className="w-3.5 h-3.5" /> Diterima Cabang
           </span>
         );
-      case 'Dalam Pengiriman':
+      case 'SHIPPED':
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
             <Truck className="w-3.5 h-3.5 animate-pulse" /> Sedang Dikirim
           </span>
         );
-      case 'Diproses':
+      case 'CANCELLED':
         return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
-            <Clock className="w-3.5 h-3.5" /> Packing Gudang
-          </span>
-        );
-      case 'Dibatalkan':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-400 border border-red-200 dark:border-red-800">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
             <AlertCircle className="w-3.5 h-3.5" /> Dibatalkan
           </span>
         );
       default:
         return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300">
-            {status}
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+            <Clock className="w-3.5 h-3.5" /> Packing Gudang
           </span>
         );
     }
@@ -273,9 +305,9 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                   <Printer className="w-3.5 h-3.5" /> Cetak Lembar SJ
                 </Link>
 
-                {sj.status === 'Diproses' && (
+                {normalizeSjStatus(sj.status) === 'PROCESSED' && (
                   <button
-                    onClick={() => handleUpdateStatus(sj.id, 'Dalam Pengiriman')}
+                    onClick={() => handleUpdateStatus(sj.id, 'SHIPPED', sj.ro_id || sj.ro_nomor || sj.ro_number)}
                     disabled={updatingId === sj.id}
                     className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950 hover:bg-blue-100 dark:hover:bg-blue-900 rounded-lg transition-colors"
                   >
@@ -283,9 +315,9 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                   </button>
                 )}
 
-                {sj.status === 'Dalam Pengiriman' && (
+                {normalizeSjStatus(sj.status) === 'SHIPPED' && (
                   <button
-                    onClick={() => handleUpdateStatus(sj.id, 'Selesai')}
+                    onClick={() => handleUpdateStatus(sj.id, 'DELIVERED', sj.ro_id || sj.ro_nomor || sj.ro_number)}
                     disabled={updatingId === sj.id}
                     className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950 hover:bg-emerald-100 dark:hover:bg-emerald-900 rounded-lg transition-colors"
                   >
@@ -297,6 +329,8 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
           ))
         )}
       </div>
+
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import React from 'react';
 import { UpcomingOpeningsCard } from '@/components/dashboard/UpcomingOpeningsCard';
+import { ExecutiveKpiCards } from '@/components/dashboard/ExecutiveKpiCards';
 import { AssetDataTable } from '@/components/tracker/AssetDataTable';
-import { getBranchOpeningSummaries, getAssetRequests } from '@/lib/supabase/server';
+import { getBranchOpeningSummaries, getAssetRequests, getRequestOrders, getSuratJalanList } from '@/lib/supabase/server';
 import { RegionType } from '@/lib/supabase/types';
 import { Layers } from 'lucide-react';
 
@@ -15,10 +16,41 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const { region: rawRegion } = await searchParams;
   const region = (rawRegion as RegionType) || 'ALL';
 
-  const [branchSummaries, assetResponse] = await Promise.all([
+  const [branchSummaries, assetResponse, allRos, allSj] = await Promise.all([
     getBranchOpeningSummaries(region),
     getAssetRequests({ region, limit: 10000 }),
+    getRequestOrders(),
+    getSuratJalanList(),
   ]);
+
+  const filteredRos = region === 'ALL' ? allRos : allRos.filter((r) => r.region === region);
+  const filteredSj = region === 'ALL' ? allSj : allSj.filter((s) => s.region === region);
+
+  const roStats = {
+    total: filteredRos.length,
+    readyStock: filteredRos.filter((r) => r.status === 'READY_STOCK' || r.current_stage === 'READY_STOCK').length,
+    needPr: filteredRos.filter((r) => r.status === 'NEED_PR' || r.current_stage === 'KELOLA_PR').length,
+    inDelivery: filteredRos.filter((r) => r.status === 'IN_DELIVERY' || r.current_stage === 'SURAT_JALAN').length,
+    cancelled: filteredRos.filter((r) => r.status === 'REJECTED' || (r.status as string) === 'CANCELLED' || r.current_stage === 'DIBATALKAN').length,
+  };
+
+  const sjStats = {
+    total: filteredSj.length,
+    inDelivery: filteredSj.filter((s) => s.status === 'Dalam Pengiriman' || s.status === 'SHIPPED').length,
+    delivered: filteredSj.filter((s) => s.status === 'Selesai' || s.status === 'DELIVERED').length,
+  };
+
+  const upcomingBranches = branchSummaries.filter(
+    (b) => b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 30
+  );
+  const avgReadiness = branchSummaries.length > 0
+    ? Math.round(branchSummaries.reduce((sum, b) => sum + (b.readiness_percentage || 0), 0) / branchSummaries.length)
+    : 0;
+
+  const totalEstimatedValue = assetResponse.data.reduce(
+    (sum, a) => sum + Number(a.rab_total || a.deal_price || a.rab_price || 0),
+    0
+  );
 
   return (
     <div className="space-y-6 pb-12">
@@ -39,7 +71,17 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* 1. Jadwal Opening Outlet */}
+      {/* 1. Ringkasan Eksekutif KPI */}
+      <ExecutiveKpiCards
+        totalAssets={assetResponse.total || assetResponse.data.length}
+        totalEstimatedValue={totalEstimatedValue}
+        roStats={roStats}
+        sjStats={sjStats}
+        upcomingBranchesCount={upcomingBranches.length}
+        avgReadiness={avgReadiness}
+      />
+
+      {/* 2. Jadwal Opening Outlet */}
       <UpcomingOpeningsCard branches={branchSummaries} />
 
       {/* 2. Tabel Pemantauan Permohonan Aset */}
