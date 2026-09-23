@@ -14,14 +14,20 @@ import {
   Edit3, 
   Save, 
   X,
-  FileCheck2
+  FileCheck2,
+  ImageIcon,
+  Upload
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
+import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
+import { getItemSpecification } from '@/lib/assetSpecHelper';
+import UploadImageModal from '@/components/items/UploadImageModal';
 
 const PR_COLUMNS: ColumnItem[] = [
   { id: 'rab_branch', label: 'No. RAB & Cabang', defaultVisible: true, alwaysVisible: true },
   { id: 'item_name', label: 'Nama Item Aset', defaultVisible: true },
+  { id: 'image', label: 'Gambar', defaultVisible: true },
   { id: 'qty', label: 'Qty PR', defaultVisible: true },
   { id: 'req_date', label: 'Tgl Permintaan', defaultVisible: true },
   { id: 'pr_po_date', label: 'Tgl PR & PO', defaultVisible: true },
@@ -43,6 +49,11 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   const [items, setItems] = useState<AssetRequest[]>(initialItems);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+
+  // Image Preview & Upload Modal States
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
+  const [uploadModalTarget, setUploadModalTarget] = useState<{ itemName: string; currentImageUrl?: string | null } | null>(null);
+  const [, setRefreshTicker] = useState(0);
 
   // Column Visibility
   const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
@@ -239,6 +250,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
               <tr>
                 {isVisible('rab_branch') && <th className="py-3.5 px-4">No. RAB &amp; Cabang</th>}
                 {isVisible('item_name') && <th className="py-3.5 px-4">Nama Item Aset</th>}
+                {isVisible('image') && <th className="py-3.5 px-4 text-center">Gambar</th>}
                 {isVisible('qty') && <th className="py-3.5 px-4">Qty PR</th>}
                 {isVisible('req_date') && <th className="py-3.5 px-4">Tgl Permintaan</th>}
                 {isVisible('pr_po_date') && <th className="py-3.5 px-4">Tgl PR &amp; PO</th>}
@@ -272,6 +284,41 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                         <td className="py-3.5 px-4">
                           <div className="font-semibold text-slate-900 dark:text-white">{it.item_name}</div>
                           <div className="text-[11px] text-slate-400">{it.classification}</div>
+                        </td>
+                      )}
+                      {isVisible('image') && (
+                        <td className="py-3.5 px-4 text-center">
+                          <div className="flex justify-center">
+                            {(() => {
+                              const imgUrl = getItemImageUrl(it.item_name);
+                              return imgUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewImage({ url: imgUrl, title: it.item_name })}
+                                  className="relative block w-10 h-10 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden hover:ring-2 hover:ring-blue-500 hover:scale-105 transition-all shadow-2xs bg-white dark:bg-slate-800 shrink-0"
+                                  title={`Klik perbesar: ${it.item_name}`}
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={imgUrl}
+                                    alt={it.item_name}
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                  />
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setUploadModalTarget({ itemName: it.item_name, currentImageUrl: null })}
+                                  className="w-10 h-10 rounded-lg border border-dashed border-amber-300 dark:border-amber-700/80 bg-amber-50/60 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/40 flex flex-col items-center justify-center text-amber-700 dark:text-amber-400 text-[8px] shrink-0 transition group/upload"
+                                  title={`Upload foto (maks 100 KB): ${it.item_name}`}
+                                >
+                                  <Upload className="h-3.5 w-3.5 mb-0.5 group-hover/upload:scale-110 transition-transform" />
+                                  <span className="font-semibold text-[8px]">Upload</span>
+                                </button>
+                              );
+                            })()}
+                          </div>
                         </td>
                       )}
                       {isVisible('qty') && (
@@ -455,6 +502,99 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
             </form>
           </div>
         </div>
+      )}
+
+      {/* Modal Preview Gambar & Spek */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-in fade-in"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div 
+            className="spring-pop panel-card relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2 min-w-0 pr-2">
+                <ImageIcon className="h-4 w-4 text-blue-600 shrink-0" />
+                <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                  {previewImage.title}
+                </h4>
+              </div>
+              <button 
+                onClick={() => setPreviewImage(null)} 
+                className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="w-full flex items-center justify-center overflow-hidden rounded-xl bg-slate-100 dark:bg-black/50 p-2 border border-slate-200 dark:border-slate-800">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img 
+                src={previewImage.url} 
+                alt={previewImage.title} 
+                className="max-w-full max-h-[55vh] object-contain rounded-lg shadow-xs" 
+              />
+            </div>
+
+            {/* Rincian Spesifikasi Item */}
+            {(() => {
+              const spec = getItemSpecification(previewImage.title);
+              return (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-750 text-xs space-y-1">
+                  <span className="font-semibold text-amber-600 dark:text-amber-400 block">Rincian Spesifikasi:</span>
+                  <p className="text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
+                    {spec || <span className="italic text-slate-400">Belum ada rincian spesifikasi untuk item ini.</span>}
+                  </p>
+                </div>
+              );
+            })()}
+
+            <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+              <span className="flex items-center gap-1">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                Master Aset
+              </span>
+              <div className="flex items-center gap-2">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    const target = { itemName: previewImage.title, currentImageUrl: previewImage.url };
+                    setPreviewImage(null);
+                    setUploadModalTarget(target);
+                  }} 
+                  className="px-3 py-1.5 rounded-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center gap-1 transition-colors"
+                >
+                  <Upload className="w-3 h-3" />
+                  <span>Ganti Foto (&le; 100KB)</span>
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setPreviewImage(null)} 
+                  className="px-4 py-1.5 rounded-full bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Upload & Kompresi Foto Item */}
+      {uploadModalTarget && (
+        <UploadImageModal
+          isOpen={true}
+          onClose={() => setUploadModalTarget(null)}
+          itemName={uploadModalTarget.itemName}
+          currentImageUrl={uploadModalTarget.currentImageUrl}
+          onUploadSuccess={(newItemName, newUrl) => {
+            setItemImageOverride(newItemName, newUrl);
+            setUploadModalTarget(null);
+            setRefreshTicker((t) => t + 1);
+          }}
+        />
       )}
     </div>
   );
