@@ -27,6 +27,9 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
+import { useSearchParams } from 'next/navigation';
+import AreaFilterPills from '@/components/ui/AreaFilterPills';
+import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
 import { formatDateTime, formatDateOnly, formatLeadTime } from '@/lib/utils/date-formatter';
 import { useAuth } from '@/components/auth/AuthContext';
 import { AssetDetailModal } from './AssetDetailModal';
@@ -73,15 +76,30 @@ interface AssetDataTableProps {
 type QuickFilterType = 'ALL' | 'OVERDUE' | 'READY_STOCK' | 'NEED_PR' | 'COMPLETED' | 'TERIMA_OUTLET' | 'TRANSFER_SYSTEM';
 
 export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: AssetDataTableProps) {
+  const searchParams = useSearchParams();
+  const urlRegion = searchParams ? searchParams.get('region') : null;
+
   const [items, setItems] = useState<AssetRequest[]>(initialItems);
   const [search, setSearch] = useState('');
-  const [selectedRegion, setSelectedRegion] = useState<RegionType>(regionFilter);
+  const [selectedRegion, setSelectedRegion] = useState<RegionType>(normalizeRegion(urlRegion || regionFilter));
   const [selectedBranch, setSelectedBranch] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
   const [selectedStock, setSelectedStock] = useState<string>('ALL');
   const [selectedRab, setSelectedRab] = useState<string>('');
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>('ALL');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+
+  // Sync items when initialItems prop changes
+  useEffect(() => {
+    setItems(initialItems);
+  }, [initialItems]);
+
+  // Sync selectedRegion when URL query or regionFilter prop changes
+  useEffect(() => {
+    const paramReg = searchParams ? searchParams.get('region') : null;
+    const nextReg = normalizeRegion(paramReg || regionFilter);
+    setSelectedRegion(nextReg);
+  }, [searchParams, regionFilter]);
   
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
@@ -292,7 +310,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   // Filtered Items
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
-      if (selectedRegion !== 'ALL' && item.region !== selectedRegion) return false;
+      if (!matchesRegion(item.region, selectedRegion)) return false;
       if (selectedBranch !== 'ALL' && item.branch_name !== selectedBranch) return false;
 
       // Quick Filter Chips Logic
@@ -556,7 +574,16 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   return (
     <div className="space-y-3.5">
       {/* 1. Google Material 3 Filter Chips Bar */}
-      <div className="flex items-center gap-2 pt-1 overflow-x-auto no-scrollbar py-1">
+      <div className="flex items-center gap-2 pt-1 overflow-x-auto no-scrollbar py-1 flex-wrap">
+        <AreaFilterPills
+          value={selectedRegion}
+          onChange={(r) => {
+            setSelectedRegion(r);
+            setCurrentPage(1);
+          }}
+          syncUrl={true}
+        />
+        <div className="h-4 w-[1px] bg-[#e0e2ec] dark:bg-[#444746] hidden sm:block mx-1" />
         <span className="text-xs font-semibold text-[#444746] dark:text-[#c4c7c5] mr-1 flex items-center gap-1.5 shrink-0">
           <Clock className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
           Filter Cepat:

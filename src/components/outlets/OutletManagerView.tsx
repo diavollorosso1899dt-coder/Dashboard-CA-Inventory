@@ -2,7 +2,10 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { Outlet } from '@/lib/supabase/types';
+import AreaFilterPills from '@/components/ui/AreaFilterPills';
+import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
 import { 
   Building2, 
   MapPin, 
@@ -34,10 +37,18 @@ const OUTLET_COLUMNS: ColumnItem[] = [
 ];
 
 export default function OutletManagerView() {
+  const searchParams = useSearchParams();
+  const urlRegion = searchParams ? searchParams.get('region') : null;
+
   const [outlets, setOutlets] = useState<Outlet[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [regionFilter, setRegionFilter] = useState('ALL');
+  const [regionFilter, setRegionFilter] = useState<StandardRegion>(normalizeRegion(urlRegion));
+
+  // Sync regionFilter when URL parameter changes
+  useEffect(() => {
+    setRegionFilter(normalizeRegion(searchParams ? searchParams.get('region') : null));
+  }, [searchParams]);
 
   // Column Visibility
   const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
@@ -116,12 +127,7 @@ export default function OutletManagerView() {
   };
 
   const filteredOutlets = outlets.filter((o) => {
-    if (regionFilter !== 'ALL') {
-      const isJabo =
-        (regionFilter === 'JABO' || regionFilter === 'JABODETABEK') &&
-        (o.region === 'JABO' || o.region === 'JABODETABEK');
-      if (!isJabo && o.region !== regionFilter) return false;
-    }
+    if (!matchesRegion(o.region, regionFilter)) return false;
     const q = search.toLowerCase();
     const name = (o.nama || o.branch_name || '').toLowerCase();
     const address = (o.alamat || o.address || '').toLowerCase();
@@ -222,25 +228,17 @@ export default function OutletManagerView() {
         </div>
 
         <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+          <AreaFilterPills
+            value={regionFilter}
+            onChange={(rf) => setRegionFilter(rf)}
+            syncUrl={true}
+          />
           <ColumnVisibilityPicker
             columns={OUTLET_COLUMNS}
             visibleColumns={visibleColumns}
             onChange={setVisibleColumns}
             storageKey="ca_outlet_columns"
           />
-          {['ALL', 'JABO', 'KALBAR'].map((rf) => (
-            <button
-              key={rf}
-              onClick={() => setRegionFilter(rf)}
-              className={`interactive-tap px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-all ${
-                regionFilter === rf
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
-            >
-              {rf === 'ALL' ? 'Semua Region' : `Region ${rf}`}
-            </button>
-          ))}
         </div>
       </div>
 

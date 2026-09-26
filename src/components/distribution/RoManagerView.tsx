@@ -39,10 +39,12 @@ import {
   Ban
 } from 'lucide-react';
 import { RequestOrder, Outlet, ROItem, ROStatus } from '@/lib/supabase/types';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
 import { getItemSpecification, setItemSpecificationOverride } from '@/lib/assetSpecHelper';
 import UploadImageModal from '@/components/items/UploadImageModal';
+import AreaFilterPills from '@/components/ui/AreaFilterPills';
+import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
 import EditSpecModal from '@/components/items/EditSpecModal';
 import ColumnVisibilityPicker, { ColumnItem } from '@/components/ui/ColumnVisibilityPicker';
 import { Toast, ToastMessage } from '@/components/ui/Toast';
@@ -112,6 +114,11 @@ export function getUniqueRoItems(items: ROItem[]): ROItem[] {
 
 export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerViewProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const urlRegion = searchParams ? searchParams.get('region') : null;
+  const initialRegion = normalizeRegion(urlRegion);
+
   const [orders, setOrders] = useState<RequestOrder[]>(initialOrders);
   const [outletList, setOutletList] = useState<Outlet[]>(outlets);
   const [isLoading, setIsLoading] = useState(initialOrders.length === 0);
@@ -119,10 +126,23 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [selectedStage, setSelectedStage] = useState<StageKey>('ALL');
   const [showPipelineStepper, setShowPipelineStepper] = useState(false);
   const [smartFilter, setSmartFilter] = useState<'ALL' | 'CLEAN' | 'DUPLICATES'>('ALL');
-  const [selectedRegion, setSelectedRegion] = useState<'ALL' | 'JABODETABEK' | 'KALBAR'>('ALL');
+  const [selectedRegion, setSelectedRegion] = useState<'ALL' | 'JABODETABEK' | 'KALBAR'>(initialRegion);
   const [selectedSource, setSelectedSource] = useState<'ALL' | 'KALBAR_SHEET' | 'JABO_SHEET' | 'MANUAL'>('ALL');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  // Sync selectedRegion with URL query param whenever it changes
+  useEffect(() => {
+    const nextRegion = normalizeRegion(searchParams ? searchParams.get('region') : null);
+    setSelectedRegion(nextRegion);
+  }, [searchParams]);
+
+  // Sync orders with initialOrders prop
+  useEffect(() => {
+    if (initialOrders.length > 0) {
+      setOrders(initialOrders);
+    }
+  }, [initialOrders]);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -158,6 +178,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [selectedRoForProcess, setSelectedRoForProcess] = useState<RequestOrder | null>(null);
   const [selectedRoForPr, setSelectedRoForPr] = useState<RequestOrder | null>(null);
   const [selectedRoForSj, setSelectedRoForSj] = useState<RequestOrder | null>(null);
+  const [selectedSjItemIds, setSelectedSjItemIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (selectedRoForSj) {
+      const eligible = (selectedRoForSj.items || []).filter(it => it.stock_source !== 'CANCELLED');
+      setSelectedSjItemIds(eligible.map(it => it.id));
+    } else {
+      setSelectedSjItemIds([]);
+    }
+  }, [selectedRoForSj]);
   const [selectedRoForArrival, setSelectedRoForArrival] = useState<RequestOrder | null>(null);
   const [selectedRoForChecklist, setSelectedRoForChecklist] = useState<RequestOrder | null>(null);
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
@@ -250,7 +280,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const { deduplicationMap, duplicateOrdersCount, stageCounts, regionStats, sourceStats } = useMemo(() => {
     const map = new Map<string, RequestOrder[]>();
     const counts: Record<StageKey, number> = {
-      ALL: orders.length,
+      ALL: 0,
       REQUEST_ORDER: 0,
       INPUT_DATA: 0,
       PILIH_PROSES: 0,
@@ -277,20 +307,24 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       }
       list.push(ro);
 
-      const st = getRoStage(ro);
-      counts[st] = (counts[st] || 0) + 1;
+      // Only increment stage counts if this order belongs to the currently selected region
+      if (matchesRegion(ro.region, selectedRegion)) {
+        counts.ALL++;
+        const st = getRoStage(ro);
+        counts[st] = (counts[st] || 0) + 1;
+      }
 
       const itLen = ro.items?.length || 0;
-      if (ro.region === 'JABODETABEK') {
+      if (normalizeRegion(ro.region) === 'JABODETABEK') {
         jaboOrders++;
         jaboItems += itLen;
-      } else if (ro.region === 'KALBAR') {
+      } else if (normalizeRegion(ro.region) === 'KALBAR') {
         kalbarOrders++;
         kalbarItems += itLen;
       }
 
       if (ro.source_type === 'GOOGLE_SHEET') {
-        if (ro.region === 'KALBAR') kalbarSheetCount++;
+        if (normalizeRegion(ro.region) === 'KALBAR') kalbarSheetCount++;
         else jaboSheetCount++;
       } else {
         manualCount++;
@@ -318,18 +352,18 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         MANUAL: manualCount,
       },
     };
-  }, [orders]);
+  }, [orders, selectedRegion]);
 
   // Filtered orders dengan fast exit
   const filteredOrders = useMemo(() => {
     const searchLower = search.toLowerCase().trim();
     return orders.filter((o) => {
-      if (selectedRegion !== 'ALL' && o.region !== selectedRegion) return false;
+      if (!matchesRegion(o.region, selectedRegion)) return false;
 
       if (selectedSource === 'KALBAR_SHEET') {
-        if (o.source_type !== 'GOOGLE_SHEET' || o.region !== 'KALBAR') return false;
+        if (o.source_type !== 'GOOGLE_SHEET' || normalizeRegion(o.region) !== 'KALBAR') return false;
       } else if (selectedSource === 'JABO_SHEET') {
-        if (o.source_type !== 'GOOGLE_SHEET' || o.region !== 'JABODETABEK') return false;
+        if (o.source_type !== 'GOOGLE_SHEET' || normalizeRegion(o.region) !== 'JABODETABEK') return false;
       } else if (selectedSource === 'MANUAL') {
         if (o.source_type === 'GOOGLE_SHEET') return false;
       }
@@ -508,6 +542,12 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
           status: nextStatus,
         } : o;
       }));
+
+      // Broadcast event real-time ke menu Pemantauan Distribusi
+      try {
+        localStorage.setItem('ca_ro_last_update', Date.now().toString());
+        window.dispatchEvent(new Event('ca_ro_updated'));
+      } catch {}
 
       if (allCancelled) {
         setToast({ type: 'info', message: `Dokumen ${selectedRoForProcess.ro_number} dibatalkan & tersimpan di Supabase.` });
@@ -689,6 +729,22 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     if (!selectedRoForSj) return;
     try {
       setIsSubmitting(true);
+      const itemsToShip = selectedRoForSj.items
+        .filter(it => selectedSjItemIds.includes(it.id) && it.stock_source !== 'CANCELLED')
+        .map((it) => ({
+          id: `sji-${Date.now()}-${Math.random().toString().slice(-4)}`,
+          item_name: it.item_name,
+          specification: it.specification,
+          quantity: it.quantity_ordered,
+          unit: it.unit || 'Unit',
+          notes: it.stock_source === 'GUDANG_SCGA' ? 'Dari Stok Gudang SCGA' : 'Pengadaan PR Vendor (Aset Tiba)',
+        }));
+
+      if (itemsToShip.length === 0) {
+        setToast({ type: 'error', message: 'Pilih minimal 1 aset pada checklist untuk diterbitkan ke Surat Jalan.' });
+        return;
+      }
+
       const payload = {
         ro_id: selectedRoForSj.id,
         ro_number: selectedRoForSj.ro_number,
@@ -701,17 +757,8 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         sender_name: 'Staff SCGA Warehouse',
         receiver_name: `PIC ${selectedRoForSj.branch_name}`,
         status: 'SHIPPED',
-        items: selectedRoForSj.items
-          .filter(it => it.stock_source !== 'CANCELLED')
-          .map((it) => ({
-            id: `sji-${Date.now()}-${Math.random().toString().slice(-4)}`,
-            item_name: it.item_name,
-            specification: it.specification,
-            quantity: it.quantity_ordered,
-            unit: it.unit || 'Unit',
-            notes: it.stock_source === 'GUDANG_SCGA' ? 'Dari Stok Gudang SCGA' : 'Pengadaan PR Vendor (Aset Tiba)',
-          })),
-        notes: `Diterbitkan otomatis dari ${selectedRoForSj.ro_number}`,
+        items: itemsToShip,
+        notes: `Diterbitkan dari ${selectedRoForSj.ro_number} (${itemsToShip.length} item dipilih)`,
       };
 
       const res = await fetch('/api/distribution/surat-jalan', {
@@ -1097,27 +1144,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
                 <MapPin className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-                Wilayah:
+                Filter Area:
               </span>
-              <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c]">
-                {(['ALL', 'JABODETABEK', 'KALBAR'] as const).map((reg) => {
-                  const stat = regionStats[reg] || { orders: 0, items: 0 };
-                  return (
-                    <button
-                      key={reg}
-                      onClick={() => setSelectedRegion(reg)}
-                      className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                        selectedRegion === reg
-                          ? 'bg-[#0b57d0] text-white shadow-xs'
-                          : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
-                      }`}
-                    >
-                      {reg === 'ALL' ? 'Semua Wilayah' : reg === 'JABODETABEK' ? 'Area Jabo' : 'Area Kalbar'}{' '}
-                      ({stat.orders})
-                    </button>
-                  );
-                })}
-              </div>
+              <AreaFilterPills
+                value={selectedRegion}
+                onChange={(reg) => setSelectedRegion(reg)}
+                syncUrl={true}
+              />
+              <span className="text-[11px] font-semibold text-[#0b57d0] dark:text-[#a8c7fa] bg-[#e8f0fe] dark:bg-[#004a77]/50 px-2 py-0.5 rounded-full">
+                {regionStats[selectedRegion]?.orders ?? filteredOrders.length} RO
+              </span>
             </div>
 
             {/* Source Filter Tabs */}
@@ -1886,78 +1922,242 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       {/* ========================================================= */}
       {/* MODAL 3: TERBITKAN SURAT JALAN (SJ) */}
       {/* ========================================================= */}
-      {selectedRoForSj && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="spring-pop panel-card w-full max-w-md p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
-            <div className="flex items-center justify-between border-b pb-3">
-              <div className="flex items-center gap-2">
-                <Truck className="h-5 w-5 text-[#0b57d0]" />
-                <h3 className="font-bold text-base">Tahap 6: Terbitkan Surat Jalan (SJ)</h3>
-              </div>
-              <button onClick={() => setSelectedRoForSj(null)} className="p-1 rounded-full hover:bg-slate-100">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+      {selectedRoForSj && (() => {
+        const eligibleItems = (selectedRoForSj.items || []).filter(it => it.stock_source !== 'CANCELLED');
+        const allSelected = eligibleItems.length > 0 && eligibleItems.every(it => selectedSjItemIds.includes(it.id));
 
-            <div className="text-xs space-y-3">
-              <div className="rounded-xl bg-slate-50 dark:bg-slate-900 p-3 space-y-1">
-                <div><strong>No. RO:</strong> {selectedRoForSj.ro_number}</div>
-                <div><strong>Tujuan:</strong> {selectedRoForSj.branch_name}</div>
-                <div><strong>Total Item:</strong> {selectedRoForSj.items.length} macam barang siap kirim</div>
-              </div>
+        const toggleSelectAll = () => {
+          if (allSelected) {
+            setSelectedSjItemIds([]);
+          } else {
+            setSelectedSjItemIds(eligibleItems.map(it => it.id));
+          }
+        };
 
-              <div>
-                <label className="block font-bold mb-1">Nama Driver / Pengemudi</label>
-                <input
-                  type="text"
-                  value={driverName}
-                  onChange={(e) => setDriverName(e.target.value)}
-                  className="w-full rounded-xl border p-2 bg-slate-50 dark:bg-slate-900"
-                />
-              </div>
+        const toggleItem = (id: string) => {
+          setSelectedSjItemIds(prev => 
+            prev.includes(id) ? prev.filter(itemId => itemId !== id) : [...prev, id]
+          );
+        };
 
-              <div>
-                <label className="block font-bold mb-1">Nomor Polisi Kendaraan</label>
-                <input
-                  type="text"
-                  value={vehicleNumber}
-                  onChange={(e) => setVehicleNumber(e.target.value)}
-                  className="w-full rounded-xl border p-2 bg-slate-50 dark:bg-slate-900 font-mono"
-                />
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+            <div className="spring-pop panel-card w-full max-w-xl max-h-[90vh] flex flex-col p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b pb-3 shrink-0">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    <Truck className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-slate-900 dark:text-white">Tahap 6: Terbitkan Surat Jalan (SJ)</h3>
+                    <p className="text-[11px] text-slate-500">Pilih aset yang akan dimuat ke armada dan diterbitkan dokumen SJ</p>
+                  </div>
+                </div>
+                <button onClick={() => setSelectedRoForSj(null)} className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600">
+                  <X className="h-5 w-5" />
+                </button>
               </div>
 
-              <div>
-                <label className="block font-bold mb-1">Nama Ekspedisi / Armada</label>
-                <input
-                  type="text"
-                  value={expedition}
-                  onChange={(e) => setExpedition(e.target.value)}
-                  className="w-full rounded-xl border p-2 bg-slate-50 dark:bg-slate-900"
-                />
-              </div>
-            </div>
+              {/* Scrollable Content Body */}
+              <div className="text-xs space-y-4 overflow-y-auto pr-1 flex-1">
+                {/* Info Card */}
+                <div className="grid grid-cols-3 gap-2 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200/70 dark:border-slate-800 p-3">
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block">No. Dokumen RO</span>
+                    <strong className="text-slate-900 dark:text-white font-mono text-xs">{selectedRoForSj.ro_number}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block">Cabang Tujuan</span>
+                    <strong className="text-slate-900 dark:text-white text-xs truncate block">{selectedRoForSj.branch_name}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block">Status Pilihan</span>
+                    <span className="inline-flex items-center gap-1 font-bold text-blue-600 dark:text-blue-400">
+                      <CheckSquare className="w-3.5 h-3.5" />
+                      {selectedSjItemIds.length} dari {eligibleItems.length} item
+                    </span>
+                  </div>
+                </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t">
-              <button
-                type="button"
-                onClick={() => setSelectedRoForSj(null)}
-                className="rounded-full border px-4 py-2 text-xs font-semibold"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                onClick={handleGenerateSuratJalan}
-                disabled={isSubmitting}
-                className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] text-white px-5 py-2 text-xs font-semibold hover:bg-[#0842a0]"
-              >
-                <Printer className="h-4 w-4" />
-                <span>Terbitkan &amp; Cetak Dokumen SJ</span>
-              </button>
+                {/* CHECKLIST ASET SECTION */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 text-xs">
+                      <Boxes className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>Checklist Aset yang Dimuat ke Surat Jalan</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={toggleSelectAll}
+                      className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      {allSelected ? 'Hapus Semua Pilihan' : 'Pilih Semua Aset'}
+                    </button>
+                  </div>
+
+                  <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40">
+                    {selectedRoForSj.items && selectedRoForSj.items.length > 0 ? (
+                      selectedRoForSj.items.map((it) => {
+                        const isCancelled = it.stock_source === 'CANCELLED';
+                        const isChecked = selectedSjItemIds.includes(it.id);
+                        const photoUrl = getItemImageUrl(it.item_name);
+
+                        return (
+                          <div
+                            key={it.id}
+                            onClick={() => !isCancelled && toggleItem(it.id)}
+                            className={`flex items-center justify-between p-2.5 transition-colors ${
+                              isCancelled
+                                ? 'opacity-40 bg-slate-100/50 dark:bg-slate-900/20 cursor-not-allowed'
+                                : isChecked
+                                ? 'bg-blue-50/60 dark:bg-blue-950/20 cursor-pointer'
+                                : 'hover:bg-slate-100/70 dark:hover:bg-slate-800/40 cursor-pointer'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                              <input
+                                type="checkbox"
+                                disabled={isCancelled}
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  toggleItem(it.id);
+                                }}
+                                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
+                              />
+
+                              {/* Thumbnail Foto Aset */}
+                              <div className="w-8 h-8 rounded-lg overflow-hidden bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0">
+                                {photoUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={photoUrl} alt={it.item_name} className="w-full h-full object-cover" />
+                                ) : (
+                                  <Package className="w-4 h-4 text-slate-400" />
+                                )}
+                              </div>
+
+                              {/* Nama & Spesifikasi */}
+                              <div className="min-w-0">
+                                <div className={`font-semibold truncate text-xs ${isCancelled ? 'line-through text-slate-400' : 'text-slate-900 dark:text-white'}`}>
+                                  {it.item_name}
+                                </div>
+                                <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-xs">
+                                  {it.specification || 'Tidak ada spesifikasi'}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Badge Qty & Source */}
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-mono font-bold text-[11px] px-2 py-0.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 shadow-2xs">
+                                {it.quantity_ordered} {it.unit || 'Unit'}
+                              </span>
+
+                              {it.stock_source === 'GUDANG_SCGA' && (
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                  Ready Gudang
+                                </span>
+                              )}
+                              {it.stock_source === 'PR_VENDOR' && (
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                                  PR Vendor
+                                </span>
+                              )}
+                              {isCancelled && (
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300">
+                                  Dibatalkan
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="p-4 text-center text-slate-400">Tidak ada item terdaftar.</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* DETAIL EKSPEDISI / PENGEMUDI */}
+                <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+                  <label className="font-bold text-slate-800 dark:text-slate-200 text-xs block">
+                    Informasi Armada &amp; Pengemudi
+                  </label>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-[11px] text-slate-500 mb-1">Nama Driver</label>
+                      <input
+                        type="text"
+                        placeholder="Contoh: Pak Budi"
+                        value={driverName}
+                        onChange={(e) => setDriverName(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 p-2 bg-slate-50 dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-slate-500 mb-1">No. Polisi Kendaraan</label>
+                      <input
+                        type="text"
+                        placeholder="B 1234 CA"
+                        value={vehicleNumber}
+                        onChange={(e) => setVehicleNumber(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 p-2 bg-slate-50 dark:bg-slate-900 font-mono text-xs"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-slate-500 mb-1">Ekspedisi / Armada</label>
+                      <input
+                        type="text"
+                        placeholder="Internal CA / Pick-up"
+                        value={expedition}
+                        onChange={(e) => setExpedition(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 p-2 bg-slate-50 dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Validation Notice */}
+                {selectedSjItemIds.length === 0 && (
+                  <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>Pilih minimal 1 aset pada checklist di atas untuk dimasukkan ke Surat Jalan.</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between gap-2 pt-3 border-t shrink-0">
+                <span className="text-[11px] text-slate-400">
+                  {selectedSjItemIds.length} item akan dicetak ke Dokumen SJ
+                </span>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRoForSj(null)}
+                    className="rounded-full border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleGenerateSuratJalan}
+                    disabled={isSubmitting || selectedSjItemIds.length === 0}
+                    className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] text-white px-5 py-2 text-xs font-semibold hover:bg-[#0842a0] disabled:opacity-50 disabled:cursor-not-allowed shadow-xs transition-colors"
+                  >
+                    <Printer className="h-4 w-4" />
+                    <span>{isSubmitting ? 'Memproses SJ...' : 'Terbitkan & Cetak Dokumen SJ'}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ========================================================= */}
       {/* MODAL 4: KONFIRMASI KEDATANGAN (ASET SAMPAI?) */}

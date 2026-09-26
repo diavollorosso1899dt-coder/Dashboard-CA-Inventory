@@ -2,7 +2,10 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { SuratJalan } from '@/lib/supabase/types';
+import AreaFilterPills from '@/components/ui/AreaFilterPills';
+import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
 import { 
   FileText, 
   Truck, 
@@ -35,12 +38,21 @@ export function normalizeSjStatus(status?: string): 'PROCESSED' | 'SHIPPED' | 'D
 }
 
 export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalanListViewProps) {
+  const searchParams = useSearchParams();
+  const urlRegion = searchParams ? searchParams.get('region') : null;
+  const [regionFilter, setRegionFilter] = useState<StandardRegion>(normalizeRegion(urlRegion));
+
   const [sjList, setSjList] = useState<SuratJalan[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>(isHistoryOnly ? 'Selesai' : 'ALL');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+
+  // Sync regionFilter when URL parameter changes
+  useEffect(() => {
+    setRegionFilter(normalizeRegion(searchParams ? searchParams.get('region') : null));
+  }, [searchParams]);
 
   const fetchSj = async () => {
     try {
@@ -108,6 +120,11 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   };
 
   const filteredList = sjList.filter((sj) => {
+    const sjRegion = sj.region || (
+      (sj.branch_name || sj.tujuan_outlet_nama || '').toLowerCase().includes('kalbar') ? 'KALBAR' : 'JABODETABEK'
+    );
+    if (!matchesRegion(sjRegion, regionFilter)) return false;
+
     const norm = normalizeSjStatus(sj.status);
     if (isHistoryOnly && norm !== 'DELIVERED' && norm !== 'CANCELLED') return false;
     if (!isHistoryOnly && statusFilter !== 'ALL') {
@@ -218,24 +235,31 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
           />
         </div>
 
-        {!isHistoryOnly && (
-          <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
-            <Filter className="w-4 h-4 text-slate-400 shrink-0" />
-            {['ALL', 'Diproses', 'Dalam Pengiriman', 'Selesai'].map((st) => (
-              <button
-                key={st}
-                onClick={() => setStatusFilter(st)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors ${
-                  statusFilter === st
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                }`}
-              >
-                {st === 'ALL' ? 'Semua Status' : st}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0 flex-wrap">
+          <AreaFilterPills
+            value={regionFilter}
+            onChange={(r) => setRegionFilter(r)}
+            syncUrl={true}
+          />
+          {!isHistoryOnly && (
+            <>
+              <Filter className="w-4 h-4 text-slate-400 shrink-0 ml-1" />
+              {['ALL', 'Diproses', 'Dalam Pengiriman', 'Selesai'].map((st) => (
+                <button
+                  key={st}
+                  onClick={() => setStatusFilter(st)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors ${
+                    statusFilter === st
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {st === 'ALL' ? 'Semua Status' : st}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Surat Jalan Grid / List */}

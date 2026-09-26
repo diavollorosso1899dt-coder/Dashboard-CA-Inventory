@@ -25,6 +25,8 @@ import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/compo
 import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
 import { getItemSpecification } from '@/lib/assetSpecHelper';
 import UploadImageModal from '@/components/items/UploadImageModal';
+import AreaFilterPills from '@/components/ui/AreaFilterPills';
+import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
 
 const PR_COLUMNS: ColumnItem[] = [
   { id: 'rab_branch', label: 'No. RAB & Cabang', defaultVisible: true, alwaysVisible: true },
@@ -46,11 +48,27 @@ interface PurchaseRequirementViewProps {
 export default function PurchaseRequirementView({ initialItems, region }: PurchaseRequirementViewProps) {
   const searchParams = useSearchParams();
   const initialTab = searchParams.get('tab') === 'input' ? 'input' : 'monitoring';
+  const urlRegion = searchParams ? searchParams.get('region') : null;
 
+  const [selectedRegion, setSelectedRegion] = useState<StandardRegion>(normalizeRegion(urlRegion || region));
   const [activeTab, setActiveTab] = useState<'input' | 'monitoring'>(initialTab);
   const [items, setItems] = useState<AssetRequest[]>(initialItems);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+
+  // Sync selectedRegion with URL query param
+  React.useEffect(() => {
+    const paramRegion = searchParams ? searchParams.get('region') : null;
+    const next = normalizeRegion(paramRegion || region);
+    setSelectedRegion(next);
+  }, [searchParams, region]);
+
+  // Sync items when initialItems prop updates
+  React.useEffect(() => {
+    if (initialItems) {
+      setItems(initialItems);
+    }
+  }, [initialItems]);
 
   // Client-side pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -126,6 +144,9 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   };
 
   const filteredItems = items.filter((it) => {
+    const matchRegion = matchesRegion(it.region, selectedRegion);
+    if (!matchRegion) return false;
+
     const q = search.toLowerCase();
     const matchSearch =
       it.item_name.toLowerCase().includes(q) ||
@@ -205,6 +226,14 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+          <AreaFilterPills
+            value={selectedRegion}
+            onChange={(r) => {
+              setSelectedRegion(r);
+              setCurrentPage(1);
+            }}
+            syncUrl={true}
+          />
           <ColumnVisibilityPicker
             columns={PR_COLUMNS}
             visibleColumns={visibleColumns}

@@ -18,11 +18,17 @@ import {
   Check, 
   ShieldAlert,
   Building2,
-  ChevronDown 
+  ChevronDown,
+  Boxes,
+  Sparkles,
+  Layers
 } from 'lucide-react';
-import { AssetTransfer, Outlet, AssetRequest, TransferStatus, TransferItem } from '@/lib/supabase/types';
+import { AssetTransfer, Outlet, AssetRequest, TransferStatus, TransferItem, RequestOrder } from '@/lib/supabase/types';
+import { getItemImageUrl } from '@/lib/assetImageHelper';
 import { formatDateOnly } from '@/lib/utils/date-formatter';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
+import AreaFilterPills from '@/components/ui/AreaFilterPills';
+import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
 
 const TRANSFER_COLUMNS: ColumnItem[] = [
   { id: 'doc_number', label: 'No. Dokumen & Surat Jalan', defaultVisible: true, alwaysVisible: true },
@@ -38,13 +44,27 @@ interface TransferAssetViewProps {
   initialTransfers: AssetTransfer[];
   outlets: Outlet[];
   initialAssets?: AssetRequest[];
+  initialRequestOrders?: RequestOrder[];
 }
 
-export function TransferAssetView({ initialTransfers, outlets, initialAssets = [] }: TransferAssetViewProps) {
+export function TransferAssetView({
+  initialTransfers,
+  outlets,
+  initialAssets = [],
+  initialRequestOrders = []
+}: TransferAssetViewProps) {
   const searchParams = useSearchParams();
+  const urlRegion = searchParams ? searchParams.get('region') : null;
+  const [regionFilter, setRegionFilter] = useState<StandardRegion>(normalizeRegion(urlRegion));
+
   const [transfers, setTransfers] = useState<AssetTransfer[]>(initialTransfers);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | TransferStatus>('ALL');
+
+  // Sync regionFilter when URL parameter changes
+  useEffect(() => {
+    setRegionFilter(normalizeRegion(searchParams ? searchParams.get('region') : null));
+  }, [searchParams]);
 
   // Column Visibility
   const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
@@ -67,25 +87,111 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
   // Shortcut & Queue states
   const [isOutletMenuOpen, setIsOutletMenuOpen] = useState(false);
   const [selectedQueueOutlet, setSelectedQueueOutlet] = useState<string>('ALL');
+  const [queueSourceFilter, setQueueSourceFilter] = useState<'ALL' | 'RO_ONLY' | 'MONITORING_ONLY'>('ALL');
+  const [requestOrders, setRequestOrders] = useState<RequestOrder[]>(initialRequestOrders || []);
+  const [lastRoSyncTime, setLastRoSyncTime] = useState<Date>(new Date());
 
-  // Automatic Queue of Assets with 'Ready Antar'
-  const readyDistributionAssets = useMemo(() => {
+  // Real-time synchronization dengan Kelola RO (/api/distribution/ro)
+  useEffect(() => {
+    let isMounted = true;
+    const fetchLatestRo = async () => {
+      try {
+        const res = await fetch('/api/distribution/ro');
+        if (res.ok) {
+          const json = await res.json();
+          if (json.data && Array.isArray(json.data) && isMounted) {
+            setRequestOrders(json.data);
+            setLastRoSyncTime(new Date());
+          }
+        }
+      } catch (err) {
+        // silent fallback
+      }
+    };
+
+    fetchLatestRo();
+    const interval = setInterval(fetchLatestRo, 3500);
+
+    const handleRoUpdated = () => fetchLatestRo();
+    window.addEventListener('storage', handleRoUpdated);
+    window.addEventListener('ca_ro_updated', handleRoUpdated);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      window.removeEventListener('storage', handleRoUpdated);
+      window.removeEventListener('ca_ro_updated', handleRoUpdated);
+    };
+  }, []);
+
+  // Outlet Region Map for fast lookup
+  const outletRegionMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (outlets || []).forEach((o) => {
+      const name = ((o as any).name || (o as any).branch_name || (o as any).nama || '').toLowerCase().trim();
+      if (name) map.set(name, (o as any).region);
+    });
+    return map;
+  }, [outlets]);
+
+  // Ekstrak item Ready Stock dari Kelola RO secara Real-Time
+  const roReadyAssets = useMemo(() => {
+    const list: AssetRequest[] = [];
+    (requestOrders || []).forEach((ro) => {
+      if (ro.status === 'REJECTED' || ro.current_stage === 'DIBATALKAN') return;
+      if (!matchesRegion(ro.region, regionFilter)) return;
+      (ro.items || []).forEach((item) => {
+        if (item.stock_source === 'GUDANG_SCGA') {
+          list.push({
+            id: `ro-${ro.id}-${item.id}`,
+            external_id: ro.ro_number,
+            branch_name: ro.branch_name,
+            region: ro.region,
+            item_name: item.item_name,
+            system_item_name: item.item_name,
+            quantity_needed: item.quantity_ordered,
+            classification: 'Ready Stock (Gudang SCGA)',
+            specification: item.specification || '',
+            photo_url: item.photo_url || null,
+            item_delivery_status: 'Ready Antar',
+            notes: `No. RO: ${ro.ro_number} • Pemohon: ${ro.requester_name}`,
+            created_at: ro.created_at || new Date().toISOString(),
+            updated_at: ro.updated_at || new Date().toISOString(),
+          } as AssetRequest);
+        }
+      });
+    });
+    return list;
+  }, [requestOrders, regionFilter]);
+
+  // Antrean aset dari tabel Monitoring Permohonan Aset
+  const baseMonitoringReadyAssets = useMemo(() => {
     let storedIds: string[] = [];
     try {
       const saved = localStorage.getItem('ca_system_transfer_ids');
       if (saved) {
         storedIds = JSON.parse(saved);
       }
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) {}
 
     return (initialAssets || []).filter((a) => {
+      if (!matchesRegion(a.region, regionFilter)) return false;
       const status = (a.item_delivery_status || '').trim().toLowerCase();
       const aId = a.id || a.external_id;
       return status === 'ready antar' || Boolean(a.is_system_transfer) || storedIds.includes(aId);
     });
-  }, [initialAssets]);
+  }, [initialAssets, regionFilter]);
+
+  // Automatic Queue of Assets (Gabungan Kelola RO Ready Stock & Monitoring Aset)
+  const readyDistributionAssets = useMemo(() => {
+    if (queueSourceFilter === 'RO_ONLY') {
+      return roReadyAssets;
+    }
+    if (queueSourceFilter === 'MONITORING_ONLY') {
+      return baseMonitoringReadyAssets;
+    }
+    return [...roReadyAssets, ...baseMonitoringReadyAssets];
+  }, [roReadyAssets, baseMonitoringReadyAssets, queueSourceFilter]);
 
   // Group ready assets by outlet/branch name
   const groupedReadyAssets = useMemo(() => {
@@ -342,15 +448,22 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
   // Metrics calculation
   const metrics = useMemo(() => {
-    const total = transfers.length;
-    const inTransit = transfers.filter((t) => t.status === 'IN_TRANSIT').length;
-    const received = transfers.filter((t) => t.status === 'RECEIVED' || t.status === 'COMPLETED').length;
+    const regionMatching = transfers.filter((t) => {
+      const tReg = (t as any).region || outletRegionMap.get((t.to_location || '').toLowerCase().trim()) || (t.to_location.toLowerCase().includes('kalbar') ? 'KALBAR' : 'JABODETABEK');
+      return matchesRegion(tReg, regionFilter);
+    });
+    const total = regionMatching.length;
+    const inTransit = regionMatching.filter((t) => t.status === 'IN_TRANSIT').length;
+    const received = regionMatching.filter((t) => t.status === 'RECEIVED' || t.status === 'COMPLETED').length;
     return { total, inTransit, received };
-  }, [transfers]);
+  }, [transfers, regionFilter, outletRegionMap]);
 
   // Filtered transfers
   const filteredTransfers = useMemo(() => {
     return transfers.filter((t) => {
+      const tReg = (t as any).region || outletRegionMap.get((t.to_location || '').toLowerCase().trim()) || (t.to_location.toLowerCase().includes('kalbar') ? 'KALBAR' : 'JABODETABEK');
+      if (!matchesRegion(tReg, regionFilter)) return false;
+
       if (statusFilter !== 'ALL' && t.status !== statusFilter) return false;
       if (search.trim()) {
         const q = search.toLowerCase();
@@ -367,7 +480,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
       }
       return true;
     });
-  }, [transfers, statusFilter, search]);
+  }, [transfers, statusFilter, search, regionFilter, outletRegionMap]);
 
   return (
     <div className="space-y-6">
@@ -420,13 +533,16 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
         <div className="panel-card p-4 flex items-center justify-between border-l-4 border-l-blue-500">
           <div>
-            <div className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] uppercase">
-              Aset Ready Antar
+            <div className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] uppercase flex items-center gap-1.5">
+              <span>Aset Siap Distribusi</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
             </div>
             <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-0.5">
               {readyDistributionAssets.length}
             </div>
-            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Antrean Siap Distribusi</div>
+            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">
+              {roReadyAssets.length} Ready Stock RO • {baseMonitoringReadyAssets.length} Monitoring
+            </div>
           </div>
           <div className="h-10 w-10 rounded-2xl bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center text-blue-600 dark:text-blue-400">
             <Package className="h-5 w-5" />
@@ -436,8 +552,14 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
       {/* 2. Top Action & Filter Toolbar */}
       <div className="panel-card p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div className="flex items-center gap-2 flex-1 max-w-lg">
-          <div className="relative flex-1">
+        <div className="flex items-center gap-2 flex-1 max-w-2xl flex-wrap">
+          <AreaFilterPills
+            value={regionFilter}
+            onChange={(r) => setRegionFilter(r)}
+            syncUrl={true}
+          />
+
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#747775] dark:text-[#8e918f]" />
             <input
               type="text"
@@ -489,7 +611,7 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
         </div>
       </div>
 
-      {/* 3. Antrean Distribusi Otomatis (Ready Antar) - Dikelompokkan Berdasarkan Nama Outlet */}
+      {/* 3. Antrean Distribusi Otomatis (Ready Stock Kelola RO & Ready Antar) - Dikelompokkan Berdasarkan Nama Outlet */}
       <div className="panel-card p-4 space-y-3.5 border-2 border-[#0b57d0]/30 dark:border-[#a8c7fa]/30 bg-[#e8f0fe]/30 dark:bg-[#004a77]/20">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#c2e7ff] dark:border-[#004a77] pb-2.5">
           <div className="flex items-center gap-2">
@@ -497,12 +619,18 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
               {readyDistributionAssets.length}
             </span>
             <div>
-              <h3 className="font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-1.5">
-                <Truck className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
-                Antrean Aset Siap Distribusi (Status: Ready Antar)
-              </h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-1.5">
+                  <Truck className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                  <span>Antrean Aset Siap Distribusi (Ready Stock Kelola RO)</span>
+                </h3>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>Live Real-Time Sync</span>
+                </span>
+              </div>
               <p className="text-[11px] text-[#444746] dark:text-[#c4c7c5]">
-                Dikelompokkan berdasarkan nama outlet tujuan. Terbitkan Surat Jalan Distribusi per cabang secara otomatis.
+                Menampilkan item berstatus <strong>Ready Stock (Gudang SCGA)</strong> dari Kelola RO secara real-time dan siap diterbitkan Surat Jalan Distribusi.
               </p>
             </div>
           </div>
@@ -571,6 +699,48 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
           </div>
         </div>
 
+        {/* Source Filter Tabs */}
+        <div className="flex flex-wrap items-center gap-2 justify-between">
+          <div className="flex items-center gap-1 bg-white/80 dark:bg-[#1e1f20]/80 p-1 rounded-xl border border-[#c2e7ff] dark:border-[#004a77] text-xs">
+            <button
+              onClick={() => setQueueSourceFilter('ALL')}
+              className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                queueSourceFilter === 'ALL'
+                  ? 'bg-[#0b57d0] text-white shadow-xs'
+                  : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
+              }`}
+            >
+              Semua Sumber ({roReadyAssets.length + baseMonitoringReadyAssets.length})
+            </button>
+            <button
+              onClick={() => setQueueSourceFilter('RO_ONLY')}
+              className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                queueSourceFilter === 'RO_ONLY'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-emerald-700 dark:text-emerald-300 hover:text-emerald-900 dark:hover:text-emerald-100'
+              }`}
+            >
+              <Sparkles className="w-3 h-3" />
+              <span>Ready Stock Kelola RO ({roReadyAssets.length})</span>
+            </button>
+            <button
+              onClick={() => setQueueSourceFilter('MONITORING_ONLY')}
+              className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                queueSourceFilter === 'MONITORING_ONLY'
+                  ? 'bg-[#0b57d0] text-white shadow-xs'
+                  : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
+              }`}
+            >
+              Monitoring Status Aset ({baseMonitoringReadyAssets.length})
+            </button>
+          </div>
+
+          <div className="text-[10px] text-slate-500 flex items-center gap-1">
+            <span>Sinkronisasi terakhir:</span>
+            <span className="font-mono font-semibold">{lastRoSyncTime.toLocaleTimeString()}</span>
+          </div>
+        </div>
+
         {/* Filter Tab Berdasarkan Outlet */}
         {outletGroups.length > 1 && (
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
@@ -605,11 +775,11 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
         {readyDistributionAssets.length === 0 ? (
           <div className="py-4 text-center text-xs text-[#747775] dark:text-[#8e918f]">
-            Belum ada aset dengan status <strong>Ready Antar</strong>. Ubah status pengiriman barang di{' '}
-            <a href="/monitoring/assets" className="text-[#0b57d0] dark:text-[#a8c7fa] underline font-semibold">
-              Monitoring Status Aset
+            Belum ada aset dengan status <strong>Ready Stock</strong> dari Kelola RO atau <strong>Ready Antar</strong>. Ubah status item di{' '}
+            <a href="/distribution/ro" className="text-[#0b57d0] dark:text-[#a8c7fa] underline font-semibold">
+              Kelola RO
             </a>{' '}
-            menjadi &quot;Ready Antar&quot; agar otomatis muncul di sini.
+            menjadi &quot;Ready Stock (Gudang SCGA)&quot; agar otomatis muncul di sini.
           </div>
         ) : (
           <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
@@ -650,42 +820,64 @@ export function TransferAssetView({ initialTransfers, outlets, initialAssets = [
 
                   {/* Asset Items Grid in Outlet */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                    {group.assets.map((asset) => (
-                      <div
-                        key={asset.id || asset.external_id}
-                        className="flex items-center justify-between rounded-xl border border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 p-2.5 hover:border-[#0b57d0]/40 transition-colors"
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
-                            {asset.item_name}
-                          </div>
-                          <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] truncate flex items-center gap-1.5 mt-0.5">
-                            <strong className="text-[#0b57d0] dark:text-[#a8c7fa]">
-                              {asset.quantity_needed || 1} unit
-                            </strong>
-                            {asset.classification && (
-                              <>
-                                <span>•</span>
-                                <span className="text-[#747775] dark:text-[#8e918f] truncate max-w-[90px]">
-                                  {asset.classification}
-                                </span>
-                              </>
-                            )}
-                            <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/60 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 dark:text-emerald-300">
-                              Ready Antar
-                            </span>
-                          </div>
-                        </div>
+                    {group.assets.map((asset) => {
+                      const isFromRo = asset.id?.startsWith('ro-');
+                      const photoUrl = asset.photo_url || getItemImageUrl(asset.item_name);
 
-                        <button
-                          onClick={() => handleProcessFromQueue([asset], group.branchName)}
-                          className="rounded-full bg-white dark:bg-[#1e1f20] border border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors shrink-0 shadow-xs"
-                          title="Kirim hanya item ini"
+                      return (
+                        <div
+                          key={asset.id || asset.external_id}
+                          className={`flex items-center justify-between rounded-xl border p-2.5 transition-colors ${
+                            isFromRo
+                              ? 'border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/40 dark:bg-emerald-950/20 hover:border-emerald-400'
+                              : 'border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 hover:border-[#0b57d0]/40'
+                          }`}
                         >
-                          Kirim Ini Saja
-                        </button>
-                      </div>
-                    ))}
+                          <div className="flex items-center gap-2 min-w-0 pr-2">
+                            {/* Thumbnail Foto Aset */}
+                            {photoUrl ? (
+                              <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={photoUrl} alt={asset.item_name} className="w-full h-full object-cover" />
+                              </div>
+                            ) : (
+                              <div className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-center shrink-0">
+                                <Package className="w-4 h-4 text-slate-400" />
+                              </div>
+                            )}
+
+                            <div className="min-w-0">
+                              <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
+                                {asset.item_name}
+                              </div>
+                              <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] truncate flex items-center gap-1.5 mt-0.5">
+                                <strong className={isFromRo ? 'text-emerald-700 dark:text-emerald-300 font-mono' : 'text-[#0b57d0] dark:text-[#a8c7fa] font-mono'}>
+                                  {asset.quantity_needed || 1} unit
+                                </strong>
+
+                                {isFromRo ? (
+                                  <span className="rounded-full bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1">
+                                    <span>RO: {asset.external_id}</span>
+                                  </span>
+                                ) : (
+                                  <span className="rounded-full bg-blue-100 dark:bg-blue-950/60 px-1.5 py-0.5 text-[9px] font-bold text-blue-800 dark:text-blue-300">
+                                    Ready Antar
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => handleProcessFromQueue([asset], group.branchName)}
+                            className="rounded-full bg-white dark:bg-[#1e1f20] border border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors shrink-0 shadow-xs cursor-pointer"
+                            title="Kirim hanya item ini"
+                          >
+                            Kirim Ini Saja
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}

@@ -36,6 +36,7 @@ import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
 import UploadImageModal from './UploadImageModal';
 import EditSpecModal from './EditSpecModal';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
+import AreaFilterPills from '@/components/ui/AreaFilterPills';
 
 const ITEM_MASTER_COLUMNS: ColumnItem[] = [
   { id: 'image', label: 'Gambar', defaultVisible: true },
@@ -201,33 +202,37 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
           </div>
         </div>
 
-        {/* Tab Selection */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
-          <button
-            onClick={() => setActiveTab('master')}
-            className={`interactive-tap px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-              activeTab === 'master'
-                ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-            }`}
-          >
-            Master Aset (Gambar &amp; Spek)
-          </button>
-          <button
-            onClick={() => setActiveTab('new')}
-            className={`interactive-tap flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-              activeTab === 'new'
-                ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-            }`}
-          >
-            <span>Daftar Item Baru</span>
-            {newItemCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 font-bold">
-                {newItemCount}
-              </span>
-            )}
-          </button>
+        <div className="flex items-center gap-3 flex-wrap">
+          <AreaFilterPills syncUrl={true} />
+
+          {/* Tab Selection */}
+          <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+            <button
+              onClick={() => setActiveTab('master')}
+              className={`interactive-tap px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+                activeTab === 'master'
+                  ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+              }`}
+            >
+              Master Aset (Gambar &amp; Spek)
+            </button>
+            <button
+              onClick={() => setActiveTab('new')}
+              className={`interactive-tap flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+                activeTab === 'new'
+                  ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+              }`}
+            >
+              <span>Daftar Item Baru</span>
+              {newItemCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 font-bold">
+                  {newItemCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 

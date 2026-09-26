@@ -270,6 +270,7 @@ export interface ROItem {
   received_qty?: number;
   condition?: 'BAIK' | 'RUSAK' | 'KURANG' | string;
   notes?: string;
+  photo_url?: string | null;
 }
 
 export interface RequestOrder {
@@ -320,6 +321,7 @@ export interface RequestOrder {
   rejection_reason?: string | null;
   rejected_at?: string | null;
   created_at: string;
+  updated_at?: string;
 }
 
 export type SJStatus = 'SHIPPED' | 'DELIVERED' | 'Diproses' | 'Dalam Pengiriman' | 'Selesai' | 'Dibatalkan';

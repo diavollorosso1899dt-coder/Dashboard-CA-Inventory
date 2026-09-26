@@ -2414,7 +2414,7 @@ export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): P
         opening_date: ro.target_delivery_date || null,
         pr_datetime: ro.created_at || new Date().toISOString(),
         is_direct_shipment: false,
-        po_date: ro.pr_po_number ? ro.created_at : null,
+        po_date: ro.pr_po_number ? (ro.created_at || null) : null,
         order_type: 'INTERNAL',
         vendor_name: ro.pr_vendor_name || '',
         initial_price: it.unit_price || 0,
