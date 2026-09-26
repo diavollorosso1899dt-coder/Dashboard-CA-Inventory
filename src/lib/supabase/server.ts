@@ -14,8 +14,8 @@ import {
 } from './types';
 import { fetchAllSheetsData } from '../sync/sheet-fetcher';
 import { getDaysRemaining } from '../utils/date-formatter';
-import { getItemImageUrl } from '@/lib/assetImageHelper';
-import { getItemSpecification } from '@/lib/assetSpecHelper';
+import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
+import { getItemSpecification, setItemSpecificationOverride } from '@/lib/assetSpecHelper';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -678,6 +678,31 @@ export async function updateAssetRequest(
       cache.items[index] = updated;
       cache.manualEdits.set(id, updatePayload);
       return { success: true, data: updated };
+    }
+
+    // Support updating items from Request Orders (PR items)
+    if (id.startsWith('ro-pr-') || id.startsWith('roi-') || id.includes('RO-') || id.includes('ro-')) {
+      cache.manualEdits.set(id, updatePayload);
+      for (const ro of cache.requestOrders || []) {
+        const item = (ro.items || []).find(
+          (it) => it.id === id || `ro-pr-${ro.id}-${encodeURIComponent(it.item_name)}` === id
+        );
+        if (item) {
+          if (payload.procurement_status === 'selesai') {
+            item.stock_source = 'GUDANG_SCGA';
+          }
+          if (payload.vendor_name) ro.pr_vendor_name = payload.vendor_name;
+          if (payload.po_date) ro.pr_po_number = ro.pr_po_number || 'PO-AUTO';
+          break;
+        }
+      }
+      return {
+        success: true,
+        data: {
+          id,
+          ...payload,
+        } as any,
+      };
     }
 
     return { success: false, error: 'Item not found' };
@@ -1725,16 +1750,34 @@ export async function updateRequestOrder(id: string, updates: Partial<RequestOrd
   const admin = getAdminClient();
   const updateData: any = { ...updates, updated_at: new Date().toISOString() };
 
+  // Find corresponding order in cache to extract ro_number & raw_ro_id for comprehensive matching
+  const cachedOrder =
+    (global.__RO_CACHE__?.items || []).find((r: RequestOrder) => r.id === id || r.ro_number === id) ||
+    cache.requestOrders.find((r) => r.id === id || r.ro_number === id);
+
+  const roNumber = updates.ro_number || cachedOrder?.ro_number;
+  const rawRoId = cachedOrder?.raw_ro_id || (roNumber ? roNumber.replace(/^RO-?/i, '') : null);
+  const cleanRawId = rawRoId ? rawRoId.replace(/[^\w]/g, '') : null;
+
   if (admin) {
     try {
-      let q = admin.from('request_orders').update(updateData);
       if (isUuid(id)) {
-        q = q.eq('id', id);
-      } else {
-        q = q.eq('ro_number', id);
+        const { error } = await admin.from('request_orders').update(updateData).eq('id', id);
+        if (error) console.error('[Supabase updateRequestOrder by id error]:', error.message);
       }
-      const { error } = await q;
-      if (error) console.error('[Supabase updateRequestOrder error]:', error.message);
+
+      // Also update any matching rows by ro_number or raw_ro_id to synchronize duplicate entries in Supabase
+      if (rawRoId) {
+        await admin
+          .from('request_orders')
+          .update(updateData)
+          .or(`raw_ro_id.eq.${rawRoId},ro_number.eq.RO-${rawRoId},ro_number.ilike.%${cleanRawId}%`);
+      } else if (roNumber) {
+        await admin
+          .from('request_orders')
+          .update(updateData)
+          .eq('ro_number', roNumber);
+      }
     } catch (err: any) {
       console.error('[Supabase updateRequestOrder exception]:', err.message);
     }
@@ -1742,23 +1785,25 @@ export async function updateRequestOrder(id: string, updates: Partial<RequestOrd
 
   // Update in-memory cache secara langsung agar response super cepat tanpa lag
   if (global.__RO_CACHE__ && global.__RO_CACHE__.items) {
-    const memIdx = global.__RO_CACHE__.items.findIndex((r: RequestOrder) => r.id === id || r.ro_number === id);
-    if (memIdx !== -1) {
-      global.__RO_CACHE__.items[memIdx] = {
-        ...global.__RO_CACHE__.items[memIdx],
-        ...updates,
-      };
-    }
+    global.__RO_CACHE__.items = global.__RO_CACHE__.items.map((r: RequestOrder) => {
+      const match =
+        r.id === id ||
+        r.ro_number === id ||
+        (roNumber && r.ro_number === roNumber) ||
+        (cleanRawId && (r.raw_ro_id || '').replace(/[^\w]/g, '') === cleanRawId);
+      return match ? { ...r, ...updates } : r;
+    });
   }
 
-  const idx = cache.requestOrders.findIndex((r) => r.id === id || r.ro_number === id);
-  if (idx !== -1) {
-    cache.requestOrders[idx] = {
-      ...cache.requestOrders[idx],
-      ...updates,
-    };
-    return true;
-  }
+  cache.requestOrders = cache.requestOrders.map((r) => {
+    const match =
+      r.id === id ||
+      r.ro_number === id ||
+      (roNumber && r.ro_number === roNumber) ||
+      (cleanRawId && (r.raw_ro_id || '').replace(/[^\w]/g, '') === cleanRawId);
+    return match ? { ...r, ...updates } : r;
+  });
+
   return true;
 }
 
@@ -2312,12 +2357,88 @@ export async function updateDispositionStatus(
 
 export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): Promise<AssetRequest[]> {
   const { data: allItems } = await getAssetRequests({ region, limit: 5000 });
-  return allItems.filter(
+  const sheetPrItems = allItems.filter(
     (it) =>
       it.quantity_pr > 0 ||
       it.stock_status.includes('Not Ready') ||
       (it.procurement_status && it.procurement_status !== 'selesai')
   );
+
+  // Fetch RO items that require PR (stock_source === 'PR_VENDOR')
+  const roOrders = await getRequestOrders();
+  const roPrItems: AssetRequest[] = [];
+  const seenIds = new Set<string>(sheetPrItems.map((it) => it.id));
+
+  for (const ro of roOrders) {
+    if (ro.status === 'REJECTED' || (ro.status as string) === 'CANCELLED' || ro.current_stage === 'DIBATALKAN') continue;
+    if (region !== 'ALL' && ro.region !== region) continue;
+
+    const prItems = (ro.items || []).filter((it) => it.stock_source === 'PR_VENDOR');
+    for (const it of prItems) {
+      const itemId = it.id || `ro-pr-${ro.id}-${encodeURIComponent(it.item_name)}`;
+      if (seenIds.has(itemId)) continue;
+      seenIds.add(itemId);
+
+      const manualEdit = cache.manualEdits?.get(itemId);
+      const isCompleted = ro.current_stage === 'READY_STOCK' || ro.status === 'READY_STOCK' || ro.current_stage === 'SELESAI';
+      const procStatus: 'selesai' | 'proses' | 'belum' | 'po' = isCompleted
+        ? 'selesai'
+        : ro.pr_po_number
+        ? 'po'
+        : 'proses';
+
+      const assetReq: AssetRequest = {
+        id: itemId,
+        external_id: ro.ro_number,
+        region: ro.region === 'KALBAR' ? 'KALBAR' : 'JABODETABEK',
+        sheet_row_index: 0,
+        order_datetime: ro.request_date || ro.created_at || new Date().toISOString(),
+        requester_name: ro.requester_name || 'Outlet Staff',
+        requester_division: 'Logistik RO',
+        category: 'Perlengkapan RO',
+        branch_name: ro.branch_name,
+        classification: it.item_type || 'Aset RO',
+        item_name: it.item_name,
+        system_item_name: it.item_name || '',
+        specification: (it as any).specification || getItemSpecification(it.item_name) || '',
+        photo_url: (it as any).photo_url || getItemImageUrl(it.item_name) || null,
+        quantity_needed: it.quantity_ordered,
+        rab_number: ro.ro_number,
+        rab_link: '',
+        rab_price: it.unit_price || 0,
+        rab_total: it.total_price || (it.unit_price || 0) * it.quantity_ordered,
+        acc_kadiv_request: true,
+        stock_status: 'Not Ready (Stok Kosong)',
+        quantity_stock_allocated: 0,
+        quantity_pr: it.quantity_ordered,
+        opening_date: ro.target_delivery_date || null,
+        pr_datetime: ro.created_at || new Date().toISOString(),
+        is_direct_shipment: false,
+        po_date: ro.pr_po_number ? ro.created_at : null,
+        order_type: 'INTERNAL',
+        vendor_name: ro.pr_vendor_name || '',
+        initial_price: it.unit_price || 0,
+        deal_price: it.unit_price || 0,
+        realized_price: it.total_price || 0,
+        negotiation_proof: null,
+        acc_kadiv_procurement: false,
+        procurement_status: procStatus,
+        item_delivery_status: isCompleted ? 'Ready Gudang SCGA' : 'On Proses',
+        received_date: ro.arrival_datetime || null,
+        lead_time_days: 0,
+        pic_receiver: ro.pic_receiver || '',
+        notes: `Sumber dari Request Order ${ro.ro_number}`,
+        is_manually_edited: false,
+        created_at: ro.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        ...(manualEdit || {}),
+      };
+
+      roPrItems.push(assetReq);
+    }
+  }
+
+  return [...roPrItems, ...sheetPrItems];
 }
 
 export interface MasterAssetItem {
@@ -2363,6 +2484,54 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
     const seenNames = new Set<string>();
     const classifications = new Set<string>();
 
+    // Muat foto dan spesifikasi langsung dari tabel Database Supabase (asset_requests) & Storage
+    const dbImages: Record<string, string> = {};
+    const dbSpecs: Record<string, string> = {};
+    const supabaseManifest: Record<string, string> = {};
+    const supabaseSpecs: Record<string, string> = {};
+    const admin = getAdminClient();
+    if (admin) {
+      try {
+        const [manifestRes, specRes, dbItemsRes] = await Promise.all([
+          admin.storage.from('item-images').download('manifest.json'),
+          admin.storage.from('item-images').download('item-specifications.json'),
+          admin
+            .from('asset_requests')
+            .select('item_name, system_item_name, photo_url, specification')
+            .or('photo_url.not.is.null,specification.not.is.null'),
+        ]);
+
+        if (manifestRes.data) {
+          const text = await manifestRes.data.text();
+          Object.assign(supabaseManifest, JSON.parse(text));
+        }
+        if (specRes.data) {
+          const text = await specRes.data.text();
+          Object.assign(supabaseSpecs, JSON.parse(text));
+        }
+        if (dbItemsRes.data && Array.isArray(dbItemsRes.data)) {
+          for (const row of dbItemsRes.data) {
+            const name = (row.item_name || row.system_item_name)?.trim();
+            if (name) {
+              const lower = name.toLowerCase();
+              if (row.photo_url) {
+                dbImages[name] = row.photo_url;
+                dbImages[lower] = row.photo_url;
+                setItemImageOverride(name, row.photo_url);
+              }
+              if (row.specification) {
+                dbSpecs[name] = row.specification;
+                dbSpecs[lower] = row.specification;
+                setItemSpecificationOverride(name, row.specification);
+              }
+            }
+          }
+        }
+      } catch (storageErr) {
+        console.warn('[Supabase Database / Storage] Gagal mengunduh data:', storageErr);
+      }
+    }
+
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
       if (!line.trim()) continue;
@@ -2388,10 +2557,24 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
       const imgRaw = cols[10]?.trim();
       const specRaw = cols[11]?.trim();
 
-      // Prioritas 1: Ambil foto dari media hasil ekstraksi spreadsheet master
-      let photoUrl: string | null = getItemImageUrl(rawName);
-      const customSpec = getItemSpecification(rawName);
-      let specification = customSpec !== null ? customSpec : (specRaw || '');
+      // Prioritas 1: Ambil foto dari Supabase Database (asset_requests), Storage manifest, atau local helper
+      const rawLower = rawName.toLowerCase();
+      let photoUrl: string | null =
+        dbImages[rawName] ||
+        dbImages[rawLower] ||
+        supabaseManifest[rawName] ||
+        supabaseManifest[rawLower] ||
+        getItemImageUrl(rawName);
+
+      const customSpec =
+        dbSpecs[rawName] !== undefined
+          ? dbSpecs[rawName]
+          : dbSpecs[rawLower] !== undefined
+          ? dbSpecs[rawLower]
+          : supabaseSpecs[rawName] !== undefined
+          ? supabaseSpecs[rawName]
+          : getItemSpecification(rawName);
+      let specification = customSpec !== null && customSpec !== undefined ? customSpec : (specRaw || '');
 
       if (!photoUrl) {
         if (imgRaw && (imgRaw.startsWith('http') || imgRaw.includes('drive.google.com'))) {
@@ -2408,6 +2591,13 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
         if (driveMatch && driveMatch[1]) {
           photoUrl = `https://drive.google.com/thumbnail?id=${driveMatch[1]}&sz=w800`;
         }
+      }
+
+      if (photoUrl) {
+        setItemImageOverride(rawName, photoUrl);
+      }
+      if (customSpec) {
+        setItemSpecificationOverride(rawName, customSpec);
       }
 
       const key = rawName.toLowerCase();
@@ -2454,14 +2644,35 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
                 const rUnit = rCols[cols.unitIdx]?.trim() || 'unit';
                 const rTipe = rCols[cols.tipeIdx]?.trim() || 'Perlengkapan Tetap';
                 classifications.add(rTipe);
+
+                const rPhoto =
+                  dbImages[rItemName] ||
+                  dbImages[rKey] ||
+                  supabaseManifest[rItemName] ||
+                  supabaseManifest[rKey] ||
+                  getItemImageUrl(rItemName) ||
+                  null;
+
+                const rSpec =
+                  dbSpecs[rItemName] !== undefined
+                    ? dbSpecs[rItemName]
+                    : dbSpecs[rKey] !== undefined
+                    ? dbSpecs[rKey]
+                    : supabaseSpecs[rItemName] !== undefined
+                    ? supabaseSpecs[rItemName]
+                    : getItemSpecification(rItemName) || '';
+
+                if (rPhoto) setItemImageOverride(rItemName, rPhoto);
+                if (rSpec) setItemSpecificationOverride(rItemName, rSpec);
+
                 items.push({
                   id: `mat-ro-${items.length + 1}`,
                   item_name: rItemName,
                   system_item_name: rItemName,
                   unit: rUnit,
                   classification: rTipe,
-                  specification: getItemSpecification(rItemName) || '',
-                  photo_url: getItemImageUrl(rItemName) || null,
+                  specification: rSpec,
+                  photo_url: rPhoto,
                   standard_rab_price: parseIndoCurrency(rCols[cols.hargaIdx]),
                   total_requests: 1,
                   total_units_needed: 1,
@@ -2473,6 +2684,44 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
         }
       } catch (e) {
         console.warn(`Could not supplement master catalog with items from ${roSrc.name}:`, e);
+      }
+    }
+
+    // Pastikan seluruh entri master item yang ada di tabel Supabase Database (asset_requests) juga masuk ke katalog
+    if (admin) {
+      try {
+        const { data: dbCustomItems } = await admin
+          .from('asset_requests')
+          .select('item_name, system_item_name, classification, specification, photo_url, rab_price')
+          .ilike('external_id', 'MASTER-%');
+
+        if (dbCustomItems && Array.isArray(dbCustomItems)) {
+          for (const cItem of dbCustomItems) {
+            const cName = (cItem.item_name || cItem.system_item_name)?.trim();
+            if (!cName) continue;
+            const cKey = cName.toLowerCase();
+            if (!seenNames.has(cKey)) {
+              seenNames.add(cKey);
+              const cClass = cItem.classification || 'Perlengkapan Tetap';
+              classifications.add(cClass);
+              items.push({
+                id: `mat-db-${items.length + 1}`,
+                item_name: cName,
+                system_item_name: cName,
+                unit: 'unit',
+                classification: cClass,
+                specification: cItem.specification || dbSpecs[cKey] || '',
+                photo_url: cItem.photo_url || dbImages[cKey] || null,
+                standard_rab_price: Number(cItem.rab_price) || 0,
+                total_requests: 1,
+                total_units_needed: 1,
+                is_new_item: true,
+              });
+            }
+          }
+        }
+      } catch (dbErr) {
+        console.warn('Could not supplement catalog with custom DB items:', dbErr);
       }
     }
 
@@ -2509,6 +2758,35 @@ export async function getMasterAssetCatalog(): Promise<MasterAssetItem[]> {
 
   return cachedMasterCatalog || [];
 }
+
+export function updateCachedMasterItem(
+  itemName: string,
+  updates: { photoUrl?: string | null; specification?: string }
+) {
+  if (!itemName) return;
+  const targetLower = itemName.toLowerCase().trim();
+
+  if (updates.photoUrl) {
+    setItemImageOverride(itemName, updates.photoUrl);
+  }
+  if (updates.specification !== undefined) {
+    setItemSpecificationOverride(itemName, updates.specification);
+  }
+
+  if (cachedMasterCatalog) {
+    const found = cachedMasterCatalog.find((it) => it.item_name.toLowerCase().trim() === targetLower);
+    if (found) {
+      if (updates.photoUrl !== undefined) found.photo_url = updates.photoUrl;
+      if (updates.specification !== undefined) found.specification = updates.specification;
+    }
+  }
+}
+
+export function invalidateMasterCatalogCache() {
+  cachedMasterCatalog = null;
+  masterCatalogLastFetched = 0;
+}
+
 
 // ==============================================================================
 // 6. OPERATIONAL WORKFLOW PIPELINE (DASHBOARD FLOW RANCANGAN)

@@ -628,7 +628,9 @@
     "Keset Karet Mie - Uk 40x60 - Alternatif": "/uploads/master-assets/item_2004.png",
     "Pompa semprot (tambahan)": "/uploads/master-assets/item_2006.png",
     "(Jadul) Angklung": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/_jadul_angklung_1790073178267.webp",
-    "(Jadul) celengan ayam": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/_jadul_celengan_ayam_1790073220655.webp"
+    "(Jadul) celengan ayam": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/_jadul_celengan_ayam_1790073220655.webp",
+    "Tiang Gorden": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/tiang_gorden_1790402970550.webp",
+    "tiang gorden": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/tiang_gorden_1790402970550.webp"
   },
   "normalized": {
     "dispenser sabun tempel": "/uploads/master-assets/item_16.png",
@@ -1257,7 +1259,8 @@
     "keset karet mie uk 40x60 alternatif": "/uploads/master-assets/item_2004.png",
     "pompa semprot tambahan": "/uploads/master-assets/item_2006.png",
     "angklung": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/_jadul_angklung_1790073178267.webp",
-    "celengan ayam": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/_jadul_celengan_ayam_1790073220655.webp"
+    "celengan ayam": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/_jadul_celengan_ayam_1790073220655.webp",
+    "tiang gorden": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/tiang_gorden_1790402970550.webp"
   },
   "generatedAt": "2026-09-22T09:57:03.341Z",
   "totalItemsWithImages": 627

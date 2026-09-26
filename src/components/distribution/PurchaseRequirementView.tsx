@@ -144,12 +144,6 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   const safePage = Math.min(currentPage, totalPages);
   const paginatedItems = pageSize === 0 ? filteredItems : filteredItems.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  // KPI Metrics
-  const totalPrUnits = items.reduce((acc, it) => acc + (it.quantity_pr || it.quantity_needed || 0), 0);
-  const totalPoCount = items.filter((it) => it.procurement_status === 'po' || it.po_date).length;
-  const totalSelesaiCount = items.filter((it) => it.procurement_status === 'selesai').length;
-  const totalProsesCount = items.filter((it) => it.procurement_status === 'proses').length;
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -193,29 +187,6 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs font-medium text-slate-500">Total Item PR</span>
-          <div className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{items.length}</div>
-          <span className="text-[11px] text-slate-400">{totalPrUnits} unit barang</span>
-        </div>
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs font-medium text-amber-600 dark:text-amber-400">Dalam Proses PR</span>
-          <div className="text-2xl font-bold text-amber-600 mt-1">{totalProsesCount}</div>
-          <span className="text-[11px] text-slate-400">Negosiasi vendor</span>
-        </div>
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs font-medium text-blue-600 dark:text-blue-400">Sudah Terbit PO</span>
-          <div className="text-2xl font-bold text-blue-600 mt-1">{totalPoCount}</div>
-          <span className="text-[11px] text-slate-400">Menunggu pengiriman</span>
-        </div>
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Selesai PR / Diterima</span>
-          <div className="text-2xl font-bold text-emerald-600 mt-1">{totalSelesaiCount}</div>
-          <span className="text-[11px] text-slate-400">Lengkap</span>
-        </div>
-      </div>
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
@@ -293,7 +264,14 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                     <tr key={it.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
                       {isVisible('rab_branch') && (
                         <td className="py-3.5 px-4">
-                          <div className="font-mono font-bold text-blue-600 dark:text-blue-400">{it.rab_number || '-'}</div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{it.rab_number || '-'}</span>
+                            {Boolean(it.rab_number && (it.rab_number.startsWith('RO-') || it.rab_number.startsWith('RO') || it.notes?.includes('Request Order'))) && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-orange-100 dark:bg-orange-950/60 text-orange-800 dark:text-orange-300 border border-orange-200 dark:border-orange-800">
+                                Request Order
+                              </span>
+                            )}
+                          </div>
                           <div className="text-[11px] text-slate-500">{it.branch_name} ({it.region})</div>
                         </td>
                       )}

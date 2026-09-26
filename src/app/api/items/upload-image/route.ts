@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminClient } from '@/lib/supabase/server';
+import { getAdminClient, updateCachedMasterItem } from '@/lib/supabase/server';
+import { setItemImageOverride } from '@/lib/assetImageHelper';
 import fs from 'fs';
 import path from 'path';
 
@@ -95,14 +96,84 @@ export async function POST(req: NextRequest) {
       console.warn('Could not update Supabase manifest.json:', manifestErr);
     }
 
-    // 3. Perbarui juga tabel asset_requests di Supabase jika ada baris dengan item_name ini
+    // 3. Simpan dan perbarui tabel asset_requests di database Supabase (wajib tersimpan permanen di DB)
     try {
-      await admin
+      const { data: updatedRows } = await admin
         .from('asset_requests')
-        .update({ photo_url: publicUrl })
-        .eq('item_name', itemName);
+        .update({ photo_url: publicUrl, updated_at: new Date().toISOString() })
+        .ilike('item_name', itemName)
+        .select('id');
+
+      if (!updatedRows || updatedRows.length === 0) {
+        // Cek apakah ada kecocokan parsial atau perlu dibuat baris master baru di database
+        const cleanSlug = itemName.toLowerCase().replace(/[^\w]/g, '_').replace(/_+/g, '_').slice(0, 40);
+        const { data: partialMatch } = await admin
+          .from('asset_requests')
+          .select('id, item_name')
+          .ilike('item_name', `%${itemName.trim().slice(0, 20)}%`)
+          .limit(10);
+
+        if (partialMatch && partialMatch.length > 0) {
+          for (const row of partialMatch) {
+            await admin
+              .from('asset_requests')
+              .update({ photo_url: publicUrl, updated_at: new Date().toISOString() })
+              .eq('id', row.id);
+          }
+        } else {
+          // Buat entri baru di tabel asset_requests agar selalu tercatat di database Supabase
+          const extId = `MASTER-${cleanSlug}-${Date.now().toString().slice(-6)}`;
+          await admin.from('asset_requests').insert({
+            external_id: extId,
+            region: 'JABODETABEK',
+            branch_name: 'MASTER CATALOG',
+            category: 'Master Item',
+            classification: 'Perlengkapan Tetap',
+            item_name: itemName,
+            system_item_name: itemName,
+            photo_url: publicUrl,
+            quantity_needed: 1,
+            stock_status: 'Ready (Spek Sesuai)',
+            procurement_status: 'selesai',
+            item_delivery_status: 'Lengkap',
+            is_manually_edited: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+        }
+      }
+
+      // Sinkronkan juga ke request_orders jika item ini pernah diajukan di RO
+      const { data: matchingRos } = await admin
+        .from('request_orders')
+        .select('id, items')
+        .not('items', 'is', null);
+
+      if (matchingRos && matchingRos.length > 0) {
+        for (const ro of matchingRos) {
+          if (Array.isArray(ro.items)) {
+            let changed = false;
+            const newItems = ro.items.map((it: any) => {
+              if (
+                it.item_name &&
+                it.item_name.toLowerCase().trim() === itemName.toLowerCase().trim()
+              ) {
+                changed = true;
+                return { ...it, photo_url: publicUrl };
+              }
+              return it;
+            });
+            if (changed) {
+              await admin
+                .from('request_orders')
+                .update({ items: newItems, updated_at: new Date().toISOString() })
+                .eq('id', ro.id);
+            }
+          }
+        }
+      }
     } catch (dbErr) {
-      console.warn('Could not update asset_requests table:', dbErr);
+      console.warn('Could not update asset_requests / request_orders table:', dbErr);
     }
 
     // 4. Update file lokal masterAssetImageMap.json agar aplikasi langsung membaca tanpa delay
@@ -130,6 +201,10 @@ export async function POST(req: NextRequest) {
     } catch (localMapErr) {
       console.warn('Could not update local masterAssetImageMap.json:', localMapErr);
     }
+
+    // 5. Update runtime server cache segera
+    setItemImageOverride(itemName, publicUrl);
+    updateCachedMasterItem(itemName, { photoUrl: publicUrl });
 
     return NextResponse.json({
       success: true,

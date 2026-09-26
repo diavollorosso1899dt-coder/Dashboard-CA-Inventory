@@ -420,24 +420,73 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       const activeItems = selectedRoForProcess.items.filter(it => it.stock_source !== 'CANCELLED');
       const allCancelled = selectedRoForProcess.items.length > 0 && activeItems.length === 0;
 
+      const readyItems = activeItems.filter(it => it.stock_source === 'GUDANG_SCGA');
+      const prItems = activeItems.filter(it => it.stock_source === 'PR_VENDOR');
+
+      // 1. Otomatis terbitkan Surat Jalan jika ada item Ready Stock
+      let autoSjNumber = '';
+      if (readyItems.length > 0) {
+        const sjPayload = {
+          ro_id: selectedRoForProcess.id,
+          ro_number: selectedRoForProcess.ro_number,
+          branch_name: selectedRoForProcess.branch_name,
+          region: selectedRoForProcess.region,
+          delivery_date: selectedRoForProcess.target_delivery_date || new Date().toISOString().split('T')[0],
+          driver_name: driverName || 'Driver Armada Logistik',
+          vehicle_number: vehicleNumber || 'B 9482 SXZ',
+          expedition: expedition || 'Armada Internal SCGA',
+          sender_name: 'Staff SCGA Warehouse',
+          receiver_name: `PIC ${selectedRoForProcess.branch_name}`,
+          status: 'SHIPPED',
+          items: readyItems.map((it) => ({
+            id: `sji-${Date.now()}-${Math.random().toString().slice(-4)}`,
+            item_name: it.item_name,
+            specification: it.specification,
+            quantity: it.quantity_ordered,
+            unit: it.unit || 'Unit',
+            notes: 'Dari Stok Gudang SCGA (Alokasi Otomatis)',
+          })),
+          notes: `Diterbitkan otomatis dari alokasi ${selectedRoForProcess.ro_number}`,
+        };
+
+        try {
+          const sjRes = await fetch('/api/distribution/surat-jalan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sjPayload),
+          });
+          const sjJson = await sjRes.json();
+          if (sjJson.success && sjJson.data?.sj_number) {
+            autoSjNumber = sjJson.data.sj_number;
+          }
+        } catch (sjErr) {
+          console.error('Auto-generate Surat Jalan error:', sjErr);
+        }
+      }
+
       let nextStage: StageKey;
       let nextStatus: ROStatus;
 
       if (allCancelled) {
         nextStage = 'DIBATALKAN';
         nextStatus = 'REJECTED';
+      } else if (prItems.length === 0 && readyItems.length > 0) {
+        // Seluruh item Ready Stock -> otomatis langsung berpindah ke Surat Jalan (Armada Siap Kirim)
+        nextStage = 'SURAT_JALAN';
+        nextStatus = 'IN_DELIVERY';
       } else {
-        const allReady = activeItems.every(it => it.stock_source === 'GUDANG_SCGA');
-        nextStage = allReady ? 'READY_STOCK' : 'KELOLA_PR';
-        nextStatus = allReady ? 'READY_STOCK' : 'NEED_PR';
+        // Ada item yang belum tersedia -> otomatis masuk ke tahap Kelola PR (Vendor PO)
+        nextStage = 'KELOLA_PR';
+        nextStatus = 'NEED_PR';
       }
 
-      await fetch('/api/distribution/ro', {
+      const roPatchRes = await fetch('/api/distribution/ro', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: selectedRoForProcess.id,
           updates: {
+            ro_number: selectedRoForProcess.ro_number,
             items: selectedRoForProcess.items,
             current_stage: nextStage,
             status: nextStatus,
@@ -445,16 +494,44 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         }),
       });
 
-      setOrders(prev => prev.map(o => o.id === selectedRoForProcess.id ? {
-        ...o,
-        items: selectedRoForProcess.items,
-        current_stage: nextStage,
-        status: nextStatus,
-      } : o));
+      const roPatchJson = await roPatchRes.json();
+      if (!roPatchJson.success) {
+        throw new Error(roPatchJson.error || 'Gagal menyimpan perubahan alokasi ke Supabase');
+      }
+
+      setOrders(prev => prev.map(o => {
+        const isMatch = o.id === selectedRoForProcess.id || o.ro_number === selectedRoForProcess.ro_number;
+        return isMatch ? {
+          ...o,
+          items: selectedRoForProcess.items,
+          current_stage: nextStage,
+          status: nextStatus,
+        } : o;
+      }));
+
+      if (allCancelled) {
+        setToast({ type: 'info', message: `Dokumen ${selectedRoForProcess.ro_number} dibatalkan & tersimpan di Supabase.` });
+      } else if (prItems.length === 0 && readyItems.length > 0) {
+        setToast({
+          type: 'success',
+          message: `Semua item Ready Stock tersimpan di Supabase! Surat Jalan (${autoSjNumber || 'SJ Baru'}) otomatis diterbitkan dan RO berpindah ke Surat Jalan.`,
+        });
+      } else if (readyItems.length === 0 && prItems.length > 0) {
+        setToast({
+          type: 'info',
+          message: `Seluruh item belum tersedia tersimpan di Supabase. ${prItems.length} item otomatis dialihkan ke antrean Fitur PR (Vendor PO).`,
+        });
+      } else {
+        setToast({
+          type: 'success',
+          message: `Alokasi tersimpan di Supabase: ${readyItems.length} item Ready Stock masuk Surat Jalan (${autoSjNumber || 'SJ Baru'}), dan ${prItems.length} item Belum Tersedia masuk antrean Fitur PR.`,
+        });
+      }
 
       setSelectedRoForProcess(null);
     } catch (e) {
       console.error(e);
+      setToast({ type: 'error', message: 'Gagal memproses alokasi RO' });
     } finally {
       setIsSubmitting(false);
     }
@@ -1655,9 +1732,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                   type="button"
                   onClick={handleSaveProcessDecision}
                   disabled={isSubmitting}
-                  className="rounded-full bg-[#0b57d0] text-white px-5 py-2 text-xs font-semibold hover:bg-[#0842a0]"
+                  className="rounded-full bg-[#0b57d0] text-white px-5 py-2 text-xs font-semibold hover:bg-[#0842a0] flex items-center gap-1.5 shadow-xs"
                 >
-                  {isSubmitting ? 'Menyimpan...' : 'Simpan Alur Keputusan'}
+                  {isSubmitting ? 'Memproses Alur...' : 'Simpan & Lanjutkan Alur Otomatis'}
                 </button>
               </div>
             </div>
