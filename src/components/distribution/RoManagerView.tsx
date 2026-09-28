@@ -112,6 +112,10 @@ export function getUniqueRoItems(items: ROItem[]): ROItem[] {
   });
 }
 
+export function normalizeRoKey(val?: string | null): string {
+  return (val || '').toLowerCase().replace(/^ro[-_\s]*/i, '').replace(/\./g, '').trim();
+}
+
 export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerViewProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -299,7 +303,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
     for (let i = 0; i < orders.length; i++) {
       const ro = orders[i];
-      const key = (ro.raw_ro_id || ro.ro_number).toLowerCase().trim();
+      const key = normalizeRoKey(ro.raw_ro_id || ro.ro_number);
       let list = map.get(key);
       if (!list) {
         list = [];
@@ -371,7 +375,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       const roStage = getRoStage(o);
       if (selectedStage !== 'ALL' && roStage !== selectedStage) return false;
 
-      const key = (o.raw_ro_id || o.ro_number).toLowerCase().trim();
+      const key = normalizeRoKey(o.raw_ro_id || o.ro_number);
       const isDupe = (deduplicationMap.get(key)?.length || 0) > 1;
 
       if (smartFilter === 'CLEAN' && isDupe) return false;
@@ -1305,7 +1309,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                   const isPilihProses = stage === 'PILIH_PROSES' || stage === 'REQUEST_ORDER' || stage === 'INPUT_DATA';
                   const isChecklist = stage === 'CHECKLIST' || stage === 'ASET_SAMPAI';
 
-                  const key = (o.raw_ro_id || o.ro_number).toLowerCase().trim();
+                  const key = normalizeRoKey(o.raw_ro_id || o.ro_number);
                   const isDupe = (deduplicationMap.get(key)?.length || 0) > 1;
                   const uniqueItems = getUniqueRoItems(o.items);
 
@@ -1314,7 +1318,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       {/* RO ID */}
                       {visibleColumns.ro_number !== false && (
                         <td className="py-3.5 px-4 font-mono font-bold text-[#0b57d0] dark:text-[#a8c7fa]">
-                          <div>{o.ro_number}</div>
+                          <div>{o.ro_number ? (o.ro_number.startsWith('RO-') ? o.ro_number : `RO-${o.ro_number}`).replace(/\.(?=\d{3})/g, '') : (o.raw_ro_id ? `RO-${o.raw_ro_id.replace(/\./g, '')}` : '-')}</div>
                           {o.source_type === 'GOOGLE_SHEET' && (
                             <span className="inline-block mt-0.5 text-[9px] px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                               Sheet Resmi

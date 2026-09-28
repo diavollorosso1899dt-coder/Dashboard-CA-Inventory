@@ -24,7 +24,9 @@ import {
   Trash2,
   Truck,
   Filter,
-  ChevronDown
+  ChevronDown,
+  Upload,
+  ImageIcon
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import { useSearchParams } from 'next/navigation';
@@ -34,6 +36,9 @@ import { formatDateTime, formatDateOnly, formatLeadTime } from '@/lib/utils/date
 import { useAuth } from '@/components/auth/AuthContext';
 import { AssetDetailModal } from './AssetDetailModal';
 import { BranchBastModal } from './BranchBastModal';
+import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
+import { getItemSpecification } from '@/lib/assetSpecHelper';
+import UploadImageModal from '@/components/items/UploadImageModal';
 
 export interface ColumnConfig {
   id: string;
@@ -44,6 +49,7 @@ export const AVAILABLE_COLUMNS: ColumnConfig[] = [
   { id: 'order_datetime', label: 'Waktu Order' },
   { id: 'branch_requester', label: 'Cabang & Pengaju' },
   { id: 'item_classification', label: 'Item & Klasifikasi' },
+  { id: 'image', label: 'Gambar' },
   { id: 'quantity', label: 'Kebutuhan' },
   { id: 'rab_number', label: 'No. RAB' },
   { id: 'opening_date', label: 'Target Opening' },
@@ -58,6 +64,7 @@ export const DEFAULT_VISIBLE_COLUMNS: Record<string, boolean> = {
   order_datetime: true,
   branch_requester: true,
   item_classification: true,
+  image: true,
   quantity: true,
   rab_number: true,
   opening_date: true,
@@ -118,6 +125,10 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   const [isBastModalOpen, setIsBastModalOpen] = useState(false);
   const [bastBranch, setBastBranch] = useState<string>('');
 
+  // Image Preview & Upload Modal States
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
+  const [uploadModalTarget, setUploadModalTarget] = useState<{ itemName: string; currentImageUrl?: string | null } | null>(null);
+
   // Column Visibility State
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(DEFAULT_VISIBLE_COLUMNS);
   const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false);
@@ -129,7 +140,11 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
       if (saved) {
         const parsed = JSON.parse(saved);
         if (typeof parsed === 'object' && parsed !== null) {
-          setVisibleColumns((prev) => ({ ...prev, ...parsed }));
+          setVisibleColumns((prev) => ({
+            ...prev,
+            ...parsed,
+            image: parsed.image !== undefined ? parsed.image : true,
+          }));
         }
       }
     } catch (e) {
@@ -1058,6 +1073,9 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                 {visibleColumns.item_classification !== false && (
                   <th className="py-3.5 px-3">Item &amp; Klasifikasi</th>
                 )}
+                {visibleColumns.image !== false && (
+                  <th className="py-3.5 px-3 text-center">Gambar</th>
+                )}
                 {visibleColumns.quantity !== false && (
                   <th className="py-3.5 px-3 text-center">Kebutuhan</th>
                 )}
@@ -1157,6 +1175,49 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                           </div>
                           <div className="text-[10px] text-[#747775] dark:text-[#8e918f] line-clamp-1">
                             {item.classification} {item.specification ? `(${item.specification})` : ''}
+                          </div>
+                        </td>
+                      )}
+
+                      {/* 3b. Gambar */}
+                      {visibleColumns.image !== false && (
+                        <td className="py-2 px-3 text-center whitespace-nowrap">
+                          <div className="flex justify-center">
+                            {(() => {
+                              const imgUrl = item.photo_url || getItemImageUrl(item.item_name);
+                              return imgUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewImage({ url: imgUrl, title: item.item_name });
+                                  }}
+                                  className="relative inline-block w-9 h-9 rounded-lg border border-[#e0e2ec] dark:border-[#444746] overflow-hidden hover:ring-2 hover:ring-[#0b57d0] hover:scale-105 transition-all shadow-2xs bg-white dark:bg-[#282a2c] shrink-0"
+                                  title={`Klik perbesar foto: ${item.item_name}`}
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={imgUrl}
+                                    alt={item.item_name}
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                  />
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setUploadModalTarget({ itemName: item.item_name, currentImageUrl: null });
+                                  }}
+                                  className="inline-flex flex-col items-center justify-center w-9 h-9 rounded-lg border border-dashed border-amber-300 dark:border-amber-700/80 bg-amber-50/60 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/40 text-amber-700 dark:text-amber-400 text-[8px] transition group/upload"
+                                  title={`Upload foto (maks 100 KB): ${item.item_name}`}
+                                >
+                                  <Upload className="h-3 w-3 mb-0.5 group-hover/upload:scale-110 transition-transform" />
+                                  <span className="font-semibold text-[7px] leading-none">Foto</span>
+                                </button>
+                              );
+                            })()}
                           </div>
                         </td>
                       )}
@@ -1356,6 +1417,102 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
           branchName={bastBranch}
           items={items}
           preselectedIds={selectedIds}
+        />
+      )}
+
+      {/* Modal Perbesar / Preview Foto Item */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div 
+            className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                {previewImage.title}
+              </h3>
+              <button 
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="relative aspect-video sm:aspect-square w-full rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center border border-slate-200 dark:border-slate-700">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewImage.url}
+                alt={previewImage.title}
+                className="w-full h-full object-contain"
+              />
+            </div>
+
+            {(() => {
+              const spec = getItemSpecification(previewImage.title);
+              return (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-750 text-xs space-y-1">
+                  <span className="font-semibold text-amber-600 dark:text-amber-400 block">Rincian Spesifikasi:</span>
+                  <p className="text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
+                    {spec || <span className="italic text-slate-400">Belum ada rincian spesifikasi untuk item ini.</span>}
+                  </p>
+                </div>
+              );
+            })()}
+
+            <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+              <span className="flex items-center gap-1">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                Master Aset
+              </span>
+              <div className="flex items-center gap-2">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    const target = { itemName: previewImage.title, currentImageUrl: previewImage.url };
+                    setPreviewImage(null);
+                    setUploadModalTarget(target);
+                  }} 
+                  className="px-3 py-1.5 rounded-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center gap-1 transition-colors"
+                >
+                  <Upload className="w-3 h-3" />
+                  <span>Ganti Foto (&le; 100KB)</span>
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setPreviewImage(null)} 
+                  className="px-4 py-1.5 rounded-full bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Upload & Kompresi Foto Item */}
+      {uploadModalTarget && (
+        <UploadImageModal
+          isOpen={true}
+          onClose={() => setUploadModalTarget(null)}
+          itemName={uploadModalTarget.itemName}
+          currentImageUrl={uploadModalTarget.currentImageUrl}
+          onUploadSuccess={(newItemName, newUrl) => {
+            setItemImageOverride(newItemName, newUrl);
+            setUploadModalTarget(null);
+            setItems((prev) =>
+              prev.map((it) =>
+                it.item_name.toLowerCase() === newItemName.toLowerCase()
+                  ? { ...it, photo_url: newUrl }
+                  : it
+              )
+            );
+          }}
         />
       )}
     </div>

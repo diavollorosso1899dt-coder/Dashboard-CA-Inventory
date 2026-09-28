@@ -630,7 +630,9 @@
     "(Jadul) Angklung": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/_jadul_angklung_1790073178267.webp",
     "(Jadul) celengan ayam": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/_jadul_celengan_ayam_1790073220655.webp",
     "Tiang Gorden": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/tiang_gorden_1790402970550.webp",
-    "tiang gorden": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/tiang_gorden_1790402970550.webp"
+    "tiang gorden": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/tiang_gorden_1790402970550.webp",
+    "Adapter USB C - Hub 5in": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/adapter_usb_c_hub_5in_1790584163109.webp",
+    "Air Blower Coffe": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/air_blower_coffe_1790584271491.webp"
   },
   "normalized": {
     "dispenser sabun tempel": "/uploads/master-assets/item_16.png",
@@ -1260,7 +1262,9 @@
     "pompa semprot tambahan": "/uploads/master-assets/item_2006.png",
     "angklung": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/_jadul_angklung_1790073178267.webp",
     "celengan ayam": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/_jadul_celengan_ayam_1790073220655.webp",
-    "tiang gorden": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/tiang_gorden_1790402970550.webp"
+    "tiang gorden": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/tiang_gorden_1790402970550.webp",
+    "adapter usb c hub 5in": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/adapter_usb_c_hub_5in_1790584163109.webp",
+    "air blower coffe": "https://ywsndzqhtguwytwslvxm.supabase.co/storage/v1/object/public/item-images/custom/air_blower_coffe_1790584271491.webp"
   },
   "generatedAt": "2026-09-22T09:57:03.341Z",
   "totalItemsWithImages": 627

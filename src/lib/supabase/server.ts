@@ -1825,6 +1825,15 @@ const RO_SOURCES: Array<{ name: string; region: 'KALBAR' | 'JABODETABEK'; url: s
   },
 ];
 
+export function normalizeRoId(raw: string | null | undefined): string {
+  if (!raw) return '';
+  let id = String(raw).trim().replace(/^RO[-_\s]*/i, '');
+  if (/^[\d.]+$/.test(id) && id.includes('.')) {
+    id = id.replace(/\./g, '');
+  }
+  return id.trim();
+}
+
 function parseCSVLine(line: string): string[] {
   const result: string[] = [];
   let cur = '';
@@ -1985,14 +1994,14 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
           totalRowsScanned++;
 
           const parts = parseCSVLine(line);
-          const rawRoId = parts[cols.roIdIdx]?.trim();
+          const rawRoId = normalizeRoId(parts[cols.roIdIdx]);
           const itemName = parts[cols.itemNameIdx]?.trim();
           const qtyStr = parts[cols.qtyIdx]?.trim();
           const outletName =
             parts[cols.outletIdx]?.trim() ||
             (source.region === 'JABODETABEK' ? 'Outlet Jabodetabek' : 'Outlet Kalbar');
 
-          if (!rawRoId || !itemName) continue;
+          if (!rawRoId || !itemName || rawRoId === '-' || rawRoId.length < 2) continue;
 
           const qty = parseIndoQty(qtyStr);
           const unit = parts[cols.unitIdx]?.trim() || 'unit';
@@ -2111,17 +2120,22 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
   }
 }
 
-export function cleanDuplicateRequestOrders(): { cleanedCount: number; totalUnique: number } {
+export async function cleanDuplicateRequestOrders(): Promise<{ cleanedCount: number; totalUnique: number }> {
+  const admin = getAdminClient();
   const seenNumbers = new Set<string>();
   const uniqueOrders: RequestOrder[] = [];
+  const duplicateIdsToDelete: string[] = [];
   let cleanedCount = 0;
 
   for (const ro of cache.requestOrders) {
-    const key = (ro.ro_number || ro.id).toLowerCase();
+    const rawKey = normalizeRoId(ro.raw_ro_id || ro.ro_number);
+    const key = (rawKey || ro.id).toLowerCase();
     if (seenNumbers.has(key)) {
       cleanedCount++;
+      if (ro.id) duplicateIdsToDelete.push(ro.id);
     } else {
       seenNumbers.add(key);
+      const cleanRoNumber = rawKey ? `RO-${rawKey}` : ro.ro_number;
       const seenItemKeys = new Set<string>();
       const cleanItems = (ro.items || []).filter((it) => {
         const itemKey = `${it.item_name.toLowerCase().trim()}::${it.quantity_ordered}`;
@@ -2129,12 +2143,25 @@ export function cleanDuplicateRequestOrders(): { cleanedCount: number; totalUniq
         seenItemKeys.add(itemKey);
         return true;
       });
-      uniqueOrders.push({ ...ro, items: cleanItems });
+      uniqueOrders.push({ ...ro, ro_number: cleanRoNumber, raw_ro_id: rawKey || ro.raw_ro_id, items: cleanItems });
     }
   }
 
   cache.requestOrders = uniqueOrders;
   invalidateRoCache();
+
+  if (admin && duplicateIdsToDelete.length > 0) {
+    try {
+      const chunkSize = 50;
+      for (let i = 0; i < duplicateIdsToDelete.length; i += chunkSize) {
+        const chunk = duplicateIdsToDelete.slice(i, i + chunkSize);
+        await admin.from('request_orders').delete().in('id', chunk);
+      }
+    } catch (err: any) {
+      console.error('[cleanDuplicateRequestOrders DB delete error]:', err.message);
+    }
+  }
+
   return { cleanedCount, totalUnique: uniqueOrders.length };
 }
 

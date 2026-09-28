@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const res = cleanDuplicateRequestOrders();
+    const res = await cleanDuplicateRequestOrders();
     return NextResponse.json({
       success: true,
       ...res,

@@ -484,73 +484,7 @@ export function TransferAssetView({
 
   return (
     <div className="space-y-6">
-      {/* 1. Metric Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="panel-card p-4 flex items-center justify-between border-l-4 border-l-[#0b57d0]">
-          <div>
-            <div className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] uppercase">
-              Total Pendistribusian
-            </div>
-            <div className="text-2xl font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mt-0.5">
-              {metrics.total}
-            </div>
-            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Surat Jalan Diterbitkan</div>
-          </div>
-          <div className="h-10 w-10 rounded-2xl bg-[#e8f0fe] dark:bg-[#004a77]/40 flex items-center justify-center text-[#0b57d0] dark:text-[#a8c7fa]">
-            <FileText className="h-5 w-5" />
-          </div>
-        </div>
-
-        <div className="panel-card p-4 flex items-center justify-between border-l-4 border-l-amber-500">
-          <div>
-            <div className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] uppercase">
-              Dalam Pengiriman
-            </div>
-            <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-0.5">
-              {metrics.inTransit}
-            </div>
-            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Armada / Ekspedisi Berjalan</div>
-          </div>
-          <div className="h-10 w-10 rounded-2xl bg-amber-50 dark:bg-amber-950/40 flex items-center justify-center text-amber-600 dark:text-amber-400">
-            <Truck className="h-5 w-5" />
-          </div>
-        </div>
-
-        <div className="panel-card p-4 flex items-center justify-between border-l-4 border-l-emerald-500">
-          <div>
-            <div className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] uppercase">
-              Telah Diterima Outlet
-            </div>
-            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
-              {metrics.received}
-            </div>
-            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">Sampai di Cabang Tujuan</div>
-          </div>
-          <div className="h-10 w-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-            <CheckCircle2 className="h-5 w-5" />
-          </div>
-        </div>
-
-        <div className="panel-card p-4 flex items-center justify-between border-l-4 border-l-blue-500">
-          <div>
-            <div className="text-[11px] font-semibold text-[#747775] dark:text-[#8e918f] uppercase flex items-center gap-1.5">
-              <span>Aset Siap Distribusi</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            </div>
-            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-0.5">
-              {readyDistributionAssets.length}
-            </div>
-            <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">
-              {roReadyAssets.length} Ready Stock RO • {baseMonitoringReadyAssets.length} Monitoring
-            </div>
-          </div>
-          <div className="h-10 w-10 rounded-2xl bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center text-blue-600 dark:text-blue-400">
-            <Package className="h-5 w-5" />
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Top Action & Filter Toolbar */}
+      {/* Top Action & Filter Toolbar */}
       <div className="panel-card p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div className="flex items-center gap-2 flex-1 max-w-2xl flex-wrap">
           <AreaFilterPills
