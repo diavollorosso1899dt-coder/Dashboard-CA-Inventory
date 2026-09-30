@@ -21,7 +21,8 @@ import {
   ChevronDown,
   Boxes,
   Sparkles,
-  Layers
+  Layers,
+  Calendar
 } from 'lucide-react';
 import { AssetTransfer, Outlet, AssetRequest, TransferStatus, TransferItem, RequestOrder } from '@/lib/supabase/types';
 import { getItemImageUrl } from '@/lib/assetImageHelper';
@@ -140,7 +141,26 @@ export function TransferAssetView({
     (requestOrders || []).forEach((ro) => {
       if (ro.status === 'REJECTED' || ro.current_stage === 'DIBATALKAN') return;
       if (!matchesRegion(ro.region, regionFilter)) return;
+
+      // Dokumen RO yang masih On Proses (belum diproses/dialokasikan statusnya di Kelola RO)
+      // TIDAK BOLEH masuk ke Pemantauan Distribusi!
+      const isRoExplicitlyProcessed = 
+        ro.notes?.includes('[PROCESSED_FROM_RO]') ||
+        ro.current_stage === 'READY_STOCK' ||
+        ro.current_stage === 'SURAT_JALAN' ||
+        ro.current_stage === 'ASET_SAMPAI' ||
+        ro.current_stage === 'CHECKLIST' ||
+        ro.current_stage === 'SELESAI' ||
+        ro.current_stage === 'KELOLA_PR' ||
+        (ro.status as string) === 'IN_DELIVERY';
+
+      if (!isRoExplicitlyProcessed) {
+        return;
+      }
+
+      const roDate = ro.request_date || (ro.created_at ? ro.created_at.split('T')[0] : null);
       (ro.items || []).forEach((item) => {
+        // Hanya item yang berstatus Ready Stock (GUDANG_SCGA)
         if (item.stock_source === 'GUDANG_SCGA') {
           list.push({
             id: `ro-${ro.id}-${item.id}`,
@@ -155,6 +175,7 @@ export function TransferAssetView({
             photo_url: item.photo_url || null,
             item_delivery_status: 'Ready Antar',
             notes: `No. RO: ${ro.ro_number} • Pemohon: ${ro.requester_name}`,
+            order_datetime: roDate,
             created_at: ro.created_at || new Date().toISOString(),
             updated_at: ro.updated_at || new Date().toISOString(),
           } as AssetRequest);
@@ -757,6 +778,8 @@ export function TransferAssetView({
                     {group.assets.map((asset) => {
                       const isFromRo = asset.id?.startsWith('ro-');
                       const photoUrl = asset.photo_url || getItemImageUrl(asset.item_name);
+                      const rawDate = asset.order_datetime || (asset as any).request_date || (asset.created_at ? asset.created_at.split('T')[0] : null);
+                      const reqDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate.split(' ')[0]) : null;
 
                       return (
                         <div
@@ -767,7 +790,7 @@ export function TransferAssetView({
                               : 'border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 hover:border-[#0b57d0]/40'
                           }`}
                         >
-                          <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <div className="flex items-center gap-2 min-w-0 pr-2 flex-1">
                             {/* Thumbnail Foto Aset */}
                             {photoUrl ? (
                               <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0">
@@ -780,22 +803,29 @@ export function TransferAssetView({
                               </div>
                             )}
 
-                            <div className="min-w-0">
+                            <div className="min-w-0 flex-1">
                               <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
                                 {asset.item_name}
                               </div>
-                              <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] truncate flex items-center gap-1.5 mt-0.5">
+                              <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] flex flex-wrap items-center gap-1.5 mt-0.5">
                                 <strong className={isFromRo ? 'text-emerald-700 dark:text-emerald-300 font-mono' : 'text-[#0b57d0] dark:text-[#a8c7fa] font-mono'}>
                                   {asset.quantity_needed || 1} unit
                                 </strong>
 
                                 {isFromRo ? (
-                                  <span className="rounded-full bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1">
+                                  <span className="rounded-full bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1 shrink-0">
                                     <span>RO: {asset.external_id}</span>
                                   </span>
                                 ) : (
-                                  <span className="rounded-full bg-blue-100 dark:bg-blue-950/60 px-1.5 py-0.5 text-[9px] font-bold text-blue-800 dark:text-blue-300">
+                                  <span className="rounded-full bg-blue-100 dark:bg-blue-950/60 px-1.5 py-0.5 text-[9px] font-bold text-blue-800 dark:text-blue-300 shrink-0">
                                     Ready Antar
+                                  </span>
+                                )}
+
+                                {reqDate && (
+                                  <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[9px] font-medium text-[#444746] dark:text-[#c4c7c5] border border-slate-200 dark:border-slate-700 flex items-center gap-1 shrink-0" title="Tanggal Permintaan">
+                                    <Calendar className="h-2.5 w-2.5 text-[#747775] dark:text-[#8e918f]" />
+                                    <span>{formatDateOnly(reqDate)}</span>
                                   </span>
                                 )}
                               </div>
@@ -804,7 +834,7 @@ export function TransferAssetView({
 
                           <button
                             onClick={() => handleProcessFromQueue([asset], group.branchName)}
-                            className="rounded-full bg-white dark:bg-[#1e1f20] border border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors shrink-0 shadow-xs cursor-pointer"
+                            className="rounded-full bg-white dark:bg-[#1e1f20] border border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors shrink-0 shadow-xs cursor-pointer ml-1"
                             title="Kirim hanya item ini"
                           >
                             Kirim Ini Saja

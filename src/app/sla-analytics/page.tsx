@@ -2,7 +2,7 @@ import React from 'react';
 import { calculateDashboardMetrics, getAssetRequests } from '@/lib/supabase/server';
 import { RegionType } from '@/lib/supabase/types';
 import { Clock, ShieldAlert } from 'lucide-react';
-import { formatLeadTime, formatDateTime } from '@/lib/utils/date-formatter';
+import { formatLeadTime, formatDateSlash } from '@/lib/utils/date-formatter';
 import { AssetDataTable } from '@/components/tracker/AssetDataTable';
 
 export const dynamic = 'force-dynamic';
@@ -104,7 +104,7 @@ export default async function SlaAnalyticsPage({ searchParams }: PageProps) {
               <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
                 {overdueItems.slice(0, 10).map((it) => (
                   <tr key={it.id} className="hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c]">
-                    <td className="py-2.5 px-3 whitespace-nowrap font-medium">{formatDateTime(it.order_datetime)}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap font-medium">{formatDateSlash(it.order_datetime)}</td>
                     <td className="py-2.5 px-3 font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">{it.branch_name}</td>
                     <td className="py-2.5 px-3 text-[#1f1f1f] dark:text-[#e3e3e3]">{it.item_name}</td>
                     <td className="py-2.5 px-3">{it.vendor_name || '-'}</td>

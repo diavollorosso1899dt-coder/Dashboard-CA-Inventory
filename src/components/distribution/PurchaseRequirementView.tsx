@@ -27,6 +27,7 @@ import { getItemSpecification } from '@/lib/assetSpecHelper';
 import UploadImageModal from '@/components/items/UploadImageModal';
 import AreaFilterPills from '@/components/ui/AreaFilterPills';
 import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
+import { formatDateSlash } from '@/lib/utils/date-formatter';
 
 const PR_COLUMNS: ColumnItem[] = [
   { id: 'rab_branch', label: 'No. RAB & Cabang', defaultVisible: true, alwaysVisible: true },
@@ -285,9 +286,9 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                 </tr>
               ) : (
                 paginatedItems.map((it) => {
-                  const reqDate = it.order_datetime ? new Date(it.order_datetime).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
-                  const prDate = it.pr_datetime ? new Date(it.pr_datetime).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
-                  const poDate = it.po_date ? new Date(it.po_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+                  const reqDate = formatDateSlash(it.order_datetime);
+                  const prDate = formatDateSlash(it.pr_datetime);
+                  const poDate = formatDateSlash(it.po_date);
 
                   return (
                     <tr key={it.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">

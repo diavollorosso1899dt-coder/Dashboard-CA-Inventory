@@ -14,7 +14,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { AssetRequest } from '@/lib/supabase/types';
-import { formatDateTime, formatDateOnly, formatIDR, formatLeadTime } from '@/lib/utils/date-formatter';
+import { formatDateTime, formatDateOnly, formatIDR, formatLeadTime, formatDateSlash } from '@/lib/utils/date-formatter';
 import { useAuth } from '@/components/auth/AuthContext';
 
 interface AssetDetailModalProps {
@@ -196,7 +196,7 @@ export function AssetDetailModal({
               <span className="text-[#747775] dark:text-[#8e918f]">Waktu Order Pengajuan:</span>
               <div className="flex items-center gap-1 font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] mt-0.5">
                 <Clock className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-                {formatDateTime(item.order_datetime)}
+                {formatDateSlash(item.order_datetime)}
               </div>
             </div>
 

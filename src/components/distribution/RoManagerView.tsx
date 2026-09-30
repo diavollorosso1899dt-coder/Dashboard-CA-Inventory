@@ -48,6 +48,7 @@ import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/regi
 import EditSpecModal from '@/components/items/EditSpecModal';
 import ColumnVisibilityPicker, { ColumnItem } from '@/components/ui/ColumnVisibilityPicker';
 import { Toast, ToastMessage } from '@/components/ui/Toast';
+import { formatDateSlash } from '@/lib/utils/date-formatter';
 
 interface RoManagerViewProps {
   initialOrders?: RequestOrder[];
@@ -78,16 +79,9 @@ interface StageDefinition {
 }
 
 const WORKFLOW_STAGES: StageDefinition[] = [
-  { key: 'REQUEST_ORDER', stepNum: 1, label: 'Request Order', sub: 'Order Masuk', color: 'border-blue-400 bg-blue-50 text-blue-900 dark:border-blue-600 dark:bg-blue-950/50 dark:text-blue-200', shape: 'pill' },
+  { key: 'REQUEST_ORDER', stepNum: 1, label: 'On Proses', sub: 'Order Masuk', color: 'border-blue-400 bg-blue-50 text-blue-900 dark:border-blue-600 dark:bg-blue-950/50 dark:text-blue-200', shape: 'pill' },
   { key: 'INPUT_DATA', stepNum: 2, label: 'Input Sistem', sub: 'Record Sheet', color: 'border-indigo-300 bg-indigo-50 text-indigo-900 dark:border-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-200', shape: 'rect' },
   { key: 'PILIH_PROSES', stepNum: 3, label: 'Pilih Proses', sub: 'Stok vs PR?', color: 'border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-500 dark:bg-amber-950/50 dark:text-amber-200', shape: 'diamond' },
-  { key: 'KELOLA_PR', stepNum: 4, label: 'Kelola PR & Kedatangan', sub: 'Vendor PO', color: 'border-orange-400 bg-orange-50 text-orange-950 dark:border-orange-600 dark:bg-orange-950/50 dark:text-orange-200', shape: 'rect' },
-  { key: 'READY_STOCK', stepNum: 5, label: 'Ready Stock', sub: 'Gudang SCGA', color: 'border-emerald-400 bg-emerald-50 text-emerald-950 dark:border-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-200', shape: 'rect' },
-  { key: 'SURAT_JALAN', stepNum: 6, label: 'Surat Jalan & Kirim', sub: 'Armada Jalan', color: 'border-teal-400 bg-teal-50 text-teal-950 dark:border-teal-600 dark:bg-teal-950/50 dark:text-teal-200', shape: 'rect' },
-  { key: 'ASET_SAMPAI', stepNum: 7, label: 'Aset Sampai?', sub: 'Cabang Outlet', color: 'border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-500 dark:bg-amber-950/50 dark:text-amber-200', shape: 'diamond' },
-  { key: 'CHECKLIST', stepNum: 8, label: 'Checklist Diterima', sub: 'Cek Fisik Toko', color: 'border-cyan-400 bg-cyan-50 text-cyan-950 dark:border-cyan-600 dark:bg-cyan-950/50 dark:text-cyan-200', shape: 'rect' },
-  { key: 'UPDATE_SLA', stepNum: 9, label: 'Update SLA', sub: 'Lead Time', color: 'border-purple-400 bg-purple-50 text-purple-950 dark:border-purple-600 dark:bg-purple-950/50 dark:text-purple-200', shape: 'rect' },
-  { key: 'SELESAI', stepNum: 10, label: 'Selesai', sub: 'Operasional Toko', color: 'border-emerald-500 bg-emerald-100 text-emerald-950 dark:border-emerald-500 dark:bg-emerald-900/50 dark:text-emerald-100', shape: 'pill' },
   { key: 'DIBATALKAN', stepNum: 0, label: 'Dibatalkan', sub: 'RO Ditolak', color: 'border-rose-400 bg-rose-50 text-rose-950 dark:border-rose-600 dark:bg-rose-950/50 dark:text-rose-200', shape: 'pill' },
 ];
 
@@ -115,6 +109,76 @@ export function getUniqueRoItems(items: ROItem[]): ROItem[] {
 export function normalizeRoKey(val?: string | null): string {
   return (val || '').toLowerCase().replace(/^ro[-_\s]*/i, '').replace(/\./g, '').trim();
 }
+
+/**
+ * Status efektif item di Kelola RO:
+ * - 'ON_PROSES': Belum ditentukan (status default sebelum diupdate)
+ * - 'GUDANG_SCGA': Ready Stock -> Berpindah ke Surat Jalan / Pemantauan Distribusi
+ * - 'PR_VENDOR': Belum Tersedia -> Berpindah ke Fitur PR
+ * - 'CANCELLED': Tolak / Batal
+ */
+export const getItemEffectiveStatus = (it: ROItem, ro?: RequestOrder): 'ON_PROSES' | 'GUDANG_SCGA' | 'PR_VENDOR' | 'CANCELLED' => {
+  if (it.stock_source === 'PR_VENDOR' || it.stock_source === 'CANCELLED') {
+    return it.stock_source;
+  }
+  if (it.stock_source === 'GUDANG_SCGA') {
+    if (ro) {
+      if (
+        ro.current_stage === 'SURAT_JALAN' ||
+        ro.status === 'IN_DELIVERY' ||
+        ro.notes?.includes('[PROCESSED_FROM_RO]') ||
+        ro.status === 'COMPLETED' ||
+        ro.current_stage === 'SELESAI'
+      ) {
+        return 'GUDANG_SCGA';
+      }
+      // Data sheet default yang belum pernah diproses oleh user dianggap On Proses
+      if (ro.current_stage === 'REQUEST_ORDER' || ro.status === 'INPUT_SYSTEM' || !ro.current_stage) {
+        return 'ON_PROSES';
+      }
+    }
+    return 'GUDANG_SCGA';
+  }
+  return 'ON_PROSES';
+};
+
+export const isItemPendingInRo = (it: ROItem, ro?: RequestOrder): boolean => {
+  return getItemEffectiveStatus(it, ro) === 'ON_PROSES';
+};
+
+export const getRoPendingItems = (ro: RequestOrder): ROItem[] => {
+  return (ro.items || []).filter(it => isItemPendingInRo(it, ro));
+};
+
+/**
+ * Helper untuk menentukan apakah dokumen RO sudah selesai diproses dari menu Kelola RO.
+ * Setelah seluruh item dipilih statusnya (Ready Stock, Belum Tersedia, Cancel),
+ * dokumen RO otomatis hilang dari Kelola RO.
+ */
+export const isRoAllocatedOutOfMenu = (ro: RequestOrder): boolean => {
+  if (ro.notes && ro.notes.includes('[PROCESSED_FROM_RO]')) return true;
+  const stage = ro.current_stage || ro.status;
+  if (
+    stage === 'SURAT_JALAN' ||
+    stage === 'IN_DELIVERY' ||
+    stage === 'KELOLA_PR' ||
+    stage === 'NEED_PR' ||
+    stage === 'READY_STOCK' ||
+    stage === 'ASET_SAMPAI' ||
+    stage === 'CHECKLIST' ||
+    stage === 'CHECKLIST_DONE' ||
+    stage === 'UPDATE_SLA' ||
+    stage === 'SELESAI' ||
+    stage === 'COMPLETED'
+  ) {
+    return true;
+  }
+  const items = ro.items || [];
+  if (items.length > 0 && items.every(it => !isItemPendingInRo(it, ro))) {
+    return true;
+  }
+  return false;
+};
 
 export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerViewProps) {
   const router = useRouter();
@@ -303,6 +367,11 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
     for (let i = 0; i < orders.length; i++) {
       const ro = orders[i];
+      // Jika RO sudah dialokasikan ke Ready Stock (Surat Jalan/Distribusi) atau PR Vendor, jangan masukkan ke antrean aktif Menu Kelola RO
+      if (isRoAllocatedOutOfMenu(ro)) {
+        continue;
+      }
+
       const key = normalizeRoKey(ro.raw_ro_id || ro.ro_number);
       let list = map.get(key);
       if (!list) {
@@ -362,6 +431,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const filteredOrders = useMemo(() => {
     const searchLower = search.toLowerCase().trim();
     return orders.filter((o) => {
+      // 1. Dokumen RO yang sudah dialokasikan ke Ready Stock (Surat Jalan) ataupun PR otomatis hilang dari antrean Menu Kelola RO
+      if (isRoAllocatedOutOfMenu(o)) return false;
+
       if (!matchesRegion(o.region, selectedRegion)) return false;
 
       if (selectedSource === 'KALBAR_SHEET') {
@@ -455,11 +527,12 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     if (!selectedRoForProcess) return;
     try {
       setIsSubmitting(true);
-      const activeItems = selectedRoForProcess.items.filter(it => it.stock_source !== 'CANCELLED');
-      const allCancelled = selectedRoForProcess.items.length > 0 && activeItems.length === 0;
-
-      const readyItems = activeItems.filter(it => it.stock_source === 'GUDANG_SCGA');
-      const prItems = activeItems.filter(it => it.stock_source === 'PR_VENDOR');
+      // Item groups based on user decision:
+      const readyItems = selectedRoForProcess.items.filter(it => it.stock_source === 'GUDANG_SCGA');
+      const prItems = selectedRoForProcess.items.filter(it => it.stock_source === 'PR_VENDOR');
+      const cancelledItems = selectedRoForProcess.items.filter(it => it.stock_source === 'CANCELLED');
+      const pendingItems = selectedRoForProcess.items.filter(it => !it.stock_source || it.stock_source === 'ON_PROSES');
+      const allDone = pendingItems.length === 0;
 
       // 1. Otomatis terbitkan Surat Jalan jika ada item Ready Stock
       let autoSjNumber = '';
@@ -505,18 +578,26 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       let nextStage: StageKey;
       let nextStatus: ROStatus;
 
-      if (allCancelled) {
-        nextStage = 'DIBATALKAN';
-        nextStatus = 'REJECTED';
-      } else if (prItems.length === 0 && readyItems.length > 0) {
-        // Seluruh item Ready Stock -> otomatis langsung berpindah ke Surat Jalan (Armada Siap Kirim)
-        nextStage = 'SURAT_JALAN';
-        nextStatus = 'IN_DELIVERY';
+      if (allDone) {
+        if (cancelledItems.length === selectedRoForProcess.items.length) {
+          nextStage = 'DIBATALKAN';
+          nextStatus = 'REJECTED';
+        } else if (prItems.length === 0 && readyItems.length > 0) {
+          nextStage = 'SURAT_JALAN';
+          nextStatus = 'IN_DELIVERY';
+        } else {
+          nextStage = 'KELOLA_PR';
+          nextStatus = 'NEED_PR';
+        }
       } else {
-        // Ada item yang belum tersedia -> otomatis masuk ke tahap Kelola PR (Vendor PO)
-        nextStage = 'KELOLA_PR';
-        nextStatus = 'NEED_PR';
+        nextStage = 'REQUEST_ORDER';
+        nextStatus = 'INPUT_SYSTEM';
       }
+
+      const existingNotes = (selectedRoForProcess.notes || '').replace(/\[PROCESSED_FROM_RO\]/g, '').trim();
+      const updatedNotes = allDone
+        ? (existingNotes ? `${existingNotes} • [PROCESSED_FROM_RO]` : '[PROCESSED_FROM_RO]')
+        : existingNotes;
 
       const roPatchRes = await fetch('/api/distribution/ro', {
         method: 'PATCH',
@@ -528,6 +609,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             items: selectedRoForProcess.items,
             current_stage: nextStage,
             status: nextStatus,
+            notes: updatedNotes,
           },
         }),
       });
@@ -537,15 +619,31 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         throw new Error(roPatchJson.error || 'Gagal menyimpan perubahan alokasi ke Supabase');
       }
 
-      setOrders(prev => prev.map(o => {
-        const isMatch = o.id === selectedRoForProcess.id || o.ro_number === selectedRoForProcess.ro_number;
-        return isMatch ? {
-          ...o,
-          items: selectedRoForProcess.items,
-          current_stage: nextStage,
-          status: nextStatus,
-        } : o;
-      }));
+      const targetId = selectedRoForProcess.id;
+      const targetRoNo = selectedRoForProcess.ro_number;
+      const targetRawId = selectedRoForProcess.raw_ro_id;
+      const targetKey = normalizeRoKey(targetRawId || targetRoNo);
+
+      if (allDone) {
+        // Hilangkan dokumen RO dari menu Kelola RO seketika jika seluruh item telah dipilih statusnya
+        setOrders(prev => prev.filter(o => {
+          if (targetId && o.id === targetId) return false;
+          if (targetRoNo && o.ro_number === targetRoNo) return false;
+          if (targetRawId && o.raw_ro_id === targetRawId) return false;
+          const oKey = normalizeRoKey(o.raw_ro_id || o.ro_number);
+          if (targetKey && oKey && oKey === targetKey) return false;
+          return true;
+        }));
+      } else {
+        // Masih ada item On Proses: perbarui item di state lokal sehingga item yang sudah dipilih hilang dari tabel
+        setOrders(prev => prev.map(o => {
+          const match = (targetId && o.id === targetId) ||
+                        (targetRoNo && o.ro_number === targetRoNo) ||
+                        (targetRawId && o.raw_ro_id === targetRawId) ||
+                        (targetKey && normalizeRoKey(o.raw_ro_id || o.ro_number) === targetKey);
+          return match ? { ...o, items: selectedRoForProcess.items } : o;
+        }));
+      }
 
       // Broadcast event real-time ke menu Pemantauan Distribusi
       try {
@@ -553,22 +651,29 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         window.dispatchEvent(new Event('ca_ro_updated'));
       } catch {}
 
-      if (allCancelled) {
-        setToast({ type: 'info', message: `Dokumen ${selectedRoForProcess.ro_number} dibatalkan & tersimpan di Supabase.` });
-      } else if (prItems.length === 0 && readyItems.length > 0) {
-        setToast({
-          type: 'success',
-          message: `Semua item Ready Stock tersimpan di Supabase! Surat Jalan (${autoSjNumber || 'SJ Baru'}) otomatis diterbitkan dan RO berpindah ke Surat Jalan.`,
-        });
-      } else if (readyItems.length === 0 && prItems.length > 0) {
-        setToast({
-          type: 'info',
-          message: `Seluruh item belum tersedia tersimpan di Supabase. ${prItems.length} item otomatis dialihkan ke antrean Fitur PR (Vendor PO).`,
-        });
+      if (allDone) {
+        if (cancelledItems.length === selectedRoForProcess.items.length) {
+          setToast({ type: 'info', message: `Seluruh item dibatalkan & dokumen ${selectedRoForProcess.ro_number} dihilangkan dari menu Kelola RO.` });
+        } else if (prItems.length === 0 && readyItems.length > 0) {
+          setToast({
+            type: 'success',
+            message: `Semua item (${readyItems.length}) dialokasikan ke Ready Stock! Surat Jalan (${autoSjNumber || 'SJ Baru'}) terbit dan RO dihilangkan dari Kelola RO.`,
+          });
+        } else if (readyItems.length === 0 && prItems.length > 0) {
+          setToast({
+            type: 'info',
+            message: `Semua item (${prItems.length}) dialokasikan ke Fitur PR dan RO dihilangkan dari Kelola RO.`,
+          });
+        } else {
+          setToast({
+            type: 'success',
+            message: `Alokasi selesai: ${readyItems.length} item masuk Surat Jalan, ${prItems.length} item masuk Fitur PR, dan RO dihilangkan dari Kelola RO.`,
+          });
+        }
       } else {
         setToast({
           type: 'success',
-          message: `Alokasi tersimpan di Supabase: ${readyItems.length} item Ready Stock masuk Surat Jalan (${autoSjNumber || 'SJ Baru'}), dan ${prItems.length} item Belum Tersedia masuk antrean Fitur PR.`,
+          message: `Alokasi item berhasil disimpan! Item yang telah dipilih statusnya berpindah ke tujuannya & hilang dari antrean. Tersisa ${pendingItems.length} item On Proses.`,
         });
       }
 
@@ -1300,18 +1405,13 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                 </tr>
               ) : (
                 paginatedOrders.map((o) => {
-                  const stage = getRoStage(o);
-                  const isCancelled = stage === 'DIBATALKAN';
-                  const isCompleted = stage === 'SELESAI';
-                  const isInDelivery = stage === 'SURAT_JALAN';
-                  const isReadyStock = stage === 'READY_STOCK';
-                  const isNeedPr = stage === 'KELOLA_PR';
-                  const isPilihProses = stage === 'PILIH_PROSES' || stage === 'REQUEST_ORDER' || stage === 'INPUT_DATA';
-                  const isChecklist = stage === 'CHECKLIST' || stage === 'ASET_SAMPAI';
+                  const isCancelled = o.status === 'REJECTED' || (o.status as string) === 'CANCELLED' || o.current_stage === 'DIBATALKAN';
+                  const pendingItems = getRoPendingItems(o);
+                  const displayItems = pendingItems.length > 0 ? pendingItems : o.items;
+                  const uniqueItems = getUniqueRoItems(displayItems);
 
                   const key = normalizeRoKey(o.raw_ro_id || o.ro_number);
                   const isDupe = (deduplicationMap.get(key)?.length || 0) > 1;
-                  const uniqueItems = getUniqueRoItems(o.items);
 
                   return (
                     <tr key={o.id} className="hover:bg-[#f0f4f9]/50 dark:hover:bg-[#282a2c]/50 transition-colors">
@@ -1335,14 +1435,14 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       {/* Tanggal Order */}
                       {visibleColumns.order_date !== false && (
                         <td className="py-3.5 px-4 text-[#444746] dark:text-[#c4c7c5] whitespace-nowrap">
-                          <div className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">{o.request_date || '-'}</div>
+                          <div className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">{formatDateSlash(o.request_date)}</div>
                         </td>
                       )}
 
                       {/* Tanggal Permintaan (Data dari Sheet) */}
                       {visibleColumns.request_date !== false && (
                         <td className="py-3.5 px-4 text-[#444746] dark:text-[#c4c7c5] whitespace-nowrap">
-                          <div className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">{o.target_delivery_date || '-'}</div>
+                          <div className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">{formatDateSlash(o.target_delivery_date || o.request_date)}</div>
                         </td>
                       )}
 
@@ -1354,7 +1454,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                         </td>
                       )}
 
-                      {/* Items */}
+                      {/* Items (Hanya menampilkan item yang masih On Proses) */}
                       {visibleColumns.items !== false && (
                         <td className="py-3.5 px-4 max-w-xs">
                           <div className="space-y-1">
@@ -1367,16 +1467,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                                 <span className="text-[#747775] shrink-0">
                                   (x{it.quantity_ordered} {it.unit || 'unit'})
                                 </span>
-                                {it.stock_source === 'PR_VENDOR' && (
-                                  <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-orange-100 dark:bg-orange-950/60 text-orange-800 dark:text-orange-300 border border-orange-200 dark:border-orange-800">
-                                    PR
-                                  </span>
-                                )}
-                                {it.stock_source === 'CANCELLED' && (
-                                  <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-                                    Ditolak
-                                  </span>
-                                )}
+                                <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                  On Proses
+                                </span>
                               </div>
                             ))}
                             {uniqueItems.length > 3 && (
@@ -1434,31 +1527,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                         </td>
                       )}
 
-                      {/* Stage Progress Badge */}
+                      {/* Stage Progress Badge - Default On Proses di Kelola RO */}
                       {visibleColumns.stage !== false && (
                         <td className="py-3.5 px-4 whitespace-nowrap">
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
                             isCancelled
                               ? 'bg-rose-100 text-rose-950 border border-rose-300 dark:bg-rose-950/60 dark:text-rose-200 dark:border-rose-800'
-                              : isCompleted
-                              ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                              : isInDelivery
-                              ? 'bg-teal-100 text-teal-900 border border-teal-300'
-                              : isReadyStock
-                              ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
-                              : isNeedPr
-                              ? 'bg-orange-100 text-orange-950 border border-orange-300'
-                              : isChecklist
-                              ? 'bg-cyan-100 text-cyan-950 border border-cyan-300'
-                              : 'bg-blue-50 text-blue-900 border border-blue-200'
+                              : 'bg-blue-50 text-blue-900 border border-blue-200 dark:bg-blue-950/50 dark:text-blue-200 dark:border-blue-700'
                           }`}>
-                            {isCancelled ? <Ban className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" /> :
-                             isCompleted ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> :
-                             isInDelivery ? <Truck className="h-3.5 w-3.5 text-teal-600" /> :
-                             isReadyStock ? <Boxes className="h-3.5 w-3.5 text-emerald-600" /> :
-                             isNeedPr ? <Clock className="h-3.5 w-3.5 text-orange-600" /> :
-                             <GitMerge className="h-3.5 w-3.5 text-blue-600" />}
-                            <span>{WORKFLOW_STAGES.find(s => s.key === stage)?.label || stage}</span>
+                            {isCancelled ? <Ban className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" /> : <GitMerge className="h-3.5 w-3.5 text-blue-600" />}
+                            <span>{isCancelled ? 'Dibatalkan' : 'On Proses'}</span>
                           </span>
                           {isCancelled && o.rejection_reason && (
                             <div className="text-[10px] text-rose-600 dark:text-rose-400 mt-0.5 max-w-[200px] truncate" title={o.rejection_reason}>
@@ -1468,12 +1546,11 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                         </td>
                       )}
 
-                      {/* Contextual Action Buttons */}
+                      {/* Contextual Action Buttons - Selalu Pilih Proses untuk antrean On Proses */}
                       {visibleColumns.actions !== false && (
                         <td className="py-3.5 px-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
-                            {/* 0. Tahap Dibatalkan -> Pulihkan / Buka Kembali */}
-                            {isCancelled && (
+                            {isCancelled ? (
                               <button
                                 onClick={() => handleReactivateRo(o)}
                                 className="rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 px-3 py-1 text-[11px] font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 shadow-xs flex items-center gap-1"
@@ -1481,74 +1558,20 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                                 <RotateCcw className="h-3 w-3" />
                                 <span>Pulihkan RO</span>
                               </button>
-                            )}
-
-                            {/* 1. Tahap Pilih Proses */}
-                            {isPilihProses && (
+                            ) : (
                               <button
-                                onClick={() => setSelectedRoForProcess({ ...o, items: uniqueItems })}
+                                onClick={() => {
+                                  const itemsForModal = (o.items || []).map(it => ({
+                                    ...it,
+                                    stock_source: getItemEffectiveStatus(it, o),
+                                  }));
+                                  setSelectedRoForProcess({ ...o, items: itemsForModal });
+                                }}
                                 className="rounded-full bg-[#0b57d0] text-white px-3 py-1 text-[11px] font-semibold hover:bg-[#0842a0] shadow-xs flex items-center gap-1"
                               >
                                 <GitMerge className="h-3 w-3" />
                                 <span>Pilih Proses</span>
                               </button>
-                            )}
-
-                            {/* 2. Tahap Kelola PR */}
-                            {isNeedPr && (
-                              <button
-                                onClick={() => {
-                                  setSelectedRoForPr(o);
-                                  setPrVendor(o.pr_vendor_name || '');
-                                  setPrPoNo(o.pr_po_number || '');
-                                  setPrArrivalTarget(o.pr_estimated_arrival || '');
-                                }}
-                                className="rounded-full bg-orange-600 text-white px-3 py-1 text-[11px] font-semibold hover:bg-orange-700 shadow-xs flex items-center gap-1"
-                              >
-                                <Clock className="h-3 w-3" />
-                                <span>Kelola PR &amp; Kedatangan</span>
-                              </button>
-                            )}
-
-                            {/* 3. Tahap Ready Stock -> Buat SJ */}
-                            {isReadyStock && (
-                              <button
-                                onClick={() => setSelectedRoForSj(o)}
-                                className="rounded-full bg-emerald-700 text-white px-3 py-1 text-[11px] font-semibold hover:bg-emerald-800 shadow-xs flex items-center gap-1"
-                              >
-                                <Printer className="h-3 w-3" />
-                                <span>Terbitkan Surat Jalan</span>
-                              </button>
-                            )}
-
-                            {/* 4. Tahap Dalam Kirim -> Konfirmasi Sampai? */}
-                            {isInDelivery && (
-                              <button
-                                onClick={() => setSelectedRoForArrival(o)}
-                                className="rounded-full bg-teal-700 text-white px-3 py-1 text-[11px] font-semibold hover:bg-teal-800 shadow-xs flex items-center gap-1"
-                              >
-                                <HelpCircle className="h-3 w-3" />
-                                <span>Aset Sampai?</span>
-                              </button>
-                            )}
-
-                            {/* 5. Tahap Checklist Penerimaan */}
-                            {isChecklist && (
-                              <button
-                                onClick={() => openChecklistModal(o)}
-                                className="rounded-full bg-cyan-700 text-white px-3 py-1 text-[11px] font-semibold hover:bg-cyan-800 shadow-xs flex items-center gap-1"
-                              >
-                                <CheckSquare className="h-3 w-3" />
-                                <span>Checklist Diterima</span>
-                              </button>
-                            )}
-
-                            {/* 6. Completed */}
-                            {isCompleted && (
-                              <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                <span>Selesai</span>
-                              </span>
                             )}
                           </div>
                         </td>
@@ -1651,7 +1674,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-[#e0e2ec] dark:border-[#35383a] space-y-1">
                 <div className="flex justify-between items-center">
                   <div><strong>No. RO:</strong> {selectedRoForProcess.ro_number}</div>
-                  <div className="text-[11px] text-[#747775]"><strong>Target Permintaan:</strong> {selectedRoForProcess.target_delivery_date || '-'}</div>
+                  <div className="text-[11px] text-[#747775]"><strong>Target Permintaan:</strong> {formatDateSlash(selectedRoForProcess.target_delivery_date || selectedRoForProcess.request_date)}</div>
                 </div>
                 <div><strong>Cabang:</strong> {selectedRoForProcess.branch_name} ({selectedRoForProcess.region})</div>
               </div>
@@ -1659,7 +1682,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="font-bold text-xs">Pilih Status Ketersediaan Tiap Item:</div>
-                  <div className="flex gap-1.5">
+                  <div className="flex gap-1.5 flex-wrap">
                     <button
                       type="button"
                       onClick={() => {
@@ -1668,7 +1691,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       }}
                       className="text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 hover:bg-emerald-200"
                     >
-                      Semua Stok
+                      Semua Ready Stock
                     </button>
                     <button
                       type="button"
@@ -1678,7 +1701,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       }}
                       className="text-[10px] px-2 py-0.5 rounded font-semibold bg-orange-100 dark:bg-orange-950/60 text-orange-800 dark:text-orange-300 border border-orange-300 hover:bg-orange-200"
                     >
-                      Semua PR
+                      Semua Belum Tersedia (PR)
                     </button>
                     <button
                       type="button"
@@ -1689,6 +1712,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       className="text-[10px] px-2 py-0.5 rounded font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 hover:bg-rose-200"
                     >
                       Semua Tolak
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = selectedRoForProcess.items.map(it => ({ ...it, stock_source: 'ON_PROSES' as const }));
+                        setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
+                      }}
+                      className="text-[10px] px-2 py-0.5 rounded font-semibold bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-300 hover:bg-blue-200"
+                    >
+                      Reset On Proses
                     </button>
                   </div>
                 </div>
@@ -1721,7 +1754,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                           </div>
                         </div>
                       <select
-                        value={it.stock_source || 'GUDANG_SCGA'}
+                        value={it.stock_source || 'ON_PROSES'}
                         onChange={(e) => {
                           const val = e.target.value as any;
                           const updated = [...selectedRoForProcess.items];
@@ -1733,9 +1766,12 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                             ? 'bg-rose-50 border-rose-300 text-rose-800 dark:bg-rose-950/50 dark:border-rose-700 dark:text-rose-200'
                             : it.stock_source === 'PR_VENDOR'
                             ? 'bg-orange-50 border-orange-300 text-orange-800 dark:bg-orange-950/50 dark:border-orange-700 dark:text-orange-200'
-                            : 'bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-700 dark:text-emerald-200'
+                            : it.stock_source === 'GUDANG_SCGA'
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-700 dark:text-emerald-200'
+                            : 'bg-blue-50 border-blue-300 text-blue-800 dark:bg-blue-950/50 dark:border-blue-700 dark:text-blue-200'
                         }`}
                       >
+                        <option value="ON_PROSES">On Proses (Belum Ditentukan)</option>
                         <option value="GUDANG_SCGA">Ready Stock (Gudang SCGA)</option>
                         <option value="PR_VENDOR">Belum Tersedia (Butuh PR)</option>
                         <option value="CANCELLED">Cancel / Tolak Item</option>
@@ -2239,7 +2275,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             <div className="text-xs space-y-3">
               <div className="p-3 rounded-xl bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-200 space-y-1">
                 <div><strong>No. RO:</strong> {selectedRoForChecklist.ro_number} &bull; {selectedRoForChecklist.branch_name}</div>
-                <div><strong>Tgl Request:</strong> {selectedRoForChecklist.request_date}</div>
+                <div><strong>Tgl Request:</strong> {formatDateSlash(selectedRoForChecklist.request_date)}</div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">

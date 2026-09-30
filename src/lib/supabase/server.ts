@@ -1936,16 +1936,39 @@ function detectRoColumns(headerLine: string, defaultRegion: 'KALBAR' | 'JABODETA
 function parseIndoDate(dateStr?: string, fallbackToNull = false): string | null {
   if (!dateStr || typeof dateStr !== 'string') return fallbackToNull ? null : new Date().toISOString().split('T')[0];
   const clean = dateStr.split(' ')[0].trim();
+  if (
+    !clean ||
+    clean === '-' ||
+    clean.includes('1899') ||
+    clean.includes('1900') ||
+    clean.startsWith('30/12/99') ||
+    clean.startsWith('12/30/1899')
+  ) {
+    return fallbackToNull ? null : new Date().toISOString().split('T')[0];
+  }
+
   const parts = clean.split(/[-/]/);
   if (parts.length === 3) {
     const p0 = parseInt(parts[0], 10);
     const p1 = parseInt(parts[1], 10);
     const p2 = parseInt(parts[2], 10);
     if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
+      // YYYY-MM-DD format
       if (parts[0].length === 4) {
         return `${parts[0]}-${String(p1).padStart(2, '0')}-${String(p2).padStart(2, '0')}`;
       }
-      return `${parts[2]}-${String(p1).padStart(2, '0')}-${String(p0).padStart(2, '0')}`;
+      // DD-MM-YYYY or DD/MM/YYYY format (Indonesian standard)
+      let year = p2;
+      if (year < 100) year += 2000;
+      let day = p0;
+      let month = p1;
+      // If month > 12 and day <= 12, it is US MM/DD/YYYY
+      if (month > 12 && day <= 12) {
+        const temp = day;
+        day = month;
+        month = temp;
+      }
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
   }
   return fallbackToNull ? null : new Date().toISOString().split('T')[0];
@@ -2058,7 +2081,7 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
             item_type: tipeItem,
             quantity_ordered: qty,
             quantity_fulfilled: /diterima|selesai/i.test(statusStr) ? qty : 0,
-            stock_source: 'GUDANG_SCGA',
+            stock_source: /diterima|selesai/i.test(statusStr) ? 'GUDANG_SCGA' : 'ON_PROSES',
           });
         }
       } catch (sourceErr: any) {

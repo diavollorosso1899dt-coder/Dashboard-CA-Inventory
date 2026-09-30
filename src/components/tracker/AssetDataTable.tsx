@@ -32,7 +32,7 @@ import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import { useSearchParams } from 'next/navigation';
 import AreaFilterPills from '@/components/ui/AreaFilterPills';
 import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
-import { formatDateTime, formatDateOnly, formatLeadTime } from '@/lib/utils/date-formatter';
+import { formatDateTime, formatDateOnly, formatLeadTime, formatDateSlash } from '@/lib/utils/date-formatter';
 import { useAuth } from '@/components/auth/AuthContext';
 import { AssetDetailModal } from './AssetDetailModal';
 import { BranchBastModal } from './BranchBastModal';
@@ -559,7 +559,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
     const rows = filteredItems.map((i) => [
       i.external_id,
       i.region,
-      formatDateTime(i.order_datetime),
+      formatDateSlash(i.order_datetime),
       i.requester_name,
       i.requester_division,
       i.rab_number,
@@ -570,7 +570,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
       i.quantity_stock_allocated,
       i.quantity_pr,
       i.stock_status,
-      formatDateOnly(i.opening_date),
+      formatDateSlash(i.opening_date),
       i.item_delivery_status,
       i.lead_time_days,
       i.pic_receiver,
@@ -1147,7 +1147,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                       {visibleColumns.order_datetime !== false && (
                         <td className="py-2.5 px-3 whitespace-nowrap cursor-pointer" onClick={() => handleOpenDetail(item)}>
                           <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">
-                            {formatDateTime(item.order_datetime)}
+                            {formatDateSlash(item.order_datetime)}
                           </div>
                           <span className="inline-block mt-0.5 rounded-full px-2 py-0.2 text-[9px] font-medium bg-[#f0f4f9] dark:bg-[#282a2c] text-[#444746] dark:text-[#c4c7c5]">
                             {item.region}

@@ -251,7 +251,7 @@ export interface ROItem {
   specification?: string;
   quantity_ordered: number;
   quantity_fulfilled: number;
-  stock_source: 'GUDANG_SCGA' | 'PR_VENDOR' | 'CANCELLED';
+  stock_source: 'ON_PROSES' | 'GUDANG_SCGA' | 'PR_VENDOR' | 'CANCELLED';
   
   // Spreadsheet integration fields
   sku?: string;

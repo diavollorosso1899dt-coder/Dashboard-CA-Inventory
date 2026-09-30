@@ -50,34 +50,62 @@ function parseDateTime(val: any): string | null {
     return null;
   }
 
-  const directDate = new Date(str);
-  if (!isNaN(directDate.getTime()) && directDate.getFullYear() > 2000 && directDate.getFullYear() < 2100) {
-    return directDate.toISOString();
-  }
-
+  // 1. First priority: DD/MM/YYYY, DD-MM-YYYY, or MM/DD/YYYY
   const regex = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/;
   const match = str.match(regex);
   if (match) {
     let [, p1, p2, p3, hour, min, sec] = match;
-    let year = parseInt(p3);
+    let year = parseInt(p3, 10);
     if (year < 100) year += 2000;
     
-    let n1 = parseInt(p1);
-    let n2 = parseInt(p2);
+    let n1 = parseInt(p1, 10);
+    let n2 = parseInt(p2, 10);
+    let day = n1;
+    let month = n2;
+
+    // If second number > 12, it is impossible for it to be a month, so it's MM/DD/YYYY (e.g. 10/24/2025)
     if (n2 > 12) {
-      const temp = n1;
-      n1 = n2;
-      n2 = temp;
+      month = n1;
+      day = n2;
+    } else {
+      // Standard Indonesian date: Day is ALWAYS first (n1 = Day, n2 = Month)
+      // Handles 11-09-2026, 12/01/2026, 7/9/2026, 22-06-2026, etc.
+      day = n1;
+      month = n2;
     }
 
-    const h = hour ? parseInt(hour) : 0;
-    const m = min ? parseInt(min) : 0;
-    const s = sec ? parseInt(sec) : 0;
+    const h = hour ? parseInt(hour, 10) : 0;
+    const m = min ? parseInt(min, 10) : 0;
+    const s = sec ? parseInt(sec, 10) : 0;
 
-    const d = new Date(Date.UTC(year, n2 - 1, n1, h, m, s));
+    const d = new Date(Date.UTC(year, month - 1, day, h, m, s));
     if (!isNaN(d.getTime())) {
       return d.toISOString();
     }
+  }
+
+  // 2. Second priority: YYYY-MM-DD
+  const ymdRegex = /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/;
+  const ymdMatch = str.match(ymdRegex);
+  if (ymdMatch) {
+    const [, y, m, d, hour, min, sec] = ymdMatch;
+    const year = parseInt(y, 10);
+    const month = parseInt(m, 10);
+    const day = parseInt(d, 10);
+    const h = hour ? parseInt(hour, 10) : 0;
+    const minVal = min ? parseInt(min, 10) : 0;
+    const s = sec ? parseInt(sec, 10) : 0;
+
+    const dateObj = new Date(Date.UTC(year, month - 1, day, h, minVal, s));
+    if (!isNaN(dateObj.getTime())) {
+      return dateObj.toISOString();
+    }
+  }
+
+  // 3. Fallback to direct Date parse only if it did not match regex
+  const directDate = new Date(str);
+  if (!isNaN(directDate.getTime()) && directDate.getFullYear() > 2000 && directDate.getFullYear() < 2100) {
+    return directDate.toISOString();
   }
 
   return null;

@@ -14,46 +14,95 @@ export function isValidBusinessDate(dateStr: string | null | undefined): boolean
 }
 
 /**
- * Format datetime string into 'DD MMM YYYY, HH:mm WIB'
+ * Format datetime string into 'DD/MM/YYYY, HH:mm WIB'
  */
 export function formatDateTime(dateStr: string | null | undefined): string {
   if (!isValidBusinessDate(dateStr)) return '-';
   try {
-    const date = new Date(dateStr!);
-    if (isNaN(date.getTime())) return '-';
+    const slash = formatDateSlash(dateStr);
+    if (slash === '-') return '-';
     
-    return new Intl.DateTimeFormat('id-ID', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
+    // Extract time if present
+    const date = new Date(dateStr!);
+    if (isNaN(date.getTime())) return slash;
+    
+    const timeStr = new Intl.DateTimeFormat('id-ID', {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,
       timeZone: 'Asia/Jakarta'
-    }).format(date) + ' WIB';
+    }).format(date);
+    
+    return `${slash}, ${timeStr} WIB`;
   } catch {
-    return dateStr || '-';
+    return formatDateSlash(dateStr);
   }
 }
 
 /**
- * Format date only: 'DD MMM YYYY'
+ * Format any date string strictly as 'DD/MM/YYYY' (Indonesian standard)
+ * Examples:
+ * - '2026-09-15' -> '15/09/2026'
+ * - '15-09-2026' -> '15/09/2026'
+ * - '15/09/2026' -> '15/09/2026'
+ * - '2026-09-15T10:00:00.000Z' -> '15/09/2026'
+ */
+export function formatDateSlash(dateStr: string | null | undefined): string {
+  if (!dateStr || typeof dateStr !== 'string') return '-';
+  const clean = dateStr.trim();
+  if (
+    !clean ||
+    clean === '-' ||
+    clean.includes('1899') ||
+    clean.includes('1900') ||
+    clean.startsWith('30/12/99') ||
+    clean.startsWith('12/30/1899')
+  ) {
+    return '-';
+  }
+
+  // 1. YYYY-MM-DD or YYYY/MM/DD (with optional time)
+  const ymdMatch = clean.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymdMatch) {
+    const [, y, m, d] = ymdMatch;
+    return `${d.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`;
+  }
+
+  // 2. DD-MM-YYYY or DD/MM/YYYY (with optional time)
+  const dmyMatch = clean.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/);
+  if (dmyMatch) {
+    let [, d, m, y] = dmyMatch;
+    let year = parseInt(y, 10);
+    if (year < 100) year += 2000;
+    let day = parseInt(d, 10);
+    let month = parseInt(m, 10);
+    // If month > 12 and day <= 12, it is MM/DD/YYYY
+    if (month > 12 && day <= 12) {
+      const temp = day;
+      day = month;
+      month = temp;
+    }
+    return `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
+  }
+
+  try {
+    const dt = new Date(clean);
+    if (!isNaN(dt.getTime())) {
+      const day = String(dt.getDate()).padStart(2, '0');
+      const month = String(dt.getMonth() + 1).padStart(2, '0');
+      const year = dt.getFullYear();
+      return `${day}/${month}/${year}`;
+    }
+  } catch {}
+
+  return clean;
+}
+
+/**
+ * Format date only: 'DD/MM/YYYY' (Indonesian standard)
  */
 export function formatDateOnly(dateStr: string | null | undefined): string {
-  if (!isValidBusinessDate(dateStr)) return '-';
-  try {
-    const date = new Date(dateStr!);
-    if (isNaN(date.getTime())) return '-';
-    
-    return new Intl.DateTimeFormat('id-ID', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      timeZone: 'Asia/Jakarta'
-    }).format(date);
-  } catch {
-    return dateStr || '-';
-  }
+  return formatDateSlash(dateStr);
 }
 
 /**
