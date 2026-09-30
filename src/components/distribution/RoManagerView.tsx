@@ -309,7 +309,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   useEffect(() => {
     if (orders.length === 0) {
       setIsLoading(true);
-      fetch('/api/distribution/ro')
+      fetch('/api/distribution/ro?active=true')
         .then((res) => res.json())
         .then((data) => {
           if (data.data) setOrders(data.data);
@@ -489,7 +489,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       if (json.success) {
         setSyncFeedback(json.message);
         // Refresh orders
-        const getRes = await fetch('/api/distribution/ro');
+        const getRes = await fetch('/api/distribution/ro?active=true');
         const getData = await getRes.json();
         if (getData.data) setOrders(getData.data);
       } else {
@@ -511,7 +511,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       const json = await res.json();
       if (json.success) {
         setSyncFeedback(json.message);
-        const getRes = await fetch('/api/distribution/ro');
+        const getRes = await fetch('/api/distribution/ro?active=true');
         const getData = await getRes.json();
         if (getData.data) setOrders(getData.data);
       }

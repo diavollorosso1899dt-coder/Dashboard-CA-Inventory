@@ -3,9 +3,32 @@ import { getRequestOrders, createRequestOrder, updateRequestOrder } from '@/lib/
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const data = await getRequestOrders();
+    const activeOnly = req.nextUrl.searchParams.get('active') === 'true';
+    let data = await getRequestOrders();
+    if (activeOnly) {
+      data = data.filter((o) => {
+        if (o.notes && o.notes.includes('[PROCESSED_FROM_RO]')) return false;
+        const stage = o.current_stage || o.status;
+        if (
+          stage === 'SURAT_JALAN' ||
+          stage === 'IN_DELIVERY' ||
+          stage === 'KELOLA_PR' ||
+          stage === 'NEED_PR' ||
+          stage === 'READY_STOCK' ||
+          stage === 'ASET_SAMPAI' ||
+          stage === 'CHECKLIST' ||
+          stage === 'CHECKLIST_DONE' ||
+          stage === 'UPDATE_SLA' ||
+          stage === 'SELESAI' ||
+          stage === 'COMPLETED'
+        ) {
+          return false;
+        }
+        return true;
+      });
+    }
     return NextResponse.json({ data });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

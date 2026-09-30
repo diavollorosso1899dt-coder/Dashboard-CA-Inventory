@@ -2093,12 +2093,76 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
     let totalItems = 0;
     uniqueOrders.forEach((o) => (totalItems += o.items.length));
 
-    // Upsert into Supabase request_orders table
+    // Upsert into Supabase request_orders table with smart preservation of existing user progress
     const admin = getAdminClient();
     if (admin && uniqueOrders.length > 0) {
-      const chunkSize = 100;
-      for (let i = 0; i < uniqueOrders.length; i += chunkSize) {
-        const chunk = uniqueOrders.slice(i, i + chunkSize).map((o) => ({
+      let existingRows: any[] = [];
+      try {
+        const { data } = await admin
+          .from('request_orders')
+          .select('id, ro_number, raw_ro_id, status, current_stage, notes, items');
+        if (data) existingRows = data;
+      } catch (err) {
+        console.warn('[RO Sync] Could not fetch existing orders for merge:', err);
+      }
+
+      const existingMap = new Map<string, any>();
+      for (const r of existingRows) {
+        if (r.ro_number) existingMap.set(r.ro_number.toLowerCase().trim(), r);
+        if (r.raw_ro_id) existingMap.set(String(r.raw_ro_id).toLowerCase().trim(), r);
+      }
+
+      const mergedOrders = uniqueOrders.map((o) => {
+        const keyNo = (o.ro_number || '').toLowerCase().trim();
+        const keyRaw = (o.raw_ro_id || '').toLowerCase().trim();
+        const existing = existingMap.get(keyNo) || (keyRaw ? existingMap.get(keyRaw) : null);
+
+        if (!existing) {
+          return {
+            ro_number: o.ro_number,
+            raw_ro_id: o.raw_ro_id,
+            branch_name: o.branch_name,
+            region: o.region,
+            requester_name: o.requester_name,
+            request_date: o.request_date,
+            target_delivery_date: o.target_delivery_date || null,
+            status: o.status,
+            current_stage: o.current_stage,
+            source_type: o.source_type,
+            warehouse_name: o.warehouse_name,
+            items: o.items,
+          };
+        }
+
+        // Merge items: preserve user-assigned stock_source / quantity_fulfilled
+        const existingItemMap = new Map<string, any>();
+        if (Array.isArray(existing.items)) {
+          existing.items.forEach((it: any) => {
+            const itemKey = (it.item_name || '').toLowerCase().trim();
+            if (itemKey) existingItemMap.set(itemKey, it);
+          });
+        }
+
+        const mergedItems = o.items.map((it) => {
+          const matched = existingItemMap.get((it.item_name || '').toLowerCase().trim());
+          if (matched && matched.stock_source && matched.stock_source !== 'ON_PROSES') {
+            return {
+              ...it,
+              stock_source: matched.stock_source,
+              quantity_fulfilled: matched.quantity_fulfilled ?? it.quantity_fulfilled,
+              specification: matched.specification || it.specification,
+            };
+          }
+          return it;
+        });
+
+        const isProcessed =
+          (existing.notes && existing.notes.includes('[PROCESSED_FROM_RO]')) ||
+          (existing.current_stage && existing.current_stage !== 'REQUEST_ORDER') ||
+          (existing.status && existing.status !== 'INPUT_SYSTEM');
+
+        return {
+          id: existing.id,
           ro_number: o.ro_number,
           raw_ro_id: o.raw_ro_id,
           branch_name: o.branch_name,
@@ -2106,19 +2170,27 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
           requester_name: o.requester_name,
           request_date: o.request_date,
           target_delivery_date: o.target_delivery_date || null,
-          status: o.status,
-          current_stage: o.current_stage,
+          status: isProcessed ? existing.status : o.status,
+          current_stage: isProcessed ? existing.current_stage : o.current_stage,
+          notes: existing.notes || null,
           source_type: o.source_type,
           warehouse_name: o.warehouse_name,
-          items: o.items,
-        }));
+          items: mergedItems,
+        };
+      });
+
+      const chunkSize = 100;
+      for (let i = 0; i < mergedOrders.length; i += chunkSize) {
+        const chunk = mergedOrders.slice(i, i + chunkSize);
         await admin.from('request_orders').upsert(chunk, { onConflict: 'ro_number' });
       }
-    }
 
-    // Merge into in-memory cache
-    cache.requestOrders = uniqueOrders;
-    global.__RO_CACHE__ = { items: deduplicateOrderItems(uniqueOrders), timestamp: Date.now() };
+      cache.requestOrders = mergedOrders as RequestOrder[];
+      global.__RO_CACHE__ = { items: deduplicateOrderItems(mergedOrders as RequestOrder[]), timestamp: Date.now() };
+    } else {
+      cache.requestOrders = uniqueOrders;
+      global.__RO_CACHE__ = { items: deduplicateOrderItems(uniqueOrders), timestamp: Date.now() };
+    }
 
     return {
       success: true,
