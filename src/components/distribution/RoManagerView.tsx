@@ -36,7 +36,8 @@ import {
   Eye,
   Upload,
   FileEdit,
-  Ban
+  Ban,
+  Building2
 } from 'lucide-react';
 import { RequestOrder, Outlet, ROItem, ROStatus } from '@/lib/supabase/types';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
@@ -278,8 +279,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   };
 
   // New RO form state
-  const [branchName, setBranchName] = useState(outletList[0]?.branch_name || outletList[0]?.nama || 'CA - Grand Batam Mall');
+  const [branchName, setBranchName] = useState(outletList[0]?.branch_name || outletList[0]?.nama || '');
   const [region, setRegion] = useState<'JABODETABEK' | 'KALBAR'>('JABODETABEK');
+  const [outletSearch, setOutletSearch] = useState('');
   const [requesterName, setRequesterName] = useState('Staff Logistik CA');
   const [targetDeliveryDate, setTargetDeliveryDate] = useState('');
   const [notes, setNotes] = useState('');
@@ -288,6 +290,54 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [stockSource, setStockSource] = useState<'GUDANG_SCGA' | 'PR_VENDOR'>('GUDANG_SCGA');
   const [itemsList, setItemsList] = useState<ROItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Grouped Master Outlets for Buat RO Baru modal
+  const jaboOutlets = useMemo(() => {
+    return outletList
+      .filter((o) => normalizeRegion(o.region) === 'JABODETABEK')
+      .filter((o) => {
+        if (!outletSearch) return true;
+        const q = outletSearch.toLowerCase();
+        return (o.branch_name || o.nama || '').toLowerCase().includes(q);
+      })
+      .sort((a, b) => (a.branch_name || a.nama || '').localeCompare(b.branch_name || b.nama || ''));
+  }, [outletList, outletSearch]);
+
+  const kalbarOutlets = useMemo(() => {
+    return outletList
+      .filter((o) => normalizeRegion(o.region) === 'KALBAR')
+      .filter((o) => {
+        if (!outletSearch) return true;
+        const q = outletSearch.toLowerCase();
+        return (o.branch_name || o.nama || '').toLowerCase().includes(q);
+      })
+      .sort((a, b) => (a.branch_name || a.nama || '').localeCompare(b.branch_name || b.nama || ''));
+  }, [outletList, outletSearch]);
+
+  const otherOutlets = useMemo(() => {
+    return outletList
+      .filter((o) => {
+        const reg = normalizeRegion(o.region);
+        return reg !== 'JABODETABEK' && reg !== 'KALBAR';
+      })
+      .filter((o) => {
+        if (!outletSearch) return true;
+        const q = outletSearch.toLowerCase();
+        return (o.branch_name || o.nama || '').toLowerCase().includes(q);
+      })
+      .sort((a, b) => (a.branch_name || a.nama || '').localeCompare(b.branch_name || b.nama || ''));
+  }, [outletList, outletSearch]);
+
+  // Keep branchName and region synced when outletList loads or changes
+  useEffect(() => {
+    if (outletList.length > 0 && (!branchName || branchName === 'CA - Grand Batam Mall')) {
+      const first = outletList[0];
+      const name = first.branch_name || first.nama || '';
+      setBranchName(name);
+      const reg = normalizeRegion(first.region);
+      setRegion(reg === 'KALBAR' ? 'KALBAR' : 'JABODETABEK');
+    }
+  }, [outletList, branchName]);
 
   // SJ Modal inputs
   const [driverName, setDriverName] = useState('Suryanto');
@@ -323,7 +373,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       fetch('/api/outlets')
         .then((res) => res.json())
         .then((data) => {
-          if (data.data) setOutletList(data.data);
+          if (data.data && data.data.length > 0) {
+            setOutletList(data.data);
+            if (!branchName || branchName === 'CA - Grand Batam Mall') {
+              const first = data.data[0];
+              const name = first.branch_name || first.nama || '';
+              setBranchName(name);
+              const reg = normalizeRegion(first.region);
+              setRegion(reg === 'KALBAR' ? 'KALBAR' : 'JABODETABEK');
+            }
+          }
         })
         .catch(console.error);
     }
@@ -1237,7 +1296,18 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
             {/* Buat RO Baru */}
             <button
-              onClick={() => setIsRoModalOpen(true)}
+              onClick={() => {
+                if (outletList.length === 0) {
+                  fetch('/api/outlets')
+                    .then((res) => res.json())
+                    .then((data) => {
+                      if (data.data) setOutletList(data.data);
+                    })
+                    .catch(console.error);
+                }
+                setOutletSearch('');
+                setIsRoModalOpen(true);
+              }}
               className="interactive-tap flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-white dark:text-[#041e49] px-4 py-2 text-xs font-semibold hover:bg-[#0842a0] transition-colors shadow-sm shrink-0"
             >
               <PlusCircle className="h-3.5 w-3.5" />
@@ -2386,29 +2456,110 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             </div>
 
             <form onSubmit={handleSubmitRo} className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-1">Cabang Outlet</label>
-                  <select
-                    value={branchName}
-                    onChange={(e) => setBranchName(e.target.value)}
-                    className="w-full rounded-xl border p-2 bg-slate-50 dark:bg-slate-900"
-                  >
-                    {outletList.map((o) => (
-                      <option key={o.id} value={o.branch_name || o.nama}>
-                        {o.branch_name || o.nama}
-                      </option>
-                    ))}
-                  </select>
+              {/* Pilihan Cabang Outlet Master */}
+              <div className="space-y-2 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-1.5">
+                    <Building2 className="h-4 w-4 text-[#0b57d0]" />
+                    <span>Cabang Outlet Master ({outletList.length} Outlet)</span>
+                  </label>
+                  <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold shadow-xs ${
+                    region === 'KALBAR'
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                  }`}>
+                    Region: {region}
+                  </span>
                 </div>
-                <div>
-                  <label className="block font-bold mb-1">Target Kirim</label>
+
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
                   <input
-                    type="date"
-                    value={targetDeliveryDate}
-                    onChange={(e) => setTargetDeliveryDate(e.target.value)}
-                    className="w-full rounded-xl border p-2 bg-slate-50 dark:bg-slate-900"
+                    type="text"
+                    value={outletSearch}
+                    onChange={(e) => setOutletSearch(e.target.value)}
+                    placeholder="Ketik untuk filter cepat nama cabang..."
+                    className="w-full pl-8 pr-7 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
+                  {outletSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setOutletSearch('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-600"
+                    >
+                      &times;
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">Pilih Cabang</label>
+                    <select
+                      value={branchName}
+                      onChange={(e) => {
+                        const selectedVal = e.target.value;
+                        setBranchName(selectedVal);
+                        const matched = outletList.find((o) => (o.branch_name || o.nama) === selectedVal);
+                        if (matched && matched.region) {
+                          const reg = normalizeRegion(matched.region);
+                          setRegion(reg === 'KALBAR' ? 'KALBAR' : 'JABODETABEK');
+                        }
+                      }}
+                      className="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2 bg-white dark:bg-slate-950 font-medium text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    >
+                      <option value="" disabled>-- Pilih Cabang Outlet --</option>
+                      {jaboOutlets.length > 0 && (
+                        <optgroup label={`JABODETABEK (${jaboOutlets.length} Cabang)`}>
+                          {jaboOutlets.map((o) => {
+                            const name = o.branch_name || o.nama;
+                            return (
+                              <option key={o.id || name} value={name}>
+                                {name}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      )}
+                      {kalbarOutlets.length > 0 && (
+                        <optgroup label={`KALBAR (${kalbarOutlets.length} Cabang)`}>
+                          {kalbarOutlets.map((o) => {
+                            const name = o.branch_name || o.nama;
+                            return (
+                              <option key={o.id || name} value={name}>
+                                {name}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      )}
+                      {otherOutlets.length > 0 && (
+                        <optgroup label={`LAINNYA (${otherOutlets.length} Cabang)`}>
+                          {otherOutlets.map((o) => {
+                            const name = o.branch_name || o.nama;
+                            return (
+                              <option key={o.id || name} value={name}>
+                                {name}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      )}
+                      {jaboOutlets.length === 0 && kalbarOutlets.length === 0 && otherOutlets.length === 0 && (
+                        <option value="" disabled>Tidak ada outlet yang sesuai</option>
+                      )}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">Target Kirim</label>
+                    <input
+                      type="date"
+                      value={targetDeliveryDate}
+                      onChange={(e) => setTargetDeliveryDate(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2 bg-white dark:bg-slate-950 text-xs"
+                    />
+                  </div>
                 </div>
               </div>
 

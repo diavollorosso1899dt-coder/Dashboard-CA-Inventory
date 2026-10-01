@@ -1012,20 +1012,26 @@ export async function getOutlets(): Promise<Outlet[]> {
 
   const admin = getAdminClient();
   let dbOutlets: Outlet[] = [];
+  let dbRoBranches: Array<{ branch_name: string; region: string; requester_name?: string }> = [];
+
   if (admin) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2500);
-      const { data, error } = await admin
-        .from('outlets')
-        .select('*')
-        .order('branch_name')
-        .abortSignal(controller.signal);
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const [outletsRes, roRes] = await Promise.all([
+        admin.from('outlets').select('*').order('branch_name').abortSignal(controller.signal),
+        admin.from('request_orders').select('branch_name, region, requester_name').not('branch_name', 'is', null).abortSignal(controller.signal)
+      ]);
       clearTimeout(timer);
-      if (!error && data && data.length > 0) {
-        dbOutlets = data as Outlet[];
-      } else if (error) {
-        console.error('[Supabase getOutlets error]:', error.message);
+
+      if (!outletsRes.error && outletsRes.data && outletsRes.data.length > 0) {
+        dbOutlets = outletsRes.data as Outlet[];
+      } else if (outletsRes.error) {
+        console.error('[Supabase getOutlets error]:', outletsRes.error.message);
+      }
+
+      if (!roRes.error && roRes.data) {
+        dbRoBranches = roRes.data;
       }
     } catch {
       // Abort or error, proceed with local cache
@@ -1064,9 +1070,23 @@ export async function getOutlets(): Promise<Outlet[]> {
     };
   };
 
+  const isInvalidBranch = (raw: string): boolean => {
+    if (!raw) return true;
+    const lower = raw.trim().toLowerCase();
+    return (
+      !lower ||
+      lower === '-' ||
+      lower === 'new item' ||
+      lower === 'tanpa nama outlet' ||
+      lower.startsWith('ast-') ||
+      lower.startsWith('plk-')
+    );
+  };
+
   // 1. Add from cache.outlets
   if (cache.outlets) {
     for (const o of cache.outlets) {
+      if (isInvalidBranch(o.branch_name || o.nama || '')) continue;
       const norm = normalizeOutlet(o);
       const key = norm.branch_name.toLowerCase();
       if (key) outletMap.set(key, norm);
@@ -1075,15 +1095,42 @@ export async function getOutlets(): Promise<Outlet[]> {
 
   // 2. Add from Supabase database (takes precedence for richer data)
   for (const o of dbOutlets) {
+    if (isInvalidBranch(o.branch_name || o.nama || '')) continue;
     const norm = normalizeOutlet(o);
     const key = norm.branch_name.toLowerCase();
     if (key) outletMap.set(key, norm);
   }
 
-  // 3. Scan asset_requests (items) to ensure any newly inputted or existing branch appears in the outlet list
+  // 3. Add dynamically from request_orders branches
+  for (const ro of dbRoBranches) {
+    if (isInvalidBranch(ro.branch_name)) continue;
+    const cleanBranch = ro.branch_name.trim();
+    const key = cleanBranch.toLowerCase();
+    if (!outletMap.has(key)) {
+      const isKalbar = (ro.region as string)?.toUpperCase() === 'KALBAR';
+      const synthetic = normalizeOutlet({
+        id: `out-ro-${hashOutletBranch(key)}`,
+        branch_name: cleanBranch,
+        nama: cleanBranch,
+        region: isKalbar ? 'KALBAR' : 'JABODETABEK',
+        status: 'Aktif',
+        address: '',
+        alamat: '',
+        pic_name: ro.requester_name || '',
+        pic_nama: ro.requester_name || '',
+        pic_phone: '',
+        telepon: '',
+        notes: 'Master Data Outlet RO',
+        created_at: new Date().toISOString(),
+      });
+      outletMap.set(key, synthetic);
+    }
+  }
+
+  // 4. Scan asset_requests (items) to ensure any newly inputted or existing branch appears in the outlet list
   if (cache.items) {
     for (const item of cache.items) {
-      if (!item.branch_name) continue;
+      if (!item.branch_name || isInvalidBranch(item.branch_name)) continue;
       const key = item.branch_name.trim().toLowerCase();
       if (!outletMap.has(key)) {
         const isJabo = (item.region as string) === 'JABODETABEK' || (item.region as string) === 'JABO';
