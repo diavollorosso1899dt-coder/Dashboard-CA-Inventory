@@ -472,7 +472,7 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
   }
 }
 
-const ASSET_REQUESTS_CACHE_TTL_MS = 3 * 60 * 1000; // 3 menit
+const ASSET_REQUESTS_CACHE_TTL_MS = 1 * 60 * 1000; // 1 menit (sesuai siklus auto-sync)
 
 /**
  * Low-level cached fetcher for raw asset requests from Supabase with TTL and Promise deduplication
@@ -1639,8 +1639,8 @@ export function deduplicateOrderItems(orders: RequestOrder[]): RequestOrder[] {
   return sanitizedOrders;
 }
 
-// In-Memory Cache untuk Request Orders (TTL 3 Menit + Promise Deduplication)
-const RO_CACHE_TTL_MS = 3 * 60 * 1000;
+// In-Memory Cache untuk Request Orders (TTL 1 Menit + Promise Deduplication)
+const RO_CACHE_TTL_MS = 1 * 60 * 1000;
 
 export function invalidateRoCache() {
   global.__RO_CACHE__ = undefined;

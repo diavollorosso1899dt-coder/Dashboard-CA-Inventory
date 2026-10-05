@@ -75,7 +75,7 @@ export function Navbar() {
   const [isSyncingState, setIsSyncingState] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
 
-  // 2. Silent & Resilient Auto-Sync in background (Set to 5 minutes)
+  // 2. Silent & Resilient Auto-Sync in background (Set to 1 minute / 60s)
   useEffect(() => {
     let isMounted = true;
 
@@ -130,9 +130,9 @@ export function Navbar() {
       }
     };
 
-    // Run once on load after 3s, then poll every 5 minutes (300,000 ms)
+    // Run once on load after 3s, then poll every 1 minute (60,000 ms)
     const initialDelay = setTimeout(runBackgroundSync, 3000);
-    const timer = setInterval(runBackgroundSync, 300000);
+    const timer = setInterval(runBackgroundSync, 60000);
     
     return () => {
       isMounted = false;
@@ -188,13 +188,13 @@ export function Navbar() {
 
       {/* Action Controls */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Auto-Sync 5-Min Pill */}
+        {/* Auto-Sync 1-Min Pill */}
         <div 
           className="hidden md:flex items-center gap-1.5 rounded-full bg-[#e9eef6] dark:bg-[#282a2c] px-3 py-1.5 text-[11px] text-[#444746] dark:text-[#c4c7c5] font-medium select-none"
-          title={lastSyncedTime ? `Auto-sync tiap 5 menit aktif. Terakhir diperbarui: ${lastSyncedTime} WIB.` : 'Auto-sync tiap 5 menit aktif.'}
+          title={lastSyncedTime ? `Auto-sync tiap 1 menit aktif. Terakhir diperbarui: ${lastSyncedTime} WIB.` : 'Auto-sync tiap 1 menit aktif.'}
         >
           <RefreshCw className={`h-3 w-3 text-[#0b57d0] dark:text-[#a8c7fa] ${isSyncingState ? 'animate-spin' : ''}`} />
-          <span>{isSyncingState ? 'Syncing...' : lastSyncedTime ? `Sync ${lastSyncedTime}` : 'Sync 5m'}</span>
+          <span>{isSyncingState ? 'Syncing...' : lastSyncedTime ? `Sync ${lastSyncedTime}` : 'Sync 1m'}</span>
         </div>
 
         {/* Real-time Clock Pill */}
