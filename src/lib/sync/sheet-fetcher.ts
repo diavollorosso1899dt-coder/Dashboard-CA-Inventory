@@ -268,8 +268,13 @@ function parseRowWithMap(
   region: 'JABODETABEK' | 'KALBAR',
   rowIndex: number
 ): AssetRequest | null {
-  const itemName = (colMap.itemName !== undefined ? row[colMap.itemName] : '')?.trim();
-  if (!itemName) return null; // Skip blank template rows
+  const rawItem = (colMap.itemName !== undefined ? row[colMap.itemName] : '')?.trim();
+  const rawSysItem = (colMap.systemItemName !== undefined ? row[colMap.systemItemName] : '')?.trim();
+  const rawSpec = (colMap.specification !== undefined ? row[colMap.specification] : '')?.trim();
+  
+  // Fallback to system item name or spec if user left the ITEM column empty
+  const itemName = rawItem || rawSysItem || rawSpec;
+  if (!itemName) return null; // Skip truly blank template rows
 
   let branchName = (colMap.branchName !== undefined ? row[colMap.branchName] : '')?.trim();
   if (!branchName || branchName === '-') {
