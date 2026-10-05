@@ -498,7 +498,7 @@ export async function getAllAssetRequestsRaw(force = false): Promise<AssetReques
         const admin = getAdminClient();
         if (admin) {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 4000);
+          const timeoutId = setTimeout(() => controller.abort(), 8000);
 
           try {
             // Fetch batches paralel (3300 baris = 4 batch x 1000)

@@ -167,245 +167,254 @@ function parseCsvRows(csvText: string): string[][] {
   return parsed.data;
 }
 
+interface SheetColumnMap {
+  orderDt?: number;
+  requesterName?: number;
+  requesterDivision?: number;
+  rabNumber?: number;
+  category?: number;
+  branchName?: number;
+  classification?: number;
+  itemName?: number;
+  specification?: number;
+  photoUrl?: number;
+  quantityNeeded?: number;
+  rabLink?: number;
+  rabPrice?: number;
+  rabTotal?: number;
+  accKadiv?: number;
+  systemItemName?: number;
+  quantityStock?: number;
+  quantityPr?: number;
+  prDt?: number;
+  openingDt?: number;
+  stockStatus?: number;
+  isDirectShipment?: number;
+  isReceivedAtOutlet?: number;
+  poDate?: number;
+  vendorName?: number;
+}
+
 /**
- * Ingest data from Sheet JABODETABEK (gid=0)
- * Kolom G (indeks CSV 6) = NAMA OUTLET
- * Kolom I (indeks CSV 8) = ITEM YANG DIAJUKAN
- * Kolom AA (indeks CSV 26) = Terima Outlet (TRUE = Selesai / Lengkap).
- * Rentang kolom AB s/d AO (indeks CSV 27 s/d 40) TIDAK DIGUNAKAN.
+ * Dynamically discover column indexes based on header row names
+ * Prevents errors from shifted/missing columns in Google Sheets
+ */
+export function createColumnMap(headerRow: string[]): SheetColumnMap {
+  const colMap: SheetColumnMap = {};
+  headerRow.forEach((col, idx) => {
+    const raw = col.trim().toLowerCase();
+    if (!raw) return;
+    if (raw.includes('terima outlet')) {
+      colMap.isReceivedAtOutlet = idx;
+    } else if (raw === 'divisi' || raw.includes('divisi pengajuan')) {
+      colMap.requesterDivision = idx;
+    } else if (raw.includes('tanggal order') || raw.includes('tgl pengajuan')) {
+      colMap.orderDt = idx;
+    } else if (raw.includes('nama pengajuan') || raw === 'nama') {
+      colMap.requesterName = idx;
+    } else if (raw.includes('rab') && raw.includes('no')) {
+      colMap.rabNumber = idx;
+    } else if (raw.includes('kategori')) {
+      colMap.category = idx;
+    } else if (raw.includes('cabang')) {
+      colMap.branchName = idx;
+    } else if (raw.includes('klasifikasi')) {
+      colMap.classification = idx;
+    } else if (raw.includes('item yang diajukan') || raw === 'item') {
+      colMap.itemName = idx;
+    } else if (raw.includes('spesifikasi terupdate') || raw.includes('di system')) {
+      colMap.systemItemName = idx;
+    } else if (raw.includes('spesifikasi item') || raw === 'spesifikasi') {
+      colMap.specification = idx;
+    } else if (raw.includes('foto item') || raw.includes('foto')) {
+      colMap.photoUrl = idx;
+    } else if (raw.includes('kebutuhan')) {
+      colMap.quantityNeeded = idx;
+    } else if (raw.includes('link rab')) {
+      colMap.rabLink = idx;
+    } else if (raw.includes('harga (rab)') || raw.includes('harga rab')) {
+      colMap.rabPrice = idx;
+    } else if (raw === 'total' || raw.includes('total')) {
+      if (colMap.rabTotal === undefined) colMap.rabTotal = idx;
+    } else if (raw.includes('acc kadiv')) {
+      colMap.accKadiv = idx;
+    } else if (raw.includes('jumlah stok')) {
+      colMap.quantityStock = idx;
+    } else if (raw.includes('jumlah pr')) {
+      colMap.quantityPr = idx;
+    } else if (raw.includes('waktu pr') || raw.includes('tanggal pr') || raw.includes('tgl pr')) {
+      colMap.prDt = idx;
+    } else if (raw.includes('opening')) {
+      colMap.openingDt = idx;
+    } else if (raw.includes('status stok')) {
+      colMap.stockStatus = idx;
+    } else if (raw.includes('pengiriman aset')) {
+      colMap.isDirectShipment = idx;
+    } else if (raw.includes('vendor')) {
+      colMap.vendorName = idx;
+    } else if (raw.includes('tgl po') || raw.includes('tanggal po')) {
+      colMap.poDate = idx;
+    }
+  });
+  return colMap;
+}
+
+/**
+ * Universal row parser using the dynamic column map
+ */
+function parseRowWithMap(
+  row: string[],
+  colMap: SheetColumnMap,
+  region: 'JABODETABEK' | 'KALBAR',
+  rowIndex: number
+): AssetRequest | null {
+  const itemName = (colMap.itemName !== undefined ? row[colMap.itemName] : '')?.trim();
+  if (!itemName) return null; // Skip blank template rows
+
+  let branchName = (colMap.branchName !== undefined ? row[colMap.branchName] : '')?.trim();
+  if (!branchName || branchName === '-') {
+    branchName = 'Tanpa Nama Outlet';
+  }
+
+  const orderDtRaw = colMap.orderDt !== undefined ? row[colMap.orderDt] : null;
+  const orderDt = parseDateTime(orderDtRaw);
+
+  const requesterName = (colMap.requesterName !== undefined ? row[colMap.requesterName] : '')?.trim() || 'Tim BusDev';
+  const requesterDivision = (colMap.requesterDivision !== undefined ? row[colMap.requesterDivision] : '')?.trim() || 'BusDev';
+  const rabNumber = (colMap.rabNumber !== undefined ? row[colMap.rabNumber] : '')?.trim() || '';
+  const category = (colMap.category !== undefined ? row[colMap.category] : '')?.trim() || (region === 'KALBAR' ? 'New Brand KALBAR' : 'New Outlet JABO');
+  const classification = (colMap.classification !== undefined ? row[colMap.classification] : '')?.trim() || (region === 'KALBAR' ? 'ASET' : 'General');
+  const specification = (colMap.specification !== undefined ? row[colMap.specification] : '')?.trim() || '';
+  const photoUrlRaw = (colMap.photoUrl !== undefined ? row[colMap.photoUrl] : '')?.trim();
+  const photoUrl = photoUrlRaw && photoUrlRaw.startsWith('http') ? photoUrlRaw : null;
+
+  const quantityNeeded = (colMap.quantityNeeded !== undefined ? parseInt(row[colMap.quantityNeeded]) : 0) || 1;
+  const rabLink = (colMap.rabLink !== undefined ? row[colMap.rabLink] : '')?.trim() || '';
+  const rabPrice = colMap.rabPrice !== undefined ? parseCurrency(row[colMap.rabPrice]) : 0;
+  const rabTotal = (colMap.rabTotal !== undefined ? parseCurrency(row[colMap.rabTotal]) : 0) || rabPrice * quantityNeeded;
+  const accKadiv = colMap.accKadiv !== undefined ? String(row[colMap.accKadiv]).toLowerCase() === 'true' : false;
+
+  const systemItemName = (colMap.systemItemName !== undefined ? row[colMap.systemItemName] : '')?.trim() || itemName;
+  const quantityStock = (colMap.quantityStock !== undefined ? parseInt(row[colMap.quantityStock]) : 0) || 0;
+  const quantityPr = (colMap.quantityPr !== undefined ? parseInt(row[colMap.quantityPr]) : 0) || 0;
+  const prDt = colMap.prDt !== undefined ? parseDateTime(row[colMap.prDt]) : null;
+  const openingDt = colMap.openingDt !== undefined ? parseDateOnly(row[colMap.openingDt]) : null;
+  const stockStatus = (colMap.stockStatus !== undefined ? row[colMap.stockStatus] : '')?.trim() || (quantityStock > 0 ? 'Ready (Spek Sesuai)' : 'Not Ready (Stok Kosong)');
+  const isDirectShipment = colMap.isDirectShipment !== undefined ? String(row[colMap.isDirectShipment]).toLowerCase() === 'true' : false;
+  const isReceivedAtOutlet = colMap.isReceivedAtOutlet !== undefined ? String(row[colMap.isReceivedAtOutlet]).toLowerCase() === 'true' : false;
+  const poDate = colMap.poDate !== undefined ? parseDateOnly(row[colMap.poDate]) : null;
+  const vendorName = (colMap.vendorName !== undefined ? row[colMap.vendorName] : '')?.trim() || '';
+
+  const agingDays = calculateAgingDays(orderDt, null);
+
+  // KETENTUAN STATUS BARANG SESUAI STANDAR SHEET:
+  // 1. Jika Kolom Terima Outlet = TRUE -> Status Terima Outlet
+  // 2. Jika Kolom Pengiriman Aset = TRUE -> Status Dalam Pengiriman (SCGA)
+  // 3. Jika Stok Gudang >= Kebutuhan -> Status Ready Gudang SCGA
+  // 4. Jika Stok Gudang > 0 -> Status Diterima Sebagian
+  // 5. Lainnya -> Status On Proses PR
+  let initialDeliveryStatus = 'On Proses PR';
+  if (isReceivedAtOutlet) {
+    initialDeliveryStatus = 'Terima Outlet';
+  } else if (isDirectShipment) {
+    initialDeliveryStatus = 'Dalam Pengiriman (SCGA)';
+  } else if (quantityStock >= quantityNeeded && quantityNeeded > 0) {
+    initialDeliveryStatus = 'Ready Gudang SCGA';
+  } else if (quantityStock > 0) {
+    initialDeliveryStatus = 'Diterima Sebagian';
+  }
+
+  const prefix = region === 'KALBAR' ? 'kalbar' : 'jabo';
+  const extPrefix = region === 'KALBAR' ? 'KALBAR' : 'JABO';
+
+  return {
+    id: `${prefix}-${rowIndex}`,
+    external_id: `${extPrefix}-ROW-${rowIndex}`,
+    region: region,
+    sheet_row_index: rowIndex,
+
+    order_datetime: orderDt,
+    requester_name: requesterName,
+    requester_division: requesterDivision,
+    rab_number: rabNumber,
+    category: category,
+    branch_name: branchName,
+    classification: classification,
+    item_name: itemName,
+    specification: specification,
+    photo_url: photoUrl,
+    quantity_needed: quantityNeeded,
+
+    rab_link: rabLink,
+    rab_price: rabPrice,
+    rab_total: rabTotal,
+    acc_kadiv_request: accKadiv,
+
+    system_item_name: systemItemName,
+    quantity_stock_allocated: quantityStock,
+    quantity_pr: quantityPr,
+    pr_datetime: prDt,
+    opening_date: openingDt,
+    stock_status: stockStatus,
+    is_direct_shipment: isDirectShipment,
+
+    po_date: poDate,
+
+    order_type: 'OFFLINE',
+    initial_price: 0,
+    deal_price: 0,
+    vendor_name: vendorName,
+    negotiation_proof: null,
+    realized_price: 0,
+    acc_kadiv_procurement: false,
+    procurement_status: isReceivedAtOutlet || quantityStock >= quantityNeeded ? 'selesai' : 'proses',
+    item_delivery_status: initialDeliveryStatus,
+    received_date: isReceivedAtOutlet ? new Date().toISOString() : null,
+    lead_time_days: agingDays,
+    pic_receiver: '',
+    notes: '',
+
+    is_manually_edited: false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Ingest data from Sheet JABODETABEK (gid=0) with dynamic header mapping
  */
 export async function fetchJaboData(): Promise<{ items: AssetRequest[]; rawText: string }> {
   const rawText = await fetchSheetRawCsv(JABO_URL);
   const rows = parseCsvRows(rawText);
   if (rows.length < 2) return { items: [], rawText };
 
+  const colMap = createColumnMap(rows[0]);
   const dataRows = rows.slice(1);
   const results: AssetRequest[] = [];
 
   for (let i = 0; i < dataRows.length; i++) {
-    const row = dataRows[i];
-    const itemName = row[8]?.trim(); // Col I di CSV / Col H di Sheet: ITEM YANG DIAJUKAN (idx 8)
-    if (!itemName) continue; // Skip blank template rows
-
-    // Kolom G (idx 6): NAMA OUTLET
-    let branchName = row[6]?.trim();
-    if (!branchName || branchName === '-') {
-      branchName = 'Tanpa Nama Outlet';
-    }
-
-    // Kolom A s/d AA (idx 1 s/d 26)
-    const orderDt = parseDateTime(row[1]); // Col B di CSV / Col A di Sheet: TANGGAL ORDER USER (idx 1)
-    const requesterName = row[2]?.trim() || 'Tim BusDev'; // Col C di CSV / Col B di Sheet: NAMA PENGAJUAN (idx 2)
-    const requesterDivision = row[3]?.trim() || 'BusDev'; // Col D di CSV / Col C di Sheet: DIVISI PENGAJUAN (idx 3)
-    const rabNumber = row[4]?.trim() || ''; // Col E di CSV / Col D di Sheet: No RAB (idx 4)
-    const category = row[5]?.trim() || 'New Outlet JABO'; // Col F di CSV / Col E di Sheet: KATEGORI PENGAJUAN (idx 5)
-    const classification = row[7]?.trim() || 'General'; // Col H di CSV / Col G di Sheet: KLASIFIKASI (idx 7)
-    const specification = row[9]?.trim() || ''; // Col J di CSV / Col I di Sheet: SPESIFIKASI ITEM (idx 9)
-    const photoUrl = row[10]?.startsWith('http') ? row[10] : null; // Col K di CSV / Col J di Sheet: FOTO ITEM (idx 10)
-    const quantityNeeded = parseInt(row[11]) || 1; // Col L di CSV / Col K di Sheet: JUMLAH KEBUTUHAN (idx 11)
-    const rabLink = row[12]?.trim() || ''; // Col M di CSV / Col L di Sheet: LINK RAB (idx 12)
-    const rabPrice = parseCurrency(row[13]); // Col N di CSV / Col M di Sheet: Harga (RAB) (idx 13)
-    const rabTotal = parseCurrency(row[14]) || rabPrice * quantityNeeded; // Col O di CSV / Col N di Sheet: Total (idx 14)
-    const accKadiv = String(row[15]).toLowerCase() === 'true'; // Col P di CSV / Col O di Sheet: ACC KADIV PENGAJUAN (idx 15)
-    const systemItemName = row[17]?.trim() || itemName; // Col R di CSV / Col Q di Sheet: NAMA ITEM DI SYSTEM (idx 17)
-    const quantityStock = parseInt(row[18]) || 0; // Col S di CSV / Col R di Sheet: JUMLAH STOK (idx 18)
-    const quantityPr = parseInt(row[19]) || 0; // Col T di CSV / Col S di Sheet: JUMLAH PR (idx 19)
-    const prDt = parseDateTime(row[20]); // Col U di CSV / Col T di Sheet: Waktu PR (idx 20)
-    const openingDt = parseDateOnly(row[21]); // Col V di CSV / Col U di Sheet: Tanggal Opening Outlet (idx 21)
-    const stockStatus = row[22]?.trim() || (quantityStock > 0 ? 'Ready (Spek Sesuai)' : 'Not Ready (Stok Kosong)'); // Col W di CSV / Col V di Sheet: STATUS STOK ITEM (idx 22)
-    const isDirectShipment = String(row[25]).toLowerCase() === 'true'; // Col Z di CSV / Col Y di Sheet: Pengiriman Aset (idx 25)
-    const isReceivedAtOutlet = String(row[26]).toLowerCase() === 'true'; // Col AA di CSV & Sheet: Terima Outlet (idx 26)
-
-    const agingDays = calculateAgingDays(orderDt, null);
-
-    // KETENTUAN STATUS BARANG:
-    // 1. Jika Kolom AA (Terima Outlet) = TRUE -> Status Terima Outlet
-    // 2. Jika Kolom Y (Pengiriman Aset) = TRUE -> Status Dalam Pengiriman / Ready SCGA
-    // 3. Jika Stok Gudang >= Kebutuhan -> Status Ready Gudang SCGA
-    // 4. Jika Stok Gudang > 0 -> Status Diterima Sebagian
-    // 5. Lainnya -> Status On Proses PR
-    let initialDeliveryStatus = 'On Proses PR';
-    if (isReceivedAtOutlet) {
-      initialDeliveryStatus = 'Terima Outlet';
-    } else if (isDirectShipment) {
-      initialDeliveryStatus = 'Dalam Pengiriman (SCGA)';
-    } else if (quantityStock >= quantityNeeded && quantityNeeded > 0) {
-      initialDeliveryStatus = 'Ready Gudang SCGA';
-    } else if (quantityStock > 0) {
-      initialDeliveryStatus = 'Diterima Sebagian';
-    }
-
-    const req: AssetRequest = {
-      id: `jabo-${i + 2}`,
-      external_id: `JABO-ROW-${i + 2}`,
-      region: 'JABODETABEK',
-      sheet_row_index: i + 2,
-
-      order_datetime: orderDt,
-      requester_name: requesterName,
-      requester_division: requesterDivision,
-      rab_number: rabNumber,
-      category: category,
-      branch_name: branchName,
-      classification: classification,
-      item_name: itemName,
-      specification: specification,
-      photo_url: photoUrl,
-      quantity_needed: quantityNeeded,
-
-      rab_link: rabLink,
-      rab_price: rabPrice,
-      rab_total: rabTotal,
-      acc_kadiv_request: accKadiv,
-
-      system_item_name: systemItemName,
-      quantity_stock_allocated: quantityStock,
-      quantity_pr: quantityPr,
-      pr_datetime: prDt,
-      opening_date: openingDt,
-      stock_status: stockStatus,
-      is_direct_shipment: isDirectShipment,
-
-      po_date: null,
-
-      order_type: 'OFFLINE',
-      initial_price: 0,
-      deal_price: 0,
-      vendor_name: '',
-      negotiation_proof: null,
-      realized_price: 0,
-      acc_kadiv_procurement: false,
-      procurement_status: isReceivedAtOutlet || quantityStock >= quantityNeeded ? 'selesai' : 'proses',
-      item_delivery_status: initialDeliveryStatus,
-      received_date: isReceivedAtOutlet ? new Date().toISOString() : null,
-      lead_time_days: agingDays,
-      pic_receiver: '',
-      notes: '',
-
-      is_manually_edited: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    results.push(req);
+    const req = parseRowWithMap(dataRows[i], colMap, 'JABODETABEK', i + 2);
+    if (req) results.push(req);
   }
 
   return { items: results, rawText };
 }
 
 /**
- * Ingest data from Sheet KALBAR (gid=1713589401)
- * Kolom G (indeks CSV 6) = NAMA OUTLET
- * Kolom H (indeks CSV 7) = ITEM YANG DIAJUKAN
- * Kolom W (indeks CSV 22) = Terima Outlet / Divisi (TRUE = Selesai / Lengkap).
- * Rentang kolom X s/d AM (indeks CSV 23 s/d 38) TIDAK DIGUNAKAN.
+ * Ingest data from Sheet KALBAR (gid=1713589401) with dynamic header mapping
  */
 export async function fetchKalbarData(): Promise<{ items: AssetRequest[]; rawText: string }> {
   const rawText = await fetchSheetRawCsv(KALBAR_URL);
   const rows = parseCsvRows(rawText);
   if (rows.length < 2) return { items: [], rawText };
 
+  const colMap = createColumnMap(rows[0]);
   const dataRows = rows.slice(1);
   const results: AssetRequest[] = [];
 
   for (let i = 0; i < dataRows.length; i++) {
-    const row = dataRows[i];
-    const itemName = row[7]?.trim(); // Col H di CSV / Col G di Sheet: Item (idx 7)
-    if (!itemName) continue;
-
-    // Kolom G (idx 6): NAMA OUTLET
-    let branchName = row[6]?.trim();
-    if (!branchName || branchName === '-') {
-      branchName = 'Tanpa Nama Outlet';
-    }
-
-    // Kolom A s/d W (idx 1 s/d 22)
-    const orderDt = parseDateTime(row[1]); // Col B di CSV / Col A di Sheet: Tgl Pengajuan (idx 1)
-    const requesterName = row[2]?.trim() || 'Tim BusDev'; // Col C di CSV / Col B di Sheet: Nama (idx 2)
-    const requesterDivision = row[3]?.trim() || 'BusDev'; // Col D di CSV / Col C di Sheet: Divisi (idx 3)
-    const category = row[4]?.trim() || 'New Brand KALBAR'; // Col E di CSV / Col D di Sheet: kategori (idx 4)
-    const rabNumber = row[5]?.trim() || ''; // Col F di CSV / Col E di Sheet: No RAB (idx 5)
-    const classification = row[8]?.trim() || 'ASET'; // Col I di CSV / Col H di Sheet: Klasifikasi (idx 8)
-    const specification = row[9]?.trim() || ''; // Col J di CSV / Col I di Sheet: Spesifikasi (idx 9)
-    const photoUrl = row[10]?.startsWith('http') ? row[10] : null; // Col K di CSV / Col J di Sheet: Foto Item (idx 10)
-    const quantityNeeded = parseInt(row[11]) || 1; // Col L di CSV / Col K di Sheet: Jumlah Kebutuhan (idx 11)
-    const rabPrice = parseCurrency(row[12]); // Col M di CSV / Col L di Sheet: Harga (RAB) (idx 12)
-    const rabTotal = parseCurrency(row[13]) || rabPrice * quantityNeeded; // Col N di CSV / Col M di Sheet: Total (idx 13)
-    const accKadiv = String(row[14]).toLowerCase() === 'true'; // Col O di CSV / Col N di Sheet: ACC Kadiv (idx 14)
-    const stockStatus = row[15]?.trim() || 'Not Ready (Stok Kosong)'; // Col P di CSV / Col O di Sheet: Status Stok (idx 15)
-    const quantityStock = parseInt(row[16]) || 0; // Col Q di CSV / Col P di Sheet: Jumlah Stok (idx 16)
-    const quantityPr = parseInt(row[17]) || 0; // Col R di CSV / Col Q di Sheet: Jumlah PR (idx 17)
-    const systemItemName = row[18]?.trim() || itemName; // Col S di CSV / Col R di Sheet: Spesifikasi terupdate / System item (idx 18)
-    const prDt = parseDateTime(row[19]); // Col T di CSV / Col S di Sheet: Tanggal PR (idx 19)
-    const isDirectShipment = String(row[21]).toLowerCase() === 'true'; // Col V di CSV / Col U di Sheet: Pengiriman Aset (idx 21)
-    const isReceivedAtOutlet = String(row[22]).toLowerCase() === 'true'; // Col W di CSV / Col V di Sheet: Terima Outlet / Divisi (idx 22)
-
-    const agingDays = calculateAgingDays(orderDt, null);
-
-    let initialDeliveryStatus = 'On Proses PR';
-    if (isReceivedAtOutlet) {
-      initialDeliveryStatus = 'Terima Outlet';
-    } else if (isDirectShipment) {
-      initialDeliveryStatus = 'Dalam Pengiriman (SCGA)';
-    } else if (quantityStock >= quantityNeeded && quantityNeeded > 0) {
-      initialDeliveryStatus = 'Ready Gudang SCGA';
-    } else if (quantityStock > 0) {
-      initialDeliveryStatus = 'Diterima Sebagian';
-    }
-
-    const req: AssetRequest = {
-      id: `kalbar-${i + 2}`,
-      external_id: `KALBAR-ROW-${i + 2}`,
-      region: 'KALBAR',
-      sheet_row_index: i + 2,
-
-      order_datetime: orderDt,
-      requester_name: requesterName,
-      requester_division: requesterDivision,
-      category: category,
-      rab_number: rabNumber,
-      rab_link: '',
-      branch_name: branchName,
-      item_name: itemName,
-      classification: classification,
-      specification: specification,
-      photo_url: photoUrl,
-      quantity_needed: quantityNeeded,
-
-      rab_price: rabPrice,
-      rab_total: rabTotal,
-      acc_kadiv_request: accKadiv,
-
-      stock_status: stockStatus,
-      quantity_stock_allocated: quantityStock,
-      quantity_pr: quantityPr,
-      system_item_name: systemItemName,
-      pr_datetime: prDt,
-      opening_date: null,
-      is_direct_shipment: isDirectShipment,
-
-      po_date: null,
-
-      vendor_name: '',
-      order_type: 'OFFLINE',
-      initial_price: 0,
-      deal_price: 0,
-      realized_price: 0,
-      negotiation_proof: null,
-      acc_kadiv_procurement: false,
-      procurement_status: isReceivedAtOutlet || quantityStock >= quantityNeeded ? 'selesai' : 'proses',
-      item_delivery_status: initialDeliveryStatus,
-      pic_receiver: '',
-      notes: '',
-      received_date: isReceivedAtOutlet ? new Date().toISOString() : null,
-      lead_time_days: agingDays,
-
-      is_manually_edited: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    results.push(req);
+    const req = parseRowWithMap(dataRows[i], colMap, 'KALBAR', i + 2);
+    if (req) results.push(req);
   }
 
   return { items: results, rawText };

@@ -125,6 +125,50 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   const [isBastModalOpen, setIsBastModalOpen] = useState(false);
   const [bastBranch, setBastBranch] = useState<string>('');
 
+  // Google Sheets Realtime Sync States
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  const handleSyncSheets = async () => {
+    try {
+      setIsSyncing(true);
+      setSyncFeedback(null);
+      const res = await fetch('/api/sync?force=true', { method: 'POST' });
+      const json = await res.json();
+      if (json.success) {
+        const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        setLastSyncedAt(timeStr);
+        setSyncFeedback(`Sinkronisasi berhasil! ${json.totalFetched} baris data termutakhir.`);
+        
+        // Fetch fresh items immediately
+        const freshRes = await fetch(`/api/assets?region=${selectedRegion}&limit=10000`);
+        const freshJson = await freshRes.json();
+        if (freshJson.data) {
+          setItems(freshJson.data);
+        }
+      } else {
+        setSyncFeedback(json.message || 'Gagal melakukan sinkronisasi.');
+      }
+    } catch (err: any) {
+      console.error('Failed to sync with sheets:', err);
+      setSyncFeedback(err?.message || 'Gagal koneksi sinkronisasi.');
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncFeedback(null), 5000);
+    }
+  };
+
+  // Background Auto-Sync effect (every 60s)
+  useEffect(() => {
+    if (!autoSyncEnabled) return;
+    const interval = setInterval(() => {
+      handleSyncSheets();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [autoSyncEnabled, selectedRegion]);
+
   // Image Preview & Upload Modal States
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
   const [uploadModalTarget, setUploadModalTarget] = useState<{ itemName: string; currentImageUrl?: string | null } | null>(null);
@@ -716,6 +760,40 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
               Total: <strong className="text-[#1f1f1f] dark:text-[#e3e3e3]">{filteredItems.length}</strong> baris
             </span>
 
+            {/* Sync Google Sheets Button */}
+            <button
+              type="button"
+              onClick={handleSyncSheets}
+              disabled={isSyncing}
+              className={`interactive-tap flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-all shadow-xs ${
+                isSyncing
+                  ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                  : 'border-emerald-600/30 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50'
+              }`}
+              title="Tarik data terbaru langsung dari Google Sheets"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin text-blue-600' : 'text-emerald-600 dark:text-emerald-400'}`} />
+              <span>{isSyncing ? 'Menyinkronkan...' : 'Sinkronkan Sheet'}</span>
+              {lastSyncedAt && !isSyncing && (
+                <span className="text-[10px] opacity-75 font-normal">({lastSyncedAt})</span>
+              )}
+            </button>
+
+            {/* Auto-Sync Toggle Button */}
+            <button
+              type="button"
+              onClick={() => setAutoSyncEnabled(prev => !prev)}
+              className={`interactive-tap flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all ${
+                autoSyncEnabled
+                  ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1e1f20] text-slate-500 hover:text-slate-700 dark:text-slate-400'
+              }`}
+              title="Aktifkan sinkronisasi otomatis berkala setiap 60 detik"
+            >
+              <span className={`h-2 w-2 rounded-full ${autoSyncEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+              <span>Auto-Sync {autoSyncEnabled ? 'Aktif' : '(60s)'}</span>
+            </button>
+
             {/* Filter Toggle Button */}
             <button
               type="button"
@@ -964,6 +1042,14 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
           </div>
         )}
       </div>
+
+      {/* Sync Feedback Notification */}
+      {syncFeedback && (
+        <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs animate-in fade-in slide-in-from-top-1 shadow-xs">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <span className="font-semibold">{syncFeedback}</span>
+        </div>
+      )}
 
       {/* 3. Sticky Multi-Select Bulk Actions Bar (Google M3 Tonal Floating Bar) */}
       {selectedIds.length > 0 && (
