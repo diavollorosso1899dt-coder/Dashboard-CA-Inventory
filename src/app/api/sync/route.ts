@@ -11,10 +11,17 @@ export async function GET(request: NextRequest) {
       syncRequestOrdersFromSheet(),
     ]);
 
-    const assetData = assetRes.status === 'fulfilled' ? assetRes.value : { success: false, message: assetRes.reason?.message };
-    const roData = roRes.status === 'fulfilled' ? roRes.value : { success: false, message: roRes.reason?.message };
+    const assetData = assetRes.status === 'fulfilled' ? assetRes.value : null;
+    const roData = roRes.status === 'fulfilled' ? roRes.value : null;
 
-    return NextResponse.json({ ...assetData, roSync: roData });
+    const roChanged = Boolean(roData && roData.success && (roData.newOrdersAdded > 0 || roData.uniqueOrdersCount > 0));
+    const changed = Boolean((assetData && assetData.changed) || roChanged);
+
+    return NextResponse.json({
+      ...(assetData || { success: false, totalFetched: 0, totalInserted: 0, totalUpdated: 0, durationMs: 0, message: 'Sync failed' }),
+      roSync: roData,
+      changed,
+    });
   } catch (error: any) {
     return NextResponse.json(
       { success: false, message: error.message || 'Internal Server Error' },
@@ -31,10 +38,17 @@ export async function POST(request: NextRequest) {
       syncRequestOrdersFromSheet(),
     ]);
 
-    const assetData = assetRes.status === 'fulfilled' ? assetRes.value : { success: false, message: assetRes.reason?.message };
-    const roData = roRes.status === 'fulfilled' ? roRes.value : { success: false, message: roRes.reason?.message };
+    const assetData = assetRes.status === 'fulfilled' ? assetRes.value : null;
+    const roData = roRes.status === 'fulfilled' ? roRes.value : null;
 
-    return NextResponse.json({ ...assetData, roSync: roData });
+    const roChanged = Boolean(roData && roData.success && (roData.newOrdersAdded > 0 || roData.uniqueOrdersCount > 0));
+    const changed = Boolean((assetData && assetData.changed) || roChanged);
+
+    return NextResponse.json({
+      ...(assetData || { success: false, totalFetched: 0, totalInserted: 0, totalUpdated: 0, durationMs: 0, message: 'Sync failed' }),
+      roSync: roData,
+      changed,
+    });
   } catch (error: any) {
     return NextResponse.json(
       { success: false, message: error.message || 'Internal Server Error' },
@@ -42,4 +56,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

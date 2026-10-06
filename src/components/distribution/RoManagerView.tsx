@@ -213,6 +213,32 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     }
   }, [initialOrders]);
 
+  // Function to pull latest active orders from API
+  const fetchLatestOrders = async (showFeedback = false) => {
+    try {
+      if (showFeedback) setIsSyncing(true);
+      const roRes = await fetch('/api/distribution/ro?active=true', { cache: 'no-store' });
+      const roData = await roRes.json();
+      if (roData && Array.isArray(roData.data)) {
+        setOrders(roData.data);
+      }
+    } catch (err: any) {
+      console.error('Fetch latest RO error:', err);
+    } finally {
+      if (showFeedback) setIsSyncing(false);
+    }
+  };
+
+  // Background Auto-Sync effect (every 30 seconds)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchLatestOrders(false);
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(50);
@@ -1252,6 +1278,12 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
       {/* 2. ACTIONS & SMART DEDUPLICATION TOOLBAR */}
       <div className="panel-card p-4 space-y-3 border border-[#e0e2ec] dark:border-[#444746] rounded-2xl bg-white dark:bg-[#1a1c1e]">
+        {syncFeedback && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 text-xs text-emerald-900 dark:text-emerald-200 animate-in fade-in duration-200">
+            <RefreshCw className="h-4 w-4 text-emerald-600 animate-spin shrink-0" />
+            <span className="font-medium">{syncFeedback}</span>
+          </div>
+        )}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           {/* Search */}
           <div className="relative flex-1 max-w-md">
