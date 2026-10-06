@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRequestOrders, createRequestOrder, updateRequestOrder } from '@/lib/supabase/server';
+import { sortOrdersNewestFirst } from '@/lib/utils/ro-sorter';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +30,8 @@ export async function GET(req: NextRequest) {
         return true;
       });
     }
-    return NextResponse.json({ data });
+    const sortedData = sortOrdersNewestFirst(data);
+    return NextResponse.json({ data: sortedData });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

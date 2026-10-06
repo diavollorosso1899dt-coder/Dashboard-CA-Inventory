@@ -16,6 +16,8 @@ import { fetchAllSheetsData } from '../sync/sheet-fetcher';
 import { getDaysRemaining } from '../utils/date-formatter';
 import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
 import { getItemSpecification, setItemSpecificationOverride } from '@/lib/assetSpecHelper';
+import { sortOrdersNewestFirst } from '../utils/ro-sorter';
+export { sortOrdersNewestFirst };
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -1686,18 +1688,22 @@ export async function getRequestOrders(): Promise<RequestOrder[]> {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 3500);
 
-        // Query batch 0-999 dan 1000-1999 secara paralel untuk efisiensi transfer data
+        // Query batch 0-999 dan 1000-1999 secara paralel dengan urutan deterministik
         const [res1, res2] = await Promise.all([
           admin
             .from('request_orders')
             .select('*')
-            .order('request_date', { ascending: false })
+            .order('request_date', { ascending: false, nullsFirst: false })
+            .order('created_at', { ascending: false })
+            .order('ro_number', { ascending: false })
             .range(0, 999)
             .abortSignal(controller.signal),
           admin
             .from('request_orders')
             .select('*')
-            .order('request_date', { ascending: false })
+            .order('request_date', { ascending: false, nullsFirst: false })
+            .order('created_at', { ascending: false })
+            .order('ro_number', { ascending: false })
             .range(1000, 1999)
             .abortSignal(controller.signal),
         ]);
@@ -1715,7 +1721,9 @@ export async function getRequestOrders(): Promise<RequestOrder[]> {
             const { data } = await admin
               .from('request_orders')
               .select('*')
-              .order('request_date', { ascending: false })
+              .order('request_date', { ascending: false, nullsFirst: false })
+              .order('created_at', { ascending: false })
+              .order('ro_number', { ascending: false })
               .range(from, from + 999);
             if (data && data.length > 0) {
               allOrders.push(...(data as RequestOrder[]));
@@ -1729,8 +1737,9 @@ export async function getRequestOrders(): Promise<RequestOrder[]> {
 
         if (allOrders.length > 0) {
           const deduplicated = deduplicateOrderItems(allOrders);
-          global.__RO_CACHE__ = { items: deduplicated, timestamp: Date.now() };
-          return deduplicated;
+          const sorted = sortOrdersNewestFirst(deduplicated);
+          global.__RO_CACHE__ = { items: sorted, timestamp: Date.now() };
+          return sorted;
         }
       } catch {
         // Abort or error, proceed to fallback
@@ -1744,7 +1753,7 @@ export async function getRequestOrders(): Promise<RequestOrder[]> {
         console.error('Auto sync RO on getRequestOrders failed:', e);
       }
     }
-    const result = deduplicateOrderItems(cache.requestOrders || []);
+    const result = sortOrdersNewestFirst(deduplicateOrderItems(cache.requestOrders || []));
     global.__RO_CACHE__ = { items: result, timestamp: Date.now() };
     return result;
   })().finally(() => {
@@ -2265,11 +2274,13 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
         }
       }
 
-      cache.requestOrders = mergedOrders as RequestOrder[];
-      global.__RO_CACHE__ = { items: deduplicateOrderItems(mergedOrders as RequestOrder[]), timestamp: Date.now() };
+      const sortedMerged = sortOrdersNewestFirst(deduplicateOrderItems(mergedOrders as RequestOrder[]));
+      cache.requestOrders = sortedMerged;
+      global.__RO_CACHE__ = { items: sortedMerged, timestamp: Date.now() };
     } else {
-      cache.requestOrders = uniqueOrders;
-      global.__RO_CACHE__ = { items: deduplicateOrderItems(uniqueOrders), timestamp: Date.now() };
+      const sortedUnique = sortOrdersNewestFirst(deduplicateOrderItems(uniqueOrders));
+      cache.requestOrders = sortedUnique;
+      global.__RO_CACHE__ = { items: sortedUnique, timestamp: Date.now() };
     }
 
     return {

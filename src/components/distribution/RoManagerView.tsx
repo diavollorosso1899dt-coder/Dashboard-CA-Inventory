@@ -37,7 +37,8 @@ import {
   Upload,
   FileEdit,
   Ban,
-  Building2
+  Building2,
+  ArrowDownNarrowWide
 } from 'lucide-react';
 import { RequestOrder, Outlet, ROItem, ROStatus } from '@/lib/supabase/types';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
@@ -50,6 +51,7 @@ import EditSpecModal from '@/components/items/EditSpecModal';
 import ColumnVisibilityPicker, { ColumnItem } from '@/components/ui/ColumnVisibilityPicker';
 import { Toast, ToastMessage } from '@/components/ui/Toast';
 import { formatDateSlash } from '@/lib/utils/date-formatter';
+import { sortOrdersNewestFirst } from '@/lib/utils/ro-sorter';
 
 interface RoManagerViewProps {
   initialOrders?: RequestOrder[];
@@ -206,10 +208,10 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     setSelectedRegion(nextRegion);
   }, [searchParams]);
 
-  // Sync orders with initialOrders prop
+  // Sync orders with initialOrders prop (selalu urutkan data terbaru di atas)
   useEffect(() => {
     if (initialOrders.length > 0) {
-      setOrders(initialOrders);
+      setOrders(sortOrdersNewestFirst(initialOrders));
     }
   }, [initialOrders]);
 
@@ -220,7 +222,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       const roRes = await fetch('/api/distribution/ro?active=true', { cache: 'no-store' });
       const roData = await roRes.json();
       if (roData && Array.isArray(roData.data)) {
-        setOrders(roData.data);
+        setOrders(sortOrdersNewestFirst(roData.data));
       }
     } catch (err: any) {
       console.error('Fetch latest RO error:', err);
@@ -512,10 +514,10 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     };
   }, [orders, selectedRegion]);
 
-  // Filtered orders dengan fast exit
+  // Filtered orders dengan fast exit & sorting deterministik data terbaru selalu di urutan paling atas
   const filteredOrders = useMemo(() => {
     const searchLower = search.toLowerCase().trim();
-    return orders.filter((o) => {
+    const result = orders.filter((o) => {
       // 1. Dokumen RO yang sudah dialokasikan ke Ready Stock (Surat Jalan) ataupun PR otomatis hilang dari antrean Menu Kelola RO
       if (isRoAllocatedOutOfMenu(o)) return false;
 
@@ -549,6 +551,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
       return true;
     });
+
+    // Selalu urutkan data terbaru di urutan paling atas
+    return sortOrdersNewestFirst(result);
   }, [orders, search, selectedStage, smartFilter, selectedRegion, selectedSource, deduplicationMap]);
 
   // Reset page to 1 when filters change
@@ -1452,6 +1457,12 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                 </button>
               )}
             </div>
+
+            {/* Sort Status Indicator */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-[11px] font-bold text-blue-900 dark:text-blue-200">
+              <ArrowDownNarrowWide className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+              <span>Urutan: Data Terbaru di Atas</span>
+            </div>
           </div>
         </div>
 
@@ -1476,7 +1487,14 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             <thead className="bg-[#f0f4f9] dark:bg-[#202225] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#444746]">
               <tr>
                 {visibleColumns.ro_number !== false && <th className="py-3.5 px-4">No. RO / ID</th>}
-                {visibleColumns.order_date !== false && <th className="py-3.5 px-4">Tanggal Order</th>}
+                {visibleColumns.order_date !== false && (
+                  <th className="py-3.5 px-4">
+                    <div className="flex items-center gap-1.5">
+                      <span>Tanggal Order</span>
+                      <ArrowDownNarrowWide className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 inline" />
+                    </div>
+                  </th>
+                )}
                 {visibleColumns.request_date !== false && <th className="py-3.5 px-4">Tanggal Permintaan</th>}
                 {visibleColumns.branch !== false && <th className="py-3.5 px-4">Cabang Outlet</th>}
                 {visibleColumns.items !== false && <th className="py-3.5 px-4">Item &amp; Alokasi</th>}
