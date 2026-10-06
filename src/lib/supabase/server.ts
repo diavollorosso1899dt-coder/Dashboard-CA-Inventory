@@ -2082,14 +2082,16 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
             parts[cols.outletIdx]?.trim() ||
             (source.region === 'JABODETABEK' ? 'Outlet Jabodetabek' : 'Outlet Kalbar');
 
-          if (!rawRoId || !itemName || rawRoId === '-' || rawRoId.length < 2) continue;
+          if (!itemName) continue;
+
+          const rowNo = parts[0]?.trim() || String(i);
+          const effectiveRoId = (rawRoId && rawRoId !== '-' && rawRoId !== '0') ? rawRoId : `NOID-${source.region}-${rowNo}`;
 
           const qty = parseIndoQty(qtyStr);
           const unit = parts[cols.unitIdx]?.trim() || 'unit';
           const harga = parseIndoCurrency(parts[cols.hargaIdx]);
           const total = parseIndoCurrency(parts[cols.totalIdx]) || harga * qty;
           const tipeItem = parts[cols.tipeIdx]?.trim() || 'Perlengkapan Tetap';
-          const rowNo = parts[0]?.trim() || String(i);
           const sku = cols.skuIdx !== -1 ? parts[cols.skuIdx]?.trim() || '' : '';
           const inputDate = parts[cols.inputDateIdx]?.trim();
           const reqDate = parts[cols.reqDateIdx]?.trim();
@@ -2097,14 +2099,14 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
           const statusStr = parts[cols.statusIdx]?.trim() || 'Diproses';
 
           // Deduplikasi baris identik spreadsheet
-          const fingerprint = `${source.region}::${rawRoId.toLowerCase().trim()}::${itemName.toLowerCase().trim()}::${qty}::${outletName.toLowerCase().trim()}`;
+          const fingerprint = `${source.region}::${effectiveRoId.toLowerCase().trim()}::${rowNo}::${itemName.toLowerCase().trim()}::${qty}`;
           if (seenFingerprints.has(fingerprint)) {
             duplicateRowsFiltered++;
             continue;
           }
           seenFingerprints.add(fingerprint);
 
-          const roNumber = `RO-${rawRoId}`;
+          const roNumber = `RO-${effectiveRoId}`;
           const region: 'JABODETABEK' | 'KALBAR' = source.region;
 
           const parsedRequestDate = parseIndoDate(inputDate || reqDate) || new Date().toISOString().split('T')[0];
@@ -2112,16 +2114,16 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
 
           if (!groupedOrders.has(roNumber)) {
             groupedOrders.set(roNumber, {
-              id: `ro-${rawRoId}`,
+              id: `ro-${effectiveRoId}`,
               ro_number: roNumber,
-              raw_ro_id: rawRoId,
+              raw_ro_id: effectiveRoId,
               branch_name: outletName,
               region,
               requester_name: `Logistik ${source.region === 'KALBAR' ? 'Kalbar' : 'Jabo'} via Spreadsheet`,
               request_date: parsedRequestDate,
               target_delivery_date: parsedTargetDate || undefined,
-              status: /diterima|selesai/i.test(statusStr) ? 'COMPLETED' : 'INPUT_SYSTEM',
-              current_stage: /diterima|selesai/i.test(statusStr) ? 'SELESAI' : 'REQUEST_ORDER',
+              status: 'INPUT_SYSTEM',
+              current_stage: 'REQUEST_ORDER',
               source_type: 'GOOGLE_SHEET',
               warehouse_name: warehouse,
               items: [],
@@ -2130,7 +2132,7 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
           }
 
           groupedOrders.get(roNumber)!.items.push({
-            id: `roi-${rawRoId}-${rowNo}-${groupedOrders.get(roNumber)!.items.length + 1}`,
+            id: `roi-${effectiveRoId}-${rowNo}-${groupedOrders.get(roNumber)!.items.length + 1}`,
             item_name: itemName,
             sku,
             unit,
@@ -2138,8 +2140,8 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
             total_price: total,
             item_type: tipeItem,
             quantity_ordered: qty,
-            quantity_fulfilled: /diterima|selesai/i.test(statusStr) ? qty : 0,
-            stock_source: /diterima|selesai/i.test(statusStr) ? 'GUDANG_SCGA' : 'ON_PROSES',
+            quantity_fulfilled: 0,
+            stock_source: 'ON_PROSES',
           });
         }
       } catch (sourceErr: any) {
