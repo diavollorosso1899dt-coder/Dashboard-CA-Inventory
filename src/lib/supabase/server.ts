@@ -36,17 +36,21 @@ export const ensureUuid = (id?: string | null): string => {
 };
 
 export const isServerSupabaseConfigured = () => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || supabaseUrl;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || supabaseServiceKey;
   return Boolean(
-    supabaseUrl &&
-    supabaseServiceKey &&
-    supabaseUrl.startsWith('http') &&
-    !supabaseUrl.includes('your-project')
+    url &&
+    key &&
+    url.startsWith('http') &&
+    !url.includes('your-project')
   );
 };
 
 export const getAdminClient = () => {
   if (!isServerSupabaseConfigured()) return null;
-  return createClient(supabaseUrl, supabaseServiceKey, {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || supabaseUrl;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || supabaseServiceKey;
+  return createClient(url, key, {
     auth: { persistSession: false },
   });
 };
@@ -2241,7 +2245,10 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
       const chunkSize = 100;
       for (let i = 0; i < mergedOrders.length; i += chunkSize) {
         const chunk = mergedOrders.slice(i, i + chunkSize);
-        await admin.from('request_orders').upsert(chunk, { onConflict: 'ro_number' });
+        const { error: upsertErr } = await admin.from('request_orders').upsert(chunk, { onConflict: 'ro_number' });
+        if (upsertErr) {
+          console.error(`[RO Sync DB Error] Chunk ${i}-${i + chunkSize}:`, upsertErr.message);
+        }
       }
 
       cache.requestOrders = mergedOrders as RequestOrder[];
