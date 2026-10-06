@@ -18,7 +18,9 @@ import {
   ImageIcon,
   Upload,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Boxes,
+  ArrowRight
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
@@ -90,6 +92,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   // Input Data Tanggal Permintaan State (Modal / Form Edit)
   const [editingItem, setEditingItem] = useState<AssetRequest | null>(null);
   const [editOrderDate, setEditOrderDate] = useState('');
+  const [editReceivedDate, setEditReceivedDate] = useState('');
   const [editPrDate, setEditPrDate] = useState('');
   const [editPoDate, setEditPoDate] = useState('');
   const [editVendor, setEditVendor] = useState('');
@@ -97,30 +100,38 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   const [editDealPrice, setEditDealPrice] = useState(0);
   const [saving, setSaving] = useState(false);
 
-  const openEditModal = (item: AssetRequest) => {
+  const openEditModal = (item: AssetRequest, forceReadyStock: boolean = false) => {
     setEditingItem(item);
     setEditOrderDate(item.order_datetime ? item.order_datetime.split('T')[0] : '');
+    setEditReceivedDate(item.received_date ? item.received_date.split('T')[0] : new Date().toISOString().split('T')[0]);
     setEditPrDate(item.pr_datetime ? item.pr_datetime.split('T')[0] : '');
     setEditPoDate(item.po_date || '');
     setEditVendor(item.vendor_name || '');
-    setEditStatus(item.procurement_status || 'proses');
+    setEditStatus(forceReadyStock ? 'selesai' : (item.procurement_status || 'proses'));
     setEditDealPrice(item.deal_price || item.rab_price || 0);
   };
 
-  const handleSavePrDates = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSavePrDates = async (e?: React.FormEvent, isTransitionToReadyStock: boolean = false) => {
+    if (e) e.preventDefault();
     if (!editingItem) return;
 
     setSaving(true);
     try {
-      const payload = {
+      const finalStatus = isTransitionToReadyStock ? 'selesai' : editStatus;
+      const payload: any = {
         order_datetime: editOrderDate ? new Date(editOrderDate).toISOString() : editingItem.order_datetime,
+        received_date: editReceivedDate ? editReceivedDate : null,
         pr_datetime: editPrDate ? new Date(editPrDate).toISOString() : null,
         po_date: editPoDate || null,
         vendor_name: editVendor,
-        procurement_status: editStatus,
+        procurement_status: finalStatus,
         deal_price: editDealPrice,
       };
+
+      if (isTransitionToReadyStock || finalStatus === 'selesai') {
+        payload.item_delivery_status = 'Ready Antar';
+        payload.stock_status = 'Ready Stock (Gudang SCGA)';
+      }
 
       const res = await fetch(`/api/assets/${editingItem.id}`, {
         method: 'PATCH',
@@ -133,6 +144,16 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
         setItems((prev) =>
           prev.map((it) => (it.id === editingItem.id ? { ...it, ...payload } : it))
         );
+
+        // Broadcast event real-time ke menu Pemantauan Distribusi & Kelola RO
+        try {
+          localStorage.setItem('ca_ro_last_update', Date.now().toString());
+          window.dispatchEvent(new Event('ca_ro_updated'));
+        } catch {}
+
+        if (isTransitionToReadyStock || finalStatus === 'selesai') {
+          alert(`Status berhasil diupdate ke Ready Stock! Aset "${editingItem.item_name}" dialihkan ke Pemantauan Distribusi.`);
+        }
         setEditingItem(null);
       } else {
         alert(json.error || 'Gagal menyimpan perubahan tanggal PR');
@@ -389,13 +410,23 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                       )}
                       {isVisible('actions') && (
                         <td className="py-3.5 px-4 text-right">
-                          <button
-                            onClick={() => openEditModal(it)}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-semibold transition"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>Update</span>
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            <button
+                              onClick={() => openEditModal(it, true)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-semibold transition text-xs shadow-2xs"
+                              title="Update Status: Pilih tanggal permintaan & penerimaan untuk beralih ke Ready Stock"
+                            >
+                              <Boxes className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Update Status &rarr; Ready Stock</span>
+                            </button>
+                            <button
+                              onClick={() => openEditModal(it, false)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-semibold transition text-xs"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Edit PR</span>
+                            </button>
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -465,7 +496,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  Input / Perbarui Data Tanggal Permintaan Aset
+                  Update Status Pengadaan PR Vendor
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Item: <strong>{editingItem.item_name}</strong> &bull; {editingItem.branch_name}
@@ -476,19 +507,48 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
               </button>
             </div>
 
-            <form onSubmit={handleSavePrDates} className="space-y-3.5 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Tanggal Permintaan Aset (Order Date)
-                  </label>
-                  <input
-                    type="date"
-                    value={editOrderDate}
-                    onChange={(e) => setEditOrderDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
-                  />
+            <form onSubmit={(e) => handleSavePrDates(e, false)} className="space-y-3.5 text-xs">
+              {/* Flowchart Integration Card: Update Status ke Ready Stock */}
+              <div className="p-3.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/70 dark:bg-emerald-950/40 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5 text-xs">
+                    <Boxes className="w-4 h-4 text-emerald-600" />
+                    Alur Flowchart: Update Status ke Ready Stock
+                  </span>
+                  <span className="text-[10px] bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100 font-bold px-2 py-0.5 rounded-full">
+                    Masuk Pemantauan Distribusi
+                  </span>
                 </div>
+                <p className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-tight">
+                  Pilih <strong>Tanggal Permintaan Aset</strong> dan <strong>Tanggal Penerimaan Aset</strong> untuk mengalihkan barang pengadaan ke antrean <em>Ready Stock / Pemantauan Distribusi</em>.
+                </p>
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      1. Tanggal Permintaan Aset
+                    </label>
+                    <input
+                      type="date"
+                      value={editOrderDate}
+                      onChange={(e) => setEditOrderDate(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-medium"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-emerald-800 dark:text-emerald-300 mb-1">
+                      2. Tanggal Penerimaan Aset (Tiba)
+                    </label>
+                    <input
+                      type="date"
+                      value={editReceivedDate}
+                      onChange={(e) => setEditReceivedDate(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-lg border border-emerald-400 dark:border-emerald-600 bg-white dark:bg-slate-900 font-bold text-emerald-700 dark:text-emerald-300"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Tanggal PR (Purchase Requirement)
@@ -500,9 +560,6 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Tanggal PO Vendor
@@ -514,34 +571,36 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Status Pengadaan
+                    Status Pengadaan PR
                   </label>
                   <select
                     value={editStatus}
                     onChange={(e: any) => setEditStatus(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold"
                   >
                     <option value="proses">Dalam Proses PR</option>
-                    <option value="po">Sudah Terbit PO</option>
-                    <option value="selesai">Selesai / Diterima</option>
+                    <option value="po">Sudah Terbit PO Vendor</option>
+                    <option value="selesai">Selesai (Ready Stock)</option>
                     <option value="belum">Belum Proses</option>
                   </select>
                 </div>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Nama Vendor Terpilih
-                </label>
-                <input
-                  type="text"
-                  placeholder="Contoh: PT Surya Kitchen Abadi"
-                  value={editVendor}
-                  onChange={(e) => setEditVendor(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
-                />
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Nama Vendor Terpilih
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: PT Surya Kitchen Abadi"
+                    value={editVendor}
+                    onChange={(e) => setEditVendor(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                  />
+                </div>
               </div>
 
               <div>
@@ -558,7 +617,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setEditingItem(null)}
@@ -566,14 +625,26 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                 >
                   Batal
                 </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex items-center gap-1.5 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold shadow-xs disabled:opacity-50"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>{saving ? 'Menyimpan...' : 'Simpan Tanggal & Data PR'}</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => handleSavePrDates(e, false)}
+                    disabled={saving}
+                    className="flex items-center gap-1.5 px-4 py-2 border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded-xl font-semibold shadow-xs disabled:opacity-50"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Simpan Data PR</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => handleSavePrDates(e, true)}
+                    disabled={saving}
+                    className="flex items-center gap-1.5 px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-xs disabled:opacity-50"
+                  >
+                    <Boxes className="w-4 h-4" />
+                    <span>Update Status &rarr; Ready Stock</span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>

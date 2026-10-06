@@ -624,60 +624,50 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       const pendingItems = selectedRoForProcess.items.filter(it => !it.stock_source || it.stock_source === 'ON_PROSES');
       const allDone = pendingItems.length === 0;
 
-      // 1. Otomatis terbitkan Surat Jalan jika ada item Ready Stock
-      let autoSjNumber = '';
-      if (readyItems.length > 0) {
-        const sjPayload = {
-          ro_id: selectedRoForProcess.id,
-          ro_number: selectedRoForProcess.ro_number,
-          branch_name: selectedRoForProcess.branch_name,
-          region: selectedRoForProcess.region,
-          delivery_date: selectedRoForProcess.target_delivery_date || new Date().toISOString().split('T')[0],
-          driver_name: driverName || 'Driver Armada Logistik',
-          vehicle_number: vehicleNumber || 'B 9482 SXZ',
-          expedition: expedition || 'Armada Internal SCGA',
-          sender_name: 'Staff SCGA Warehouse',
-          receiver_name: `PIC ${selectedRoForProcess.branch_name}`,
-          status: 'SHIPPED',
-          items: readyItems.map((it) => ({
-            id: `sji-${Date.now()}-${Math.random().toString().slice(-4)}`,
-            item_name: it.item_name,
-            specification: it.specification,
-            quantity: it.quantity_ordered,
-            unit: it.unit || 'Unit',
-            notes: 'Dari Stok Gudang SCGA (Alokasi Otomatis)',
-          })),
-          notes: `Diterbitkan otomatis dari alokasi ${selectedRoForProcess.ro_number}`,
-        };
-
-        try {
-          const sjRes = await fetch('/api/distribution/surat-jalan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(sjPayload),
-          });
-          const sjJson = await sjRes.json();
-          if (sjJson.success && sjJson.data?.sj_number) {
-            autoSjNumber = sjJson.data.sj_number;
-          }
-        } catch (sjErr) {
-          console.error('Auto-generate Surat Jalan error:', sjErr);
-        }
-      }
-
       let nextStage: StageKey;
       let nextStatus: ROStatus;
 
+      const targetId = selectedRoForProcess.id;
+      const targetRoNo = selectedRoForProcess.ro_number;
+      const targetRawId = selectedRoForProcess.raw_ro_id;
+      const targetKey = normalizeRoKey(targetRawId || targetRoNo);
+
+      // Sesuai Flowchart: Jika seluruh item Ditolak/Dibatalkan -> Otomatis Terhapus dari Aplikasi
+      if (allDone && cancelledItems.length === selectedRoForProcess.items.length) {
+        await fetch(`/api/distribution/ro?id=${encodeURIComponent(targetId || targetRoNo)}`, {
+          method: 'DELETE',
+        });
+
+        setOrders(prev => prev.filter(o => {
+          if (targetId && o.id === targetId) return false;
+          if (targetRoNo && o.ro_number === targetRoNo) return false;
+          if (targetRawId && o.raw_ro_id === targetRawId) return false;
+          const oKey = normalizeRoKey(o.raw_ro_id || o.ro_number);
+          if (targetKey && oKey && oKey === targetKey) return false;
+          return true;
+        }));
+
+        try {
+          localStorage.setItem('ca_ro_last_update', Date.now().toString());
+          window.dispatchEvent(new Event('ca_ro_updated'));
+        } catch {}
+
+        setToast({ type: 'info', message: `Seluruh item dibatalkan & dokumen ${selectedRoForProcess.ro_number} otomatis terhapus dari aplikasi.` });
+        setSelectedRoForProcess(null);
+        return;
+      }
+
+      // Sesuai Flowchart: Ready Stock mengalir ke Pemantauan Distribusi (Bukan langsung terbit Surat Jalan di Kelola RO)
       if (allDone) {
-        if (cancelledItems.length === selectedRoForProcess.items.length) {
-          nextStage = 'DIBATALKAN';
-          nextStatus = 'REJECTED';
-        } else if (prItems.length === 0 && readyItems.length > 0) {
-          nextStage = 'SURAT_JALAN';
-          nextStatus = 'IN_DELIVERY';
-        } else {
+        if (prItems.length === 0 && readyItems.length > 0) {
+          nextStage = 'READY_STOCK';
+          nextStatus = 'READY_STOCK';
+        } else if (readyItems.length === 0 && prItems.length > 0) {
           nextStage = 'KELOLA_PR';
           nextStatus = 'NEED_PR';
+        } else {
+          nextStage = 'READY_STOCK';
+          nextStatus = 'READY_STOCK';
         }
       } else {
         nextStage = 'REQUEST_ORDER';
@@ -709,11 +699,6 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         throw new Error(roPatchJson.error || 'Gagal menyimpan perubahan alokasi ke Supabase');
       }
 
-      const targetId = selectedRoForProcess.id;
-      const targetRoNo = selectedRoForProcess.ro_number;
-      const targetRawId = selectedRoForProcess.raw_ro_id;
-      const targetKey = normalizeRoKey(targetRawId || targetRoNo);
-
       if (allDone) {
         // Hilangkan dokumen RO dari menu Kelola RO seketika jika seluruh item telah dipilih statusnya
         setOrders(prev => prev.filter(o => {
@@ -735,29 +720,27 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         }));
       }
 
-      // Broadcast event real-time ke menu Pemantauan Distribusi
+      // Broadcast event real-time ke menu Pemantauan Distribusi & PR
       try {
         localStorage.setItem('ca_ro_last_update', Date.now().toString());
         window.dispatchEvent(new Event('ca_ro_updated'));
       } catch {}
 
       if (allDone) {
-        if (cancelledItems.length === selectedRoForProcess.items.length) {
-          setToast({ type: 'info', message: `Seluruh item dibatalkan & dokumen ${selectedRoForProcess.ro_number} dihilangkan dari menu Kelola RO.` });
-        } else if (prItems.length === 0 && readyItems.length > 0) {
+        if (prItems.length === 0 && readyItems.length > 0) {
           setToast({
             type: 'success',
-            message: `Semua item (${readyItems.length}) dialokasikan ke Ready Stock! Surat Jalan (${autoSjNumber || 'SJ Baru'}) terbit dan RO dihilangkan dari Kelola RO.`,
+            message: `Semua item (${readyItems.length}) Ready Stock! Diteruskan ke Pemantauan Distribusi untuk pemilihan status kirim.`,
           });
         } else if (readyItems.length === 0 && prItems.length > 0) {
           setToast({
             type: 'info',
-            message: `Semua item (${prItems.length}) dialokasikan ke Fitur PR dan RO dihilangkan dari Kelola RO.`,
+            message: `Semua item (${prItems.length}) dialokasikan ke Purchase Procurement (PR) vendor.`,
           });
         } else {
           setToast({
             type: 'success',
-            message: `Alokasi selesai: ${readyItems.length} item masuk Surat Jalan, ${prItems.length} item masuk Fitur PR, dan RO dihilangkan dari Kelola RO.`,
+            message: `Alokasi selesai: ${readyItems.length} item Ready Stock (ke Pemantauan Distribusi), ${prItems.length} item masuk Pengadaan PR.`,
           });
         }
       } else {
@@ -776,48 +759,41 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     }
   };
 
-  // Handler: Confirm Reject Whole RO from Process Modal
+  // Handler: Confirm Reject Whole RO from Process Modal (Sesuai Flowchart: Otomatis Terhapus dari Aplikasi)
   const handleConfirmRejectRo = async () => {
     if (!selectedRoForProcess) return;
     try {
       setIsSubmitting(true);
-      const reason = rejectReasonText.trim() || 'Dibatalkan oleh logistik pada tahap Pilih Proses';
-      const rejectedItems = selectedRoForProcess.items.map(it => ({
-        ...it,
-        stock_source: 'CANCELLED' as const,
-      }));
+      const targetId = selectedRoForProcess.id;
+      const targetRoNo = selectedRoForProcess.ro_number;
+      const targetRawId = selectedRoForProcess.raw_ro_id;
+      const targetKey = normalizeRoKey(targetRawId || targetRoNo);
 
-      await fetch('/api/distribution/ro', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: selectedRoForProcess.id,
-          updates: {
-            items: rejectedItems,
-            current_stage: 'DIBATALKAN',
-            status: 'REJECTED',
-            rejection_reason: reason,
-            rejected_at: new Date().toISOString(),
-          },
-        }),
+      await fetch(`/api/distribution/ro?id=${encodeURIComponent(targetId || targetRoNo)}`, {
+        method: 'DELETE',
       });
 
-      setOrders(prev => prev.map(o => o.id === selectedRoForProcess.id ? {
-        ...o,
-        items: rejectedItems,
-        current_stage: 'DIBATALKAN',
-        status: 'REJECTED',
-        rejection_reason: reason,
-        rejected_at: new Date().toISOString(),
-      } : o));
+      setOrders(prev => prev.filter(o => {
+        if (targetId && o.id === targetId) return false;
+        if (targetRoNo && o.ro_number === targetRoNo) return false;
+        if (targetRawId && o.raw_ro_id === targetRawId) return false;
+        const oKey = normalizeRoKey(o.raw_ro_id || o.ro_number);
+        if (targetKey && oKey && oKey === targetKey) return false;
+        return true;
+      }));
+
+      try {
+        localStorage.setItem('ca_ro_last_update', Date.now().toString());
+        window.dispatchEvent(new Event('ca_ro_updated'));
+      } catch {}
 
       setRejectReasonModalOpen(false);
       setRejectReasonText('');
-      setToast({ type: 'info', message: `Dokumen ${selectedRoForProcess.ro_number} berhasil dibatalkan.` });
+      setToast({ type: 'info', message: `Dokumen ${selectedRoForProcess.ro_number} berhasil dibatalkan dan otomatis terhapus dari aplikasi.` });
       setSelectedRoForProcess(null);
     } catch (e) {
       console.error(e);
-      setToast({ type: 'error', message: 'Gagal membatalkan RO' });
+      setToast({ type: 'error', message: 'Gagal menghapus RO dari aplikasi' });
     } finally {
       setIsSubmitting(false);
     }
@@ -1955,7 +1931,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             </div>
 
             <p className="text-xs text-[#444746] dark:text-[#c4c7c5] leading-relaxed">
-              Dokumen RO ini akan ditandai sebagai <strong className="text-rose-600 dark:text-rose-400">DIBATALKAN</strong> dan tidak akan dilanjutkan ke Surat Jalan maupun Pengadaan PR.
+              Sesuai flowchart alur kerja operasional, dokumen RO ini akan ditolak/dibatalkan dan <strong className="text-rose-600 dark:text-rose-400">otomatis terhapus dari aplikasi</strong> secara permanen.
             </p>
 
             <div className="space-y-1.5">
@@ -1983,9 +1959,10 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                 type="button"
                 onClick={handleConfirmRejectRo}
                 disabled={isSubmitting}
-                className="rounded-full bg-rose-600 text-white px-5 py-2 text-xs font-semibold hover:bg-rose-700 shadow-xs"
+                className="rounded-full bg-rose-600 text-white px-5 py-2 text-xs font-semibold hover:bg-rose-700 shadow-xs flex items-center gap-1.5"
               >
-                {isSubmitting ? 'Memproses...' : 'Ya, Batalkan RO Ini'}
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isSubmitting ? 'Menghapus...' : 'Ya, Tolak & Hapus dari Aplikasi'}</span>
               </button>
             </div>
           </div>

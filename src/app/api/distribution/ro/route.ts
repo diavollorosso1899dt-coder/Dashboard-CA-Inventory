@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRequestOrders, createRequestOrder, updateRequestOrder } from '@/lib/supabase/server';
+import { getRequestOrders, createRequestOrder, updateRequestOrder, deleteRequestOrder } from '@/lib/supabase/server';
 import { sortOrdersNewestFirst } from '@/lib/utils/ro-sorter';
 
 export const dynamic = 'force-dynamic';
@@ -54,6 +54,24 @@ export async function PATCH(req: NextRequest) {
     const patchData = updates || (status ? { status } : body);
     const ok = await updateRequestOrder(id, patchData);
     return NextResponse.json({ success: ok });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const idParam = searchParams.get('id');
+    const body = idParam ? null : await req.json().catch(() => null);
+    const targetId = idParam || body?.id || body?.ro_number;
+
+    if (!targetId) {
+      return NextResponse.json({ error: 'ID atau nomor RO harus disediakan' }, { status: 400 });
+    }
+
+    const ok = await deleteRequestOrder(targetId);
+    return NextResponse.json({ success: ok, message: 'Dokumen RO berhasil dihapus dari aplikasi' });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

@@ -131,6 +131,12 @@ declare global {
     items: AssetTransfer[];
     timestamp: number;
   } | undefined;
+  // eslint-disable-next-line no-var
+  var __DELETED_RO_KEYS__: Set<string> | undefined;
+}
+
+if (!global.__DELETED_RO_KEYS__) {
+  global.__DELETED_RO_KEYS__ = new Set<string>();
 }
 
 if (!global.__LOCAL_ASSET_CACHE__) {
@@ -694,11 +700,32 @@ export async function updateAssetRequest(
           (it) => it.id === id || `ro-pr-${ro.id}-${encodeURIComponent(it.item_name)}` === id
         );
         if (item) {
-          if (payload.procurement_status === 'selesai') {
+          const isFinished = payload.procurement_status === 'selesai' || (payload.item_delivery_status && payload.item_delivery_status.toLowerCase().includes('ready'));
+          if (isFinished) {
             item.stock_source = 'GUDANG_SCGA';
+            ro.current_stage = 'READY_STOCK';
+            ro.status = 'READY_STOCK';
+          }
+          if (payload.order_datetime) {
+            ro.request_date = payload.order_datetime.includes('T') ? payload.order_datetime.split('T')[0] : payload.order_datetime;
+          }
+          if (payload.received_date) {
+            ro.received_date = payload.received_date;
+            ro.arrival_datetime = payload.received_date;
           }
           if (payload.vendor_name) ro.pr_vendor_name = payload.vendor_name;
           if (payload.po_date) ro.pr_po_number = ro.pr_po_number || 'PO-AUTO';
+
+          await updateRequestOrder(ro.id, {
+            items: ro.items,
+            current_stage: ro.current_stage,
+            status: ro.status,
+            request_date: ro.request_date,
+            received_date: ro.received_date,
+            arrival_datetime: ro.arrival_datetime,
+            pr_vendor_name: ro.pr_vendor_name,
+            pr_po_number: ro.pr_po_number,
+          });
           break;
         }
       }
@@ -1881,6 +1908,84 @@ export async function updateRequestOrder(id: string, updates: Partial<RequestOrd
   return true;
 }
 
+export function isRoDeleted(key?: string | null): boolean {
+  if (!key) return false;
+  const raw = String(key).toLowerCase().trim();
+  const clean = raw.replace(/^ro[-_\s]*/i, '').replace(/[^\w]/g, '').trim();
+  const set = global.__DELETED_RO_KEYS__;
+  if (!set) return false;
+  return set.has(raw) || (clean.length > 0 && set.has(clean));
+}
+
+export function markRoDeleted(key?: string | null): void {
+  if (!key) return;
+  if (!global.__DELETED_RO_KEYS__) {
+    global.__DELETED_RO_KEYS__ = new Set<string>();
+  }
+  const raw = String(key).toLowerCase().trim();
+  const clean = raw.replace(/^ro[-_\s]*/i, '').replace(/[^\w]/g, '').trim();
+  global.__DELETED_RO_KEYS__.add(raw);
+  if (clean) global.__DELETED_RO_KEYS__.add(clean);
+}
+
+export async function deleteRequestOrder(id: string): Promise<boolean> {
+  const admin = getAdminClient();
+  const cachedOrder =
+    (global.__RO_CACHE__?.items || []).find((r: RequestOrder) => r.id === id || r.ro_number === id) ||
+    cache.requestOrders.find((r) => r.id === id || r.ro_number === id);
+
+  const roNumber = cachedOrder?.ro_number || id;
+  const rawRoId = cachedOrder?.raw_ro_id || (roNumber ? roNumber.replace(/^RO-?/i, '') : null);
+  const cleanRawId = rawRoId ? rawRoId.replace(/[^\w]/g, '') : null;
+
+  markRoDeleted(id);
+  markRoDeleted(roNumber);
+  if (rawRoId) markRoDeleted(rawRoId);
+  if (cleanRawId) markRoDeleted(cleanRawId);
+
+  if (admin) {
+    try {
+      if (isUuid(id)) {
+        await admin.from('request_orders').delete().eq('id', id);
+      }
+      if (rawRoId) {
+        await admin
+          .from('request_orders')
+          .delete()
+          .or(`raw_ro_id.eq.${rawRoId},ro_number.eq.RO-${rawRoId},ro_number.ilike.%${cleanRawId}%`);
+      } else if (roNumber) {
+        await admin.from('request_orders').delete().eq('ro_number', roNumber);
+      }
+    } catch (err: any) {
+      console.error('[Supabase deleteRequestOrder exception]:', err.message);
+    }
+  }
+
+  // Remove from memory cache
+  if (global.__RO_CACHE__ && global.__RO_CACHE__.items) {
+    global.__RO_CACHE__.items = global.__RO_CACHE__.items.filter((r: RequestOrder) => {
+      const match =
+        r.id === id ||
+        r.ro_number === id ||
+        (roNumber && r.ro_number === roNumber) ||
+        (cleanRawId && (r.raw_ro_id || '').replace(/[^\w]/g, '') === cleanRawId);
+      return !match;
+    });
+  }
+
+  cache.requestOrders = cache.requestOrders.filter((r) => {
+    const match =
+      r.id === id ||
+      r.ro_number === id ||
+      (roNumber && r.ro_number === roNumber) ||
+      (cleanRawId && (r.raw_ro_id || '').replace(/[^\w]/g, '') === cleanRawId);
+    return !match;
+  });
+
+  invalidateRoCache();
+  return true;
+}
+
 // SMART DEDUPLICATION & SPREADSHEET SYNC ENGINE (MULTISOURCE: KALBAR & JABO)
 const RO_SOURCES: Array<{ name: string; region: 'KALBAR' | 'JABODETABEK'; url: string }> = [
   {
@@ -2134,6 +2239,9 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
           seenFingerprints.add(fingerprint);
 
           const roNumber = `RO-${effectiveRoId}`;
+          if (isRoDeleted(roNumber) || isRoDeleted(effectiveRoId)) {
+            continue;
+          }
           const region: 'JABODETABEK' | 'KALBAR' = source.region;
 
           const parsedRequestDate = parseIndoDate(inputDate || reqDate) || new Date().toISOString().split('T')[0];
