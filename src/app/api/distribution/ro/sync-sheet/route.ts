@@ -5,7 +5,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const result = await syncRequestOrdersFromSheet();
+    const clearOld = req.nextUrl.searchParams.get('clear') === 'true';
+    const result = await syncRequestOrdersFromSheet({ clearOldSheetData: clearOld });
     return NextResponse.json(result);
   } catch (err: any) {
     return NextResponse.json({ success: false, message: err.message }, { status: 500 });

@@ -1861,14 +1861,14 @@ const RO_SOURCES: Array<{ name: string; region: 'KALBAR' | 'JABODETABEK'; url: s
     region: 'KALBAR',
     url:
       process.env.GOOGLE_SHEET_RO_KALBAR_URL ||
-      'https://docs.google.com/spreadsheets/d/1xma83YRtP0WbjDnUFjmhgie3mWDgejV95HhlZX0sEvk/export?format=csv&gid=1158236044',
+      'https://docs.google.com/spreadsheets/d/15Ir0Rc9y7N8qMKJWMoPFPWD0TX_bhQF-S2F6CMCtSIM/export?format=csv&gid=0',
   },
   {
     name: 'RO JABODETABEK',
     region: 'JABODETABEK',
     url:
       process.env.GOOGLE_SHEET_RO_JABO_URL ||
-      'https://docs.google.com/spreadsheets/d/1aXpTJqGvht-4cM4ZwG26hmMpg1LmY4K6_TX6iX0KczI/export?format=csv&gid=774931021',
+      'https://docs.google.com/spreadsheets/d/15Ir0Rc9y7N8qMKJWMoPFPWD0TX_bhQF-S2F6CMCtSIM/export?format=csv&gid=1529640038',
   },
 ];
 
@@ -2031,8 +2031,19 @@ export interface RoSyncResult {
   message: string;
 }
 
-export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
+export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: boolean } = {}): Promise<RoSyncResult> {
   try {
+    const admin = getAdminClient();
+    if (options.clearOldSheetData && admin) {
+      try {
+        await admin.from('request_orders').delete().eq('source_type', 'GOOGLE_SHEET');
+      } catch (delErr: any) {
+        console.warn('[RO Sync] Warning clearing old GOOGLE_SHEET rows:', delErr?.message);
+      }
+      cache.requestOrders = [];
+      invalidateRoCache();
+    }
+
     let totalRowsScanned = 0;
     let duplicateRowsFiltered = 0;
     const seenFingerprints = new Set<string>();
@@ -2141,7 +2152,6 @@ export async function syncRequestOrdersFromSheet(): Promise<RoSyncResult> {
     uniqueOrders.forEach((o) => (totalItems += o.items.length));
 
     // Upsert into Supabase request_orders table with smart preservation of existing user progress
-    const admin = getAdminClient();
     if (admin && uniqueOrders.length > 0) {
       let existingRows: any[] = [];
       try {
