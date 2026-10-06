@@ -11,9 +11,14 @@ interface UpcomingOpeningsCardProps {
 export function UpcomingOpeningsCard({ branches }: UpcomingOpeningsCardProps) {
   const displayBranches = branches.slice(0, 6);
 
+  const criticalBranches = branches.filter(
+    (b) => (b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 3 && b.readiness_percentage < 100) ||
+           (b.days_until_opening !== null && b.days_until_opening < 0 && b.readiness_percentage < 100)
+  );
+
   return (
     <div className="panel-card p-5">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h3 className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] text-sm md:text-base flex items-center gap-2">
             <Store className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
@@ -23,34 +28,54 @@ export function UpcomingOpeningsCard({ branches }: UpcomingOpeningsCardProps) {
             Monitoring kesiapan dan progres kelengkapan aset per cabang
           </p>
         </div>
-        <Link
-          href="/opening-readiness"
-          className="flex items-center gap-1 text-xs font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline transition-colors"
-        >
-          Lihat Semua ({branches.length})
-          <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
+        <div className="flex items-center gap-2">
+          {criticalBranches.length > 0 && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-800 animate-pulse">
+              <AlertTriangle className="h-3 w-3 text-rose-600 dark:text-rose-400" />
+              {criticalBranches.length} Cabang Kritis H-3
+            </span>
+          )}
+          <Link
+            href="/opening-readiness"
+            className="flex items-center gap-1 text-xs font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline transition-colors"
+          >
+            Lihat Semua ({branches.length})
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
         {displayBranches.map((b) => {
-          const isCritical = b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 7 && b.readiness_percentage < 80;
-          const isUrgent = b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 14;
+          const isCriticalH3 = (b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 3 && b.readiness_percentage < 100) ||
+                               (b.days_until_opening !== null && b.days_until_opening < 0 && b.readiness_percentage < 100);
+          const isUrgentH7 = b.days_until_opening !== null && b.days_until_opening > 3 && b.days_until_opening <= 7 && b.readiness_percentage < 100;
           const isPassed = b.days_until_opening !== null && b.days_until_opening < 0;
 
           return (
             <div
               key={`${b.region}-${b.branch_name}`}
               className={`rounded-2xl border p-4 transition-all ${
-                isCritical
-                  ? 'border-[#f9dedc] dark:border-[#601410] bg-[#fce8e6]/60 dark:bg-[#601410]/20 shadow-sm'
+                isCriticalH3
+                  ? 'border-rose-300 dark:border-rose-900 bg-rose-50/70 dark:bg-rose-950/30 shadow-sm ring-1 ring-rose-400/50'
+                  : isUrgentH7
+                  ? 'border-amber-300 dark:border-amber-900 bg-amber-50/50 dark:bg-amber-950/20'
                   : 'border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] hover:border-[#0b57d0] dark:hover:border-[#a8c7fa]'
               }`}
             >
-              {isCritical && (
-                <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#b3261e] dark:text-[#f2b8b5] mb-2 animate-pulse">
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  <span>KRITIS: Target &le; 7 Hari &amp; Aset Belum Lengkap!</span>
+              {isCriticalH3 && (
+                <div className="flex items-center justify-between gap-1 text-[11px] font-bold text-rose-700 dark:text-rose-300 mb-2 bg-rose-100/80 dark:bg-rose-950/80 px-2 py-0.5 rounded-md border border-rose-200 dark:border-rose-900 animate-pulse">
+                  <span className="flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3 text-rose-600" />
+                    <span>KRITIS H-3: Target &le; 3 Hari!</span>
+                  </span>
+                  <span className="text-[10px] uppercase font-black tracking-wider">Perlu Atensi</span>
+                </div>
+              )}
+              {isUrgentH7 && (
+                <div className="flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300 mb-2">
+                  <AlertTriangle className="h-3 w-3 text-amber-600" />
+                  <span>Mendekati Target (H-{b.days_until_opening})</span>
                 </div>
               )}
 
@@ -67,7 +92,7 @@ export function UpcomingOpeningsCard({ branches }: UpcomingOpeningsCardProps) {
                 {b.days_until_opening !== null ? (
                   <span
                     className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold shrink-0 ${
-                      isUrgent
+                      (isCriticalH3 || isUrgentH7)
                         ? 'bg-[#fce8e6] dark:bg-[#601410]/80 text-[#b3261e] dark:text-[#f2b8b5] border border-[#f9dedc] dark:border-[#601410]'
                         : isPassed
                         ? 'bg-[#f0f4f9] dark:bg-[#282a2c] text-[#5f6368] dark:text-[#c4c7c5]'

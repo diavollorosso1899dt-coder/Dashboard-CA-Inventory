@@ -100,6 +100,8 @@ export interface BranchOpeningSummary {
   readiness_percentage: number;
   total_deal_cost: number;
   total_rab_budget: number;
+  is_critical_h3?: boolean;
+  urgency_status?: 'CRITICAL_H3' | 'URGENT_H7' | 'UPCOMING' | 'COMPLETED' | 'PAST_DUE';
 }
 
 export interface DashboardMetrics {

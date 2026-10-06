@@ -1,22 +1,50 @@
 import React from 'react';
 import { getBranchOpeningSummaries, getAssetRequests } from '@/lib/supabase/server';
 import { RegionType } from '@/lib/supabase/types';
-import { Store, Calendar } from 'lucide-react';
+import { Store, Calendar, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 import { formatDateOnly } from '@/lib/utils/date-formatter';
 import { AssetDataTable } from '@/components/tracker/AssetDataTable';
+import AreaFilterPills from '@/components/ui/AreaFilterPills';
 
 export const dynamic = 'force-dynamic';
 
 interface PageProps {
-  searchParams: Promise<{ region?: string; branch?: string }>;
+  searchParams: Promise<{ region?: string; branch?: string; filter?: string }>;
 }
 
 export default async function OpeningReadinessPage({ searchParams }: PageProps) {
-  const { region: rawRegion, branch: selectedBranch } = await searchParams;
+  const { region: rawRegion, branch: selectedBranch, filter: rawFilter } = await searchParams;
   const region = (rawRegion as RegionType) || 'ALL';
+  const filter = rawFilter || 'ALL';
 
-  const branchSummaries = await getBranchOpeningSummaries(region);
-  const activeBranch = selectedBranch || (branchSummaries.length > 0 ? branchSummaries[0].branch_name : '');
+  const allBranchSummaries = await getBranchOpeningSummaries(region);
+
+  const criticalH3List = allBranchSummaries.filter(
+    (b) => (b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 3 && b.readiness_percentage < 100) ||
+           (b.days_until_opening !== null && b.days_until_opening < 0 && b.readiness_percentage < 100)
+  );
+
+  const urgentH7List = allBranchSummaries.filter(
+    (b) => b.days_until_opening !== null && b.days_until_opening > 3 && b.days_until_opening <= 7 && b.readiness_percentage < 100
+  );
+
+  const completedList = allBranchSummaries.filter((b) => b.readiness_percentage >= 100);
+
+  const branchSummaries = allBranchSummaries.filter((b) => {
+    if (filter === 'CRITICAL') {
+      return (b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 3 && b.readiness_percentage < 100) ||
+             (b.days_until_opening !== null && b.days_until_opening < 0 && b.readiness_percentage < 100);
+    }
+    if (filter === 'URGENT') {
+      return b.days_until_opening !== null && b.days_until_opening > 3 && b.days_until_opening <= 7 && b.readiness_percentage < 100;
+    }
+    if (filter === 'READY') {
+      return b.readiness_percentage >= 100;
+    }
+    return true;
+  });
+
+  const activeBranch = selectedBranch || (branchSummaries.length > 0 ? branchSummaries[0].branch_name : (allBranchSummaries.length > 0 ? allBranchSummaries[0].branch_name : ''));
 
   const { data: branchItems } = await getAssetRequests({
     region,
@@ -24,7 +52,7 @@ export default async function OpeningReadinessPage({ searchParams }: PageProps) 
     limit: 500,
   });
 
-  const activeBranchSummary = branchSummaries.find((b) => b.branch_name === activeBranch);
+  const activeBranchSummary = allBranchSummaries.find((b) => b.branch_name === activeBranch);
 
   return (
     <div className="space-y-6 pb-12">
@@ -41,31 +69,131 @@ export default async function OpeningReadinessPage({ searchParams }: PageProps) 
             Pelacakan kelengkapan barang dan aset per cabang menjelang target tanggal pembukaan.
           </p>
         </div>
-        <a
-          href="/outlets"
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
-        >
-          Kelola Master Outlet &rarr;
-        </a>
+        <div className="flex items-center gap-2">
+          <a
+            href="/sla-analytics"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-xs font-semibold text-amber-900 dark:text-amber-200 hover:bg-amber-100 transition"
+          >
+            <Clock className="h-3.5 w-3.5 text-amber-600" />
+            Monitoring SLA RO &rarr;
+          </a>
+          <a
+            href="/outlets"
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
+          >
+            Master Outlet &rarr;
+          </a>
+        </div>
+      </div>
+
+      {/* SLA H-3 Critical Alert Banner if any critical */}
+      {criticalH3List.length > 0 && (
+        <div className="p-4 rounded-2xl border border-rose-300 dark:border-rose-900 bg-rose-50/80 dark:bg-rose-950/40 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-rose-100 dark:bg-rose-900 text-rose-700 dark:text-rose-200 shrink-0">
+              <AlertTriangle className="h-5 w-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-rose-900 dark:text-rose-200">
+                  Peringatan SLA Kritis H-3 ({criticalH3List.length} Cabang Perlu Eskalasi)
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-rose-600 text-white tracking-wider animate-pulse">
+                  Emergency
+                </span>
+              </div>
+              <p className="text-xs text-rose-800 dark:text-rose-300 mt-0.5">
+                Target pembukaan outlet &le; 3 hari ke depan namun kesiapan barang belum 100%: {' '}
+                <strong>{criticalH3List.map((c) => `${c.branch_name} (${c.readiness_percentage}%)`).join(', ')}</strong>
+              </p>
+            </div>
+          </div>
+          <a
+            href={`/opening-readiness?filter=CRITICAL${region !== 'ALL' ? `&region=${region}` : ''}`}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-xs shrink-0 self-start sm:self-auto"
+          >
+            <span>Fokus Cabang Kritis</span>
+          </a>
+        </div>
+      )}
+
+      {/* Filter Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e0e2ec] dark:border-[#444746] pb-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <a
+            href={`/opening-readiness?filter=ALL${region !== 'ALL' ? `&region=${region}` : ''}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+              filter === 'ALL'
+                ? 'bg-[#0b57d0] text-white shadow-2xs'
+                : 'bg-[#f0f4f9] dark:bg-[#282a2c] text-[#444746] dark:text-[#c4c7c5] hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+          >
+            Semua Cabang ({allBranchSummaries.length})
+          </a>
+          <a
+            href={`/opening-readiness?filter=CRITICAL${region !== 'ALL' ? `&region=${region}` : ''}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1 ${
+              filter === 'CRITICAL'
+                ? 'bg-rose-600 text-white shadow-2xs'
+                : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900/50 hover:bg-rose-100'
+            }`}
+          >
+            <AlertTriangle className="h-3 w-3" />
+            <span>Kritis H-3 ({criticalH3List.length})</span>
+          </a>
+          <a
+            href={`/opening-readiness?filter=URGENT${region !== 'ALL' ? `&region=${region}` : ''}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1 ${
+              filter === 'URGENT'
+                ? 'bg-amber-600 text-white shadow-2xs'
+                : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-900/50 hover:bg-amber-100'
+            }`}
+          >
+            <span>Target H-7 ({urgentH7List.length})</span>
+          </a>
+          <a
+            href={`/opening-readiness?filter=READY${region !== 'ALL' ? `&region=${region}` : ''}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1 ${
+              filter === 'READY'
+                ? 'bg-emerald-600 text-white shadow-2xs'
+                : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/50 hover:bg-emerald-100'
+            }`}
+          >
+            <CheckCircle2 className="h-3 w-3" />
+            <span>Siap 100% ({completedList.length})</span>
+          </a>
+        </div>
       </div>
 
       {/* Branch Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
         {branchSummaries.map((b) => {
           const isSelected = b.branch_name === activeBranch;
-          const isUrgent = b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 14;
+          const isCriticalH3 = (b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 3 && b.readiness_percentage < 100) ||
+                               (b.days_until_opening !== null && b.days_until_opening < 0 && b.readiness_percentage < 100);
+          const isUrgentH7 = b.days_until_opening !== null && b.days_until_opening > 3 && b.days_until_opening <= 7 && b.readiness_percentage < 100;
           const isPassed = b.days_until_opening !== null && b.days_until_opening < 0;
 
           return (
             <a
               key={`${b.region}-${b.branch_name}`}
-              href={`/opening-readiness?branch=${encodeURIComponent(b.branch_name)}${region !== 'ALL' ? `&region=${region}` : ''}`}
+              href={`/opening-readiness?branch=${encodeURIComponent(b.branch_name)}${region !== 'ALL' ? `&region=${region}` : ''}${filter !== 'ALL' ? `&filter=${filter}` : ''}`}
               className={`rounded-2xl p-4 border transition-all cursor-pointer block ${
                 isSelected
-                  ? 'border-[#0b57d0] dark:border-[#a8c7fa] bg-[#e8f0fe]/60 dark:bg-[#004a77]/30 shadow-md'
+                  ? 'border-[#0b57d0] dark:border-[#a8c7fa] bg-[#e8f0fe]/60 dark:bg-[#004a77]/30 shadow-md ring-1 ring-[#0b57d0]'
+                  : isCriticalH3
+                  ? 'border-rose-300 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-950/30 hover:border-rose-500 shadow-2xs'
                   : 'border-[#e0e2ec] dark:border-[#444746] bg-[#ffffff] dark:bg-[#1e1f20] hover:border-[#0b57d0] dark:hover:border-[#a8c7fa]'
               }`}
             >
+              {isCriticalH3 && (
+                <div className="flex items-center justify-between text-[10px] font-bold text-rose-700 dark:text-rose-300 mb-2 bg-rose-100 dark:bg-rose-950/80 px-2 py-0.5 rounded border border-rose-200 dark:border-rose-900 animate-pulse">
+                  <span className="flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3" />
+                    <span>KRITIS H-3: Target Dekat & Aset Belum Lengkap</span>
+                  </span>
+                </div>
+              )}
               <div className="flex items-start justify-between gap-2 mb-2">
                 <div>
                   <h3 className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] text-sm line-clamp-1">{b.branch_name}</h3>
@@ -76,7 +204,7 @@ export default async function OpeningReadinessPage({ searchParams }: PageProps) 
                 {b.days_until_opening !== null ? (
                   <span
                     className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold shrink-0 ${
-                      isUrgent
+                      (isCriticalH3 || isUrgentH7)
                         ? 'bg-[#fce8e6] dark:bg-[#601410]/80 text-[#b3261e] dark:text-[#f2b8b5] border border-[#f9dedc]'
                         : isPassed
                         ? 'bg-[#f0f4f9] dark:bg-[#282a2c] text-[#5f6368] dark:text-[#c4c7c5]'

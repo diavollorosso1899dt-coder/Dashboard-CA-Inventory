@@ -957,6 +957,18 @@ export async function getBranchOpeningSummaries(region: RegionType = 'ALL'): Pro
 
     const readiness = total > 0 ? Math.round((completed / total) * 1000) / 10 : 0;
     const daysLeft = entry.opening_date ? getDaysRemaining(entry.opening_date) : null;
+    const isCriticalH3 = daysLeft !== null && daysLeft <= 3 && readiness < 100;
+
+    let urgencyStatus: 'CRITICAL_H3' | 'URGENT_H7' | 'UPCOMING' | 'COMPLETED' | 'PAST_DUE' = 'UPCOMING';
+    if (readiness >= 100) {
+      urgencyStatus = 'COMPLETED';
+    } else if (daysLeft !== null && daysLeft < 0) {
+      urgencyStatus = 'PAST_DUE';
+    } else if (daysLeft !== null && daysLeft <= 3) {
+      urgencyStatus = 'CRITICAL_H3';
+    } else if (daysLeft !== null && daysLeft <= 7) {
+      urgencyStatus = 'URGENT_H7';
+    }
 
     summaries.push({
       branch_name: entry.branch_name,
@@ -970,6 +982,8 @@ export async function getBranchOpeningSummaries(region: RegionType = 'ALL'): Pro
       readiness_percentage: readiness,
       total_deal_cost: dealCost,
       total_rab_budget: rabBudget,
+      is_critical_h3: isCriticalH3,
+      urgency_status: urgencyStatus,
     });
   }
 

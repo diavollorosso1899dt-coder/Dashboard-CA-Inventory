@@ -23,17 +23,21 @@ import {
   RotateCcw,
   SlidersHorizontal,
   Box,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Store
 } from 'lucide-react';
-import { RequestOrder, AssetRequest, RegionType, ROItem } from '@/lib/supabase/types';
+import { RequestOrder, AssetRequest, RegionType, ROItem, BranchOpeningSummary } from '@/lib/supabase/types';
 import AreaFilterPills from '@/components/ui/AreaFilterPills';
 import ColumnVisibilityPicker, { ColumnItem } from '@/components/ui/ColumnVisibilityPicker';
 import { StandardRegion, matchesRegion, normalizeRegion } from '@/lib/utils/region-helper';
 import { formatDateSlash, formatLeadTime } from '@/lib/utils/date-formatter';
+import BranchReadinessCards from '@/components/sla/BranchReadinessCards';
+import CriticalH3AlertBanner, { CriticalEntity } from '@/components/sla/CriticalH3AlertBanner';
 
 interface InteractiveSlaDashboardProps {
   initialRoOrders: RequestOrder[];
   initialAssetRequests: AssetRequest[];
+  initialBranchSummaries?: BranchOpeningSummary[];
   metrics: {
     avg_lead_time_days: number;
     sla_on_time_count: number;
@@ -42,9 +46,9 @@ interface InteractiveSlaDashboardProps {
   initialRegion?: RegionType;
 }
 
-type ViewMode = 'ITEM' | 'RO';
+type ViewMode = 'ITEM' | 'RO' | 'BRANCH';
 type SlaStatusFilter = 'ALL' | 'OVERDUE' | 'CRITICAL' | 'ON_TIME' | 'COMPLETED';
-type ActiveTab = 'RO_SLA' | 'OVERDUE_ACTION' | 'ASSET_SLA';
+type ActiveTab = 'RO_SLA' | 'BRANCH_READINESS' | 'OVERDUE_ACTION' | 'ASSET_SLA';
 
 interface EnrichedRO {
   id: string;
@@ -128,6 +132,7 @@ function formatMonthYear(ym: string): string {
 export default function InteractiveSlaDashboard({
   initialRoOrders = [],
   initialAssetRequests = [],
+  initialBranchSummaries = [],
   metrics,
   initialRegion = 'ALL',
 }: InteractiveSlaDashboardProps) {
@@ -614,6 +619,46 @@ export default function InteractiveSlaDashboard({
     }
   };
 
+  // 7. CRITICAL SLA ENTITIES (H-3 target deadline or overdue with pending assets)
+  const criticalEntities: CriticalEntity[] = useMemo(() => {
+    const list: CriticalEntity[] = [];
+
+    // 1. From Branch Opening Summaries
+    for (const b of initialBranchSummaries) {
+      if (!matchesRegion(b.region, selectedRegion)) continue;
+      const isCrit = (b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 3 && b.readiness_percentage < 100) ||
+                     (b.days_until_opening !== null && b.days_until_opening < 0 && b.readiness_percentage < 100);
+      if (isCrit) {
+        list.push({
+          name: b.branch_name,
+          region: b.region,
+          daysRemaining: b.days_until_opening,
+          readinessPct: b.readiness_percentage,
+          unfulfilledCount: b.items_pending,
+          type: 'BRANCH',
+        });
+      }
+    }
+
+    // 2. From Enriched ROs
+    for (const ro of enrichedOrders) {
+      if (!matchesRegion(ro.region, selectedRegion)) continue;
+      if (ro.slaCategory === 'CRITICAL' || (ro.slaCategory === 'OVERDUE' && ro.fulfillmentPct < 100)) {
+        list.push({
+          name: ro.branch_name,
+          region: ro.region,
+          daysRemaining: ro.diffDays !== undefined ? -ro.diffDays : null,
+          readinessPct: ro.fulfillmentPct,
+          unfulfilledCount: ro.totalQtyOrdered - ro.totalQtyFulfilled,
+          type: 'RO',
+          id: ro.id,
+        });
+      }
+    }
+
+    return list;
+  }, [initialBranchSummaries, enrichedOrders, selectedRegion]);
+
   return (
     <div className="space-y-6 pb-12">
       {/* 1. HEADER & CONTROLS */}
@@ -656,6 +701,27 @@ export default function InteractiveSlaDashboard({
         </div>
       </div>
 
+      {/* ALERT SLA KRITIS (H-3) EMERGENCY BANNER */}
+      <CriticalH3AlertBanner
+        criticalEntities={criticalEntities}
+        onSelectEntity={(branchName, type, id) => {
+          setSelectedBranch(branchName);
+          if (type === 'RO') {
+            setViewMode('RO');
+            setActiveTab('RO_SLA');
+          } else {
+            setActiveTab('BRANCH_READINESS');
+            setViewMode('BRANCH');
+          }
+          setCurrentPage(1);
+        }}
+        onFilterCriticalTab={() => {
+          setStatusFilter('CRITICAL');
+          setActiveTab('RO_SLA');
+          setCurrentPage(1);
+        }}
+      />
+
       {/* 2. DYNAMIC KPI CARDS (Recalculates based on viewMode and active filters) */}
       <div>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
@@ -673,7 +739,7 @@ export default function InteractiveSlaDashboard({
                 type="button"
                 onClick={() => { setViewMode('ITEM'); setCurrentPage(1); }}
                 className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-                  viewMode === 'ITEM'
+                  viewMode === 'ITEM' && activeTab === 'RO_SLA'
                     ? 'bg-white dark:bg-[#1a1c1e] text-[#0b57d0] dark:text-[#a8c7fa] shadow-2xs font-bold'
                     : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f]'
                 }`}
@@ -685,13 +751,31 @@ export default function InteractiveSlaDashboard({
                 type="button"
                 onClick={() => { setViewMode('RO'); setCurrentPage(1); }}
                 className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-                  viewMode === 'RO'
+                  viewMode === 'RO' && activeTab === 'RO_SLA'
                     ? 'bg-white dark:bg-[#1a1c1e] text-[#0b57d0] dark:text-[#a8c7fa] shadow-2xs font-bold'
                     : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f]'
                 }`}
               >
                 <Layers className="h-3.5 w-3.5" />
                 <span>Tampilan Dokumen RO</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('BRANCH');
+                  setActiveTab('BRANCH_READINESS');
+                }}
+                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                  viewMode === 'BRANCH' || activeTab === 'BRANCH_READINESS'
+                    ? 'bg-white dark:bg-[#1a1c1e] text-[#0b57d0] dark:text-[#a8c7fa] shadow-2xs font-bold'
+                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f]'
+                }`}
+              >
+                <Store className="h-3.5 w-3.5" />
+                <span>Kesiapan Cabang</span>
+                {criticalEntities.length > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-rose-600 animate-pulse" />
+                )}
               </button>
             </div>
 
@@ -839,7 +923,10 @@ export default function InteractiveSlaDashboard({
       <div className="flex items-center gap-2 border-b border-[#e0e2ec] dark:border-[#444746] pb-2 overflow-x-auto">
         <button
           type="button"
-          onClick={() => setActiveTab('RO_SLA')}
+          onClick={() => {
+            setActiveTab('RO_SLA');
+            if (viewMode === 'BRANCH') setViewMode('ITEM');
+          }}
           className={`interactive-tap px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
             activeTab === 'RO_SLA'
               ? 'bg-[#0b57d0] text-white shadow-sm'
@@ -848,6 +935,27 @@ export default function InteractiveSlaDashboard({
         >
           <Clock className="h-3.5 w-3.5" />
           <span>Pemantauan SLA RO {viewMode === 'ITEM' ? `Per Item (${finalFilteredItems.length})` : `Per Dokumen (${finalFilteredOrders.length})`}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('BRANCH_READINESS');
+            setViewMode('BRANCH');
+          }}
+          className={`interactive-tap px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+            activeTab === 'BRANCH_READINESS'
+              ? 'bg-[#0b57d0] text-white shadow-sm'
+              : 'bg-[#f0f4f9] dark:bg-[#282a2c] text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e0e2ec]'
+          }`}
+        >
+          <Store className="h-3.5 w-3.5" />
+          <span>Kesiapan Cabang &amp; Alert H-3</span>
+          {criticalEntities.length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-rose-600 text-white animate-pulse">
+              {criticalEntities.length} Kritis
+            </span>
+          )}
         </button>
 
         <button
@@ -876,6 +984,34 @@ export default function InteractiveSlaDashboard({
           <span>Lead Time Pengadaan Aset ({initialAssetRequests.length})</span>
         </button>
       </div>
+
+      {/* TAB: KESIAPAN CABANG & ALERT SLA H-3 */}
+      {activeTab === 'BRANCH_READINESS' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          <BranchReadinessCards
+            branchSummaries={initialBranchSummaries}
+            enrichedOrders={enrichedOrders}
+            selectedRegion={selectedRegion}
+            onSelectBranch={(bName) => {
+              setSelectedBranch(bName);
+              setActiveTab('RO_SLA');
+              setViewMode('ITEM');
+              setCurrentPage(1);
+            }}
+            onFilterItemsByBranch={(bName, filter) => {
+              setSelectedBranch(bName);
+              if (filter === 'CRITICAL') {
+                setStatusFilter('CRITICAL');
+              } else {
+                setStatusFilter('ALL');
+              }
+              setActiveTab('RO_SLA');
+              setViewMode('ITEM');
+              setCurrentPage(1);
+            }}
+          />
+        </div>
+      )}
 
       {/* TAB 1: PEMANTAUAN SLA REQUEST ORDER (PER ITEM / PER DOKUMEN RO) */}
       {activeTab === 'RO_SLA' && (
