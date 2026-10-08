@@ -247,17 +247,17 @@ export default function OutletManagerView() {
         <TableSkeleton columns={7} rows={7} />
       ) : (
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto relative scrollbar-thin">
             <table className="w-full text-left border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/75 dark:bg-slate-800/60 text-xs uppercase font-semibold text-slate-500 dark:text-slate-400 tracking-wider">
-                  {isVisible('branch') && <th scope="col" className="py-3.5 px-4 font-semibold">Outlet / Cabang</th>}
-                  {isVisible('region') && <th scope="col" className="py-3.5 px-4 font-semibold">Region</th>}
-                  {isVisible('pic') && <th scope="col" className="py-3.5 px-4 font-semibold">PIC / Manager</th>}
-                  {isVisible('contact') && <th scope="col" className="py-3.5 px-4 font-semibold">Kontak</th>}
-                  {isVisible('opening') && <th scope="col" className="py-3.5 px-4 font-semibold">Target Opening</th>}
-                  {isVisible('status') && <th scope="col" className="py-3.5 px-4 font-semibold">Status</th>}
-                  {isVisible('actions') && <th scope="col" className="py-3.5 px-4 font-semibold text-right">Aksi</th>}
+              <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 shadow-xs">
+                <tr className="text-xs uppercase font-semibold text-slate-500 dark:text-slate-400 tracking-wider">
+                  {isVisible('branch') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Outlet / Cabang</th>}
+                  {isVisible('region') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Region</th>}
+                  {isVisible('pic') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">PIC / Manager</th>}
+                  {isVisible('contact') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Kontak</th>}
+                  {isVisible('opening') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Target Opening</th>}
+                  {isVisible('status') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Status</th>}
+                  {isVisible('actions') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold text-right shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

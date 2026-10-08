@@ -1133,11 +1133,11 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
 
       {/* 4. Google Sheets Style Main Data Table */}
       <div className="panel-card overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto relative scrollbar-thin">
           <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
-            <thead className="bg-[#f0f4f9] dark:bg-[#1e1f20] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#444746]">
+            <thead className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] shadow-xs">
               <tr>
-                <th className="py-3.5 px-3 w-8 text-center">
+                <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 w-8 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
                   <button
                     onClick={handleToggleSelectAll}
                     className="text-[#747775] dark:text-[#8e918f] hover:text-[#0b57d0] dark:hover:text-[#a8c7fa]"
@@ -1151,40 +1151,40 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                   </button>
                 </th>
                 {visibleColumns.order_datetime !== false && (
-                  <th className="py-3.5 px-3">Waktu Order</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Waktu Order</th>
                 )}
                 {visibleColumns.branch_requester !== false && (
-                  <th className="py-3.5 px-3">Cabang &amp; Pengaju</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Cabang &amp; Pengaju</th>
                 )}
                 {visibleColumns.item_classification !== false && (
-                  <th className="py-3.5 px-3">Item &amp; Klasifikasi</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Item &amp; Klasifikasi</th>
                 )}
                 {visibleColumns.image !== false && (
-                  <th className="py-3.5 px-3 text-center">Gambar</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Gambar</th>
                 )}
                 {visibleColumns.quantity !== false && (
-                  <th className="py-3.5 px-3 text-center">Kebutuhan</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Kebutuhan</th>
                 )}
                 {visibleColumns.rab_number !== false && (
-                  <th className="py-3.5 px-3">No. RAB</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">No. RAB</th>
                 )}
                 {visibleColumns.opening_date !== false && (
-                  <th className="py-3.5 px-3">Target Opening</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Target Opening</th>
                 )}
                 {visibleColumns.stock_status !== false && (
-                  <th className="py-3.5 px-3">Status Stok</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Status Stok</th>
                 )}
                 {visibleColumns.item_delivery_status !== false && (
-                  <th className="py-3.5 px-3">Status Barang</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Status Barang</th>
                 )}
                 {visibleColumns.system_transfer !== false && (
-                  <th className="py-3.5 px-3 text-center">Transfer Sistem</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Transfer Sistem</th>
                 )}
                 {visibleColumns.sla !== false && (
-                  <th className="py-3.5 px-3 text-center">SLA</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">SLA</th>
                 )}
                 {visibleColumns.actions !== false && (
-                  <th className="py-3.5 px-3 text-right">Aksi</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-right shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Aksi</th>
                 )}
               </tr>
             </thead>

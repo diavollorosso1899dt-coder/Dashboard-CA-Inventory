@@ -547,13 +547,6 @@ export async function getAllAssetRequestsRaw(force = false): Promise<AssetReques
       global.__ASSET_REQUESTS_PENDING__ = null;
     }
 
-    // Fallback: If cache items is empty, trigger sheet sync in background (do not block request)
-    if (cache.items.length === 0) {
-      syncGoogleSheetsToSupabase().catch((err) =>
-        console.warn('[Background Sync Error]', err?.message)
-      );
-    }
-
     return cache.items || [];
   })();
 
@@ -1773,13 +1766,7 @@ export async function getRequestOrders(): Promise<RequestOrder[]> {
       }
     }
 
-    if (!cache.requestOrders || cache.requestOrders.length === 0) {
-      try {
-        await syncRequestOrdersFromSheet();
-      } catch (e) {
-        console.error('Auto sync RO on getRequestOrders failed:', e);
-      }
-    }
+    // Removed fallback syncRequestOrdersFromSheet to ensure UI is decoupled from Google Sheets
     const result = sortOrdersNewestFirst(deduplicateOrderItems(cache.requestOrders || []));
     global.__RO_CACHE__ = { items: result, timestamp: Date.now() };
     return result;
@@ -2160,7 +2147,35 @@ export interface RoSyncResult {
   uniqueOrdersCount: number;
   newOrdersAdded: number;
   existingOrdersUpdated: number;
+  /** True only when at least one RO row was actually inserted or modified in the database. */
+  changed: boolean;
   message: string;
+}
+
+// Deterministic JSON serialization (sorted keys, undefined dropped) so that values read back
+// from Postgres JSONB (which reorders keys) compare equal to freshly built objects.
+function stableStringify(value: any): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const keys = Object.keys(value).filter((k) => value[k] !== undefined).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+}
+
+const RO_COMPARE_FIELDS = [
+  'branch_name',
+  'region',
+  'requester_name',
+  'request_date',
+  'target_delivery_date',
+  'status',
+  'current_stage',
+  'source_type',
+  'warehouse_name',
+  'items',
+] as const;
+
+function isRoRowChanged(existing: any, next: any): boolean {
+  return RO_COMPARE_FIELDS.some((f) => stableStringify(existing[f] ?? null) !== stableStringify(next[f] ?? null));
 }
 
 export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: boolean } = {}): Promise<RoSyncResult> {
@@ -2285,19 +2300,33 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
     }
 
     const uniqueOrders = Array.from(groupedOrders.values());
+    let dbRowsWritten = 0;
     let totalItems = 0;
     uniqueOrders.forEach((o) => (totalItems += o.items.length));
 
     // Upsert into Supabase request_orders table with smart preservation of existing user progress
     if (admin && uniqueOrders.length > 0) {
+      // PostgREST caps responses at 1000 rows, so page through all existing orders.
+      // If any page fails we skip the DB write this cycle, otherwise existing orders
+      // would be misclassified as new and their progress overwritten.
       let existingRows: any[] = [];
+      let existingFetchOk = true;
       try {
-        const { data } = await admin
-          .from('request_orders')
-          .select('id, ro_number, raw_ro_id, status, current_stage, notes, items');
-        if (data) existingRows = data;
+        const pageSize = 1000;
+        for (let from = 0; ; from += pageSize) {
+          const { data, error } = await admin
+            .from('request_orders')
+            .select('id, ro_number, raw_ro_id, branch_name, region, requester_name, request_date, target_delivery_date, status, current_stage, source_type, warehouse_name, notes, items')
+            .order('id', { ascending: true })
+            .range(from, from + pageSize - 1);
+          if (error) throw error;
+          if (!data || data.length === 0) break;
+          existingRows.push(...data);
+          if (data.length < pageSize) break;
+        }
       } catch (err) {
-        console.warn('[RO Sync] Could not fetch existing orders for merge:', err);
+        existingFetchOk = false;
+        console.warn('[RO Sync] Could not fetch existing orders for merge, skipping DB write:', err);
       }
 
       const existingMap = new Map<string, any>();
@@ -2373,13 +2402,38 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
         };
       });
 
+      // Only write rows that are new or actually differ from the DB. New rows (no id) and
+      // existing rows (with id) go in separate upserts so a mixed chunk never sends id: null.
+      const existingById = new Map<string, any>();
+      for (const r of existingRows) existingById.set(r.id, r);
+
+      const newRows = mergedOrders.filter((o: any) => !o.id);
+      const changedRows = mergedOrders.filter((o: any) => {
+        if (!o.id) return false;
+        const prev = existingById.get(o.id);
+        return !prev || isRoRowChanged(prev, o);
+      });
+
       const chunkSize = 100;
-      for (let i = 0; i < mergedOrders.length; i += chunkSize) {
-        const chunk = mergedOrders.slice(i, i + chunkSize);
-        const { error: upsertErr } = await admin.from('request_orders').upsert(chunk, { onConflict: 'ro_number' });
-        if (upsertErr) {
-          console.error(`[RO Sync DB Error] Chunk ${i}-${i + chunkSize}:`, upsertErr.message);
+      const writeChunks = async (rows: any[], label: string) => {
+        let ok = 0;
+        for (let i = 0; i < rows.length; i += chunkSize) {
+          const chunk = rows.slice(i, i + chunkSize);
+          const { error: upsertErr } = await admin
+            .from('request_orders')
+            .upsert(chunk, { onConflict: 'ro_number', defaultToNull: false });
+          if (upsertErr) {
+            console.error(`[RO Sync DB Error] ${label} chunk ${i}-${i + chunkSize}:`, upsertErr.message);
+          } else {
+            ok += chunk.length;
+          }
         }
+        return ok;
+      };
+
+      if (existingFetchOk) {
+        const written = (await writeChunks(newRows, 'new')) + (await writeChunks(changedRows, 'update'));
+        dbRowsWritten = written;
       }
 
       const sortedMerged = sortOrdersNewestFirst(deduplicateOrderItems(mergedOrders as RequestOrder[]));
@@ -2398,6 +2452,7 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
       uniqueOrdersCount: uniqueOrders.length,
       newOrdersAdded: totalItems,
       existingOrdersUpdated: 0,
+      changed: dbRowsWritten > 0,
       message: `Sinkronisasi Multiregion (${syncedSources.join(' & ') || 'RO Sheet'}) Berhasil! ${totalRowsScanned} baris dipindai, ${duplicateRowsFiltered} duplikat disaring. Total ${totalItems} item unik dalam ${uniqueOrders.length} dokumen RO.`,
     };
   } catch (err: any) {
@@ -2409,6 +2464,7 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
       uniqueOrdersCount: 0,
       newOrdersAdded: 0,
       existingOrdersUpdated: 0,
+      changed: false,
       message: err.message || 'Gagal menyinkronkan data RO dari spreadsheet.',
     };
   }
@@ -2483,23 +2539,61 @@ export async function createSuratJalan(payload: Partial<SuratJalan>): Promise<Su
   const sjId = ensureUuid(payload.id);
   const roId = isUuid(payload.ro_id) ? payload.ro_id : null;
 
+  const generatedSjNo = payload.sj_number || payload.nomor_sj || `SJ/SCGA/${new Date().getFullYear()}/${new Date().getMonth() + 1}/${Date.now().toString().slice(-4)}`;
+  const branch = payload.branch_name || payload.tujuan_outlet_nama || 'Outlet Tujuan';
+  const roNo = payload.ro_number || payload.ro_nomor;
+  const deliveryDate = payload.delivery_date || payload.tanggal_kirim || new Date().toISOString().split('T')[0];
+  const driver = payload.driver_name || payload.driver_nama || 'Driver Pengantar';
+  const vehicle = payload.vehicle_number || payload.kendaraan_plat || 'B 1234 SCG';
+  const exped = payload.expedition || payload.ekspedisi || 'Armada Internal SCGA';
+  const sender = payload.sender_name || payload.pengirim_nama || 'Staff Gudang SCGA';
+  const receiver = payload.receiver_name || payload.penerima_nama;
+
+  const normalizedItems = (payload.items || []).map((it: any) => {
+    const name = it.nama_barang || it.item_name || it.name || it.system_item_name || 'Barang Aset';
+    const quantity = it.qty ?? it.quantity ?? it.quantity_ordered ?? it.quantity_needed ?? 1;
+    const unit = it.satuan || it.unit || 'Unit';
+    const notes = it.catatan || it.notes || it.specification || '';
+    return {
+      ...it,
+      nama_barang: name,
+      item_name: name,
+      qty: quantity,
+      quantity: quantity,
+      satuan: unit,
+      unit: unit,
+      catatan: notes,
+      notes: notes,
+    };
+  });
+
   const sj: SuratJalan = {
     id: sjId,
-    sj_number: payload.sj_number || `SJ/SCGA/${new Date().getFullYear()}/${new Date().getMonth() + 1}/${Date.now().toString().slice(-4)}`,
+    sj_number: generatedSjNo,
+    nomor_sj: generatedSjNo,
     ro_id: roId || undefined,
-    ro_number: payload.ro_number,
-    branch_name: payload.branch_name || payload.tujuan_outlet_nama || 'Outlet Tujuan',
+    ro_number: roNo,
+    ro_nomor: roNo,
+    branch_name: branch,
+    tujuan_outlet_nama: branch,
     region: payload.region || 'JABODETABEK',
-    delivery_date: payload.delivery_date || payload.tanggal_kirim || new Date().toISOString().split('T')[0],
-    driver_name: payload.driver_name || payload.driver_nama || 'Driver Pengantar',
+    delivery_date: deliveryDate,
+    tanggal_kirim: deliveryDate,
+    driver_name: driver,
+    driver_nama: driver,
     driver_phone: payload.driver_phone,
-    vehicle_number: payload.vehicle_number || payload.kendaraan_plat || 'B 1234 SCG',
-    expedition: payload.expedition || payload.ekspedisi || 'Armada Internal SCGA',
-    sender_name: payload.sender_name || payload.pengirim_nama || 'Staff Gudang SCGA',
-    receiver_name: payload.receiver_name || payload.penerima_nama,
+    vehicle_number: vehicle,
+    kendaraan_plat: vehicle,
+    expedition: exped,
+    ekspedisi: exped,
+    sender_name: sender,
+    pengirim_nama: sender,
+    receiver_name: receiver,
+    penerima_nama: receiver,
     status: payload.status || 'SHIPPED',
-    items: payload.items || [],
+    items: normalizedItems,
     notes: payload.notes || payload.catatan,
+    catatan: payload.catatan || payload.notes,
     created_at: new Date().toISOString(),
   };
 

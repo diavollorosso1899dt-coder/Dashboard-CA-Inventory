@@ -491,17 +491,17 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
         </div>
       ) : (
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto relative scrollbar-thin">
             <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
-              <thead className="bg-slate-50 dark:bg-slate-800/80 font-bold uppercase text-[11px] text-slate-500 border-b border-slate-200 dark:border-slate-800">
+              <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 font-bold uppercase text-[11px] text-slate-500 shadow-xs">
                 <tr>
-                  {isVisible('image') && <th className="py-3.5 px-4 text-center w-24">Gambar</th>}
-                  {isVisible('item_name') && <th className="py-3.5 px-4">Nama Item Aset</th>}
-                  {isVisible('unit') && <th className="py-3.5 px-4">Satuan</th>}
-                  {isVisible('classification') && <th className="py-3.5 px-4">Klasifikasi / Akun</th>}
-                  {isVisible('specification') && <th className="py-3.5 px-4">Spesifikasi Teknis</th>}
-                  {isVisible('status') && <th className="py-3.5 px-4">Status Item</th>}
-                  {isVisible('actions') && <th className="py-3.5 px-4 text-center w-28">Aksi</th>}
+                  {isVisible('image') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center w-24 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Gambar</th>}
+                  {isVisible('item_name') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Nama Item Aset</th>}
+                  {isVisible('unit') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Satuan</th>}
+                  {isVisible('classification') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Klasifikasi / Akun</th>}
+                  {isVisible('specification') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Spesifikasi Teknis</th>}
+                  {isVisible('status') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Status Item</th>}
+                  {isVisible('actions') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center w-28 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">

@@ -205,16 +205,16 @@ export default function DispositionStatusView() {
 
       {/* Data Table */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto relative scrollbar-thin">
           <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-400 text-xs font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
+            <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold uppercase tracking-wider shadow-xs">
               <tr>
-                <th className="py-3.5 px-4">No. Tiket / Tanggal</th>
-                <th className="py-3.5 px-4">Cabang Pengaju</th>
-                <th className="py-3.5 px-4">Nama & Kode Aset</th>
-                <th className="py-3.5 px-4">Kondisi Aset</th>
-                <th className="py-3.5 px-4">Status</th>
-                <th className="py-3.5 px-4 text-center">Aksi / Rincian</th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">No. Tiket / Tanggal</th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Cabang Pengaju</th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Nama & Kode Aset</th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Kondisi Aset</th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Status</th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi / Rincian</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

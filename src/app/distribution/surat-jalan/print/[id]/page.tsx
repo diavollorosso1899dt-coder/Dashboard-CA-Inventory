@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { SuratJalan } from '@/lib/supabase/types';
+import { SuratJalan, SJItem } from '@/lib/supabase/types';
 import { Printer, ArrowLeft, Building2, Truck, ShieldCheck, CheckCircle } from 'lucide-react';
 
 export default function PrintSuratJalanPage() {
@@ -16,12 +16,61 @@ export default function PrintSuratJalanPage() {
     async function loadSJ() {
       try {
         setLoading(true);
+        // 1. Coba cari di API Surat Jalan Distribusi
         const res = await fetch('/api/distribution/surat-jalan');
         const json = await res.json();
-        if (json.data) {
-          const found = (json.data as SuratJalan[]).find(item => item.id === id);
-          setSj(found || null);
+        let found: any = null;
+
+        if (json.data && Array.isArray(json.data)) {
+          found = (json.data as SuratJalan[]).find(
+            (item: any) =>
+              item.id === id ||
+              item.sj_number === id ||
+              item.nomor_sj === id ||
+              item.surat_jalan_number === id
+          );
         }
+
+        // 2. Jika belum ditemukan, fallback periksa data Pemantauan Transfer Distribusi
+        if (!found) {
+          const trRes = await fetch('/api/transfers');
+          const trJson = await trRes.json();
+          if (trJson.data && Array.isArray(trJson.data)) {
+            const tr = trJson.data.find(
+              (t: any) =>
+                t.id === id ||
+                t.surat_jalan_number === id ||
+                t.transfer_number === id
+            );
+            if (tr) {
+              found = {
+                id: tr.id,
+                nomor_sj: tr.surat_jalan_number || tr.transfer_number,
+                sj_number: tr.surat_jalan_number || tr.transfer_number,
+                ro_nomor: tr.transfer_number,
+                ro_number: tr.transfer_number,
+                tujuan_outlet_nama: tr.to_location,
+                branch_name: tr.to_location,
+                tanggal_kirim: tr.transfer_date,
+                delivery_date: tr.transfer_date,
+                driver_nama: tr.expedition_courier || 'Armada Internal SCGA',
+                driver_name: tr.expedition_courier || 'Armada Internal SCGA',
+                kendaraan_plat: tr.tracking_number,
+                vehicle_number: tr.tracking_number,
+                pengirim_nama: tr.sender_pic || 'Staff Logistik SCGA',
+                sender_name: tr.sender_pic || 'Staff Logistik SCGA',
+                penerima_nama: tr.receiver_pic || 'Store Manager Outlet',
+                receiver_name: tr.receiver_pic || 'Store Manager Outlet',
+                status: tr.status,
+                items: tr.items || [],
+                notes: tr.notes,
+                created_at: tr.created_at || new Date().toISOString(),
+              };
+            }
+          }
+        }
+
+        setSj(found || null);
       } catch (err) {
         console.error('Failed to load SJ:', err);
       } finally {
@@ -54,6 +103,19 @@ export default function PrintSuratJalanPage() {
     );
   }
 
+  // Normalisasi Field Dokumen (Kompatibel dengan semua format penamaan kolom)
+  const nomorSj = sj.nomor_sj || sj.sj_number || (sj as any).surat_jalan_number || '-';
+  const tujuanOutlet = sj.tujuan_outlet_nama || sj.branch_name || (sj as any).to_location || 'Outlet Tujuan';
+  const roNomor = sj.ro_nomor || sj.ro_number || (sj as any).transfer_number || (sj as any).external_id || '-';
+  const driverNama = sj.driver_nama || sj.driver_name || (sj as any).expedition_courier || 'Petugas Ekspedisi Logistik';
+  const kendaraanPlat = sj.kendaraan_plat || sj.vehicle_number || (sj as any).tracking_number || 'B 9188 CA';
+  const pengirimNama = sj.pengirim_nama || sj.sender_name || (sj as any).from_location || 'Gudang Logistik Pusat CA';
+  const penerimaNama = sj.penerima_nama || sj.receiver_name || (sj as any).receiver_pic || 'Store / Outlet Manager';
+  const rawDate = sj.delivery_date || sj.tanggal_kirim || sj.created_at;
+  const tglDokumen = rawDate
+    ? new Date(rawDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+    : new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+
   return (
     <div className="max-w-4xl mx-auto py-4 px-4 sm:px-6">
       {/* Action Buttons (Hidden on Print) */}
@@ -73,7 +135,7 @@ export default function PrintSuratJalanPage() {
 
         <button
           onClick={() => window.print()}
-          className="flex items-center gap-2 px-5 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold rounded-lg shadow-lg hover:shadow-indigo-500/25 transition"
+          className="flex items-center gap-2 px-5 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold rounded-lg shadow-lg hover:shadow-indigo-500/25 transition cursor-pointer"
         >
           <Printer className="w-4 h-4" /> Cetak Lembar SJ (Print / PDF)
         </button>
@@ -93,10 +155,10 @@ export default function PrintSuratJalanPage() {
                   HANTARAN
                 </h1>
                 <p className="text-xs text-slate-500 font-medium">
-                  Divisi Central Asset Management & Logistik Distribusi Nasional
+                  Divisi Central Asset Management &amp; Logistik Distribusi Nasional
                 </p>
                 <p className="text-xs text-slate-400">
-                  Jl. Logistik Sentral No. 88, Kawasan Pergudangan Nasional • Telp: (021) 555-0199
+                  Jl. Logistik Sentral No. 88, Kawasan Pergudangan Nasional &bull; Telp: (021) 555-0199
                 </p>
               </div>
             </div>
@@ -105,11 +167,11 @@ export default function PrintSuratJalanPage() {
               <div className="text-2xl font-black tracking-wider text-indigo-700 uppercase">
                 SURAT JALAN
               </div>
-              <div className="text-xs font-mono font-bold text-slate-600 mt-1">
-                NOMOR: {sj.nomor_sj}
+              <div className="text-xs font-mono font-bold text-slate-700 mt-1">
+                NOMOR: <span className="text-slate-900 font-bold">{nomorSj}</span>
               </div>
               <div className="text-xs text-slate-500">
-                Tanggal: {new Date(sj.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                Tanggal: {tglDokumen}
               </div>
             </div>
           </div>
@@ -119,16 +181,16 @@ export default function PrintSuratJalanPage() {
         <div className="grid grid-cols-2 gap-6 mb-6 text-xs">
           <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
             <span className="font-bold text-slate-700 block mb-1 uppercase tracking-wider text-[11px]">Pengirim / Asal:</span>
-            <div className="font-semibold text-slate-900">Gudang Logistik Pusat CA</div>
+            <div className="font-semibold text-slate-900">{pengirimNama}</div>
             <div className="text-slate-500">Kawasan Pergudangan Pusat, Blok B-12</div>
             <div className="text-slate-500">PIC Gudang: Central Warehouse Officer</div>
           </div>
 
           <div className="p-3.5 bg-indigo-50/50 rounded-xl border border-indigo-100">
             <span className="font-bold text-indigo-800 block mb-1 uppercase tracking-wider text-[11px]">Tujuan Pengiriman:</span>
-            <div className="font-bold text-slate-900 text-sm">{sj.tujuan_outlet_nama}</div>
-            <div className="text-slate-600 mt-1">Ref. Request Order: <strong className="font-mono text-indigo-700">{sj.ro_nomor}</strong></div>
-            <div className="text-slate-500">Status: {sj.status}</div>
+            <div className="font-bold text-slate-900 text-sm">{tujuanOutlet}</div>
+            <div className="text-slate-600 mt-1">Ref. Request Order: <strong className="font-mono text-indigo-700">{roNomor}</strong></div>
+            <div className="text-slate-500">Status: {sj.status || 'SHIPPED'}</div>
           </div>
         </div>
 
@@ -136,15 +198,15 @@ export default function PrintSuratJalanPage() {
         <div className="flex items-center justify-between text-xs bg-slate-100 p-3 rounded-lg mb-6 border border-slate-200">
           <div>
             <span className="text-slate-500">Nama Pengemudi (Driver):</span>{' '}
-            <strong className="text-slate-800">{sj.driver_nama || 'Petugas Ekspedisi Logistik'}</strong>
+            <strong className="text-slate-800">{driverNama}</strong>
           </div>
           <div>
             <span className="text-slate-500">Nomor Polisi Kendaraan:</span>{' '}
-            <strong className="font-mono text-slate-800 uppercase">{sj.kendaraan_plat || 'B 9188 CA'}</strong>
+            <strong className="font-mono text-slate-800 uppercase">{kendaraanPlat}</strong>
           </div>
           <div>
             <span className="text-slate-500">Estimasi Tiba:</span>{' '}
-            <strong className="text-slate-800">{new Date(sj.created_at).toLocaleDateString('id-ID')} (Sameday / Next-Day)</strong>
+            <strong className="text-slate-800">{new Date(rawDate || Date.now()).toLocaleDateString('id-ID')} (Sameday / Next-Day)</strong>
           </div>
         </div>
 
@@ -162,15 +224,28 @@ export default function PrintSuratJalanPage() {
             </thead>
             <tbody className="divide-y divide-slate-200">
               {sj.items && sj.items.length > 0 ? (
-                sj.items.map((item, index) => (
-                  <tr key={index} className="hover:bg-slate-50">
-                    <td className="py-3 px-3 text-center font-medium text-slate-600">{index + 1}</td>
-                    <td className="py-3 px-3 font-semibold text-slate-900">{item.nama_barang}</td>
-                    <td className="py-3 px-3 text-center font-bold text-slate-900">{item.qty}</td>
-                    <td className="py-3 px-3 text-center text-slate-600">{item.satuan || 'Unit'}</td>
-                    <td className="py-3 px-3 text-slate-500 italic">{item.catatan || 'Kondisi Baik & Tersegel'}</td>
-                  </tr>
-                ))
+                sj.items.map((item: any, index: number) => {
+                  const namaBarang = item.nama_barang || item.item_name || item.name || item.system_item_name || 'Barang Aset';
+                  const jumlah = item.qty ?? item.quantity ?? item.quantity_ordered ?? item.quantity_needed ?? 1;
+                  const satuan = item.satuan || item.unit || 'Unit';
+                  const spesifikasi = item.specification || item.classification || '';
+                  const catatan = item.catatan || item.notes || (spesifikasi ? spesifikasi : 'Kondisi Baik & Tersegel');
+
+                  return (
+                    <tr key={item.id || index} className="hover:bg-slate-50">
+                      <td className="py-3 px-3 text-center font-medium text-slate-600">{index + 1}</td>
+                      <td className="py-3 px-3 font-semibold text-slate-900">
+                        <div>{namaBarang}</div>
+                        {spesifikasi && (
+                          <div className="text-[10px] text-slate-500 font-normal mt-0.5">{spesifikasi}</div>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold text-slate-900">{jumlah}</td>
+                      <td className="py-3 px-3 text-center text-slate-600">{satuan}</td>
+                      <td className="py-3 px-3 text-slate-500 italic">{catatan}</td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
                   <td colSpan={5} className="py-6 text-center text-slate-400">
@@ -198,7 +273,7 @@ export default function PrintSuratJalanPage() {
             <p className="text-slate-400 text-[10px]">Gudang Logistik Pusat</p>
             <div className="h-20 flex items-end justify-center">
               <div className="w-36 border-b border-slate-900 font-semibold pb-1">
-                ( Staff Gudang Pusat )
+                ( {pengirimNama || 'Staff Gudang Pusat'} )
               </div>
             </div>
           </div>
@@ -208,7 +283,7 @@ export default function PrintSuratJalanPage() {
             <p className="text-slate-400 text-[10px]">Driver / Ekspedisi</p>
             <div className="h-20 flex items-end justify-center">
               <div className="w-36 border-b border-slate-900 font-semibold pb-1">
-                ( {sj.driver_nama || 'Pengemudi'} )
+                ( {driverNama || 'Pengemudi'} )
               </div>
             </div>
           </div>
@@ -218,7 +293,7 @@ export default function PrintSuratJalanPage() {
             <p className="text-slate-400 text-[10px]">Store / Outlet Manager</p>
             <div className="h-20 flex items-end justify-center">
               <div className="w-36 border-b border-slate-900 font-semibold pb-1">
-                ( Kepala Toko / PIC )
+                ( {penerimaNama || 'Kepala Toko / PIC'} )
               </div>
             </div>
           </div>

@@ -225,7 +225,8 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         setOrders(sortOrdersNewestFirst(roData.data));
       }
     } catch (err: any) {
-      console.error('Fetch latest RO error:', err);
+      // Use console.warn instead of console.error to prevent Next.js error overlay on network disconnect
+      console.warn('Fetch latest RO error:', err.message || err);
     } finally {
       if (showFeedback) setIsSyncing(false);
     }
@@ -392,7 +393,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         .then((data) => {
           if (data.data) setOrders(data.data);
         })
-        .catch(console.error)
+        .catch((err) => console.warn('Initial load RO error:', err.message || err))
         .finally(() => setIsLoading(false));
     } else {
       setIsLoading(false);
@@ -1458,25 +1459,53 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
       {/* 3. RO DATA TABLE */}
       <div className="panel-card overflow-hidden border border-[#e0e2ec] dark:border-[#444746] rounded-2xl bg-white dark:bg-[#1a1c1e]">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto relative scrollbar-thin">
           <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
-            <thead className="bg-[#f0f4f9] dark:bg-[#202225] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#444746]">
+            <thead className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] shadow-xs">
               <tr>
-                {visibleColumns.ro_number !== false && <th className="py-3.5 px-4">No. RO / ID</th>}
+                {visibleColumns.ro_number !== false && (
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    No. RO / ID
+                  </th>
+                )}
                 {visibleColumns.order_date !== false && (
-                  <th className="py-3.5 px-4">
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
                     <div className="flex items-center gap-1.5">
                       <span>Tanggal Order</span>
                       <ArrowDownNarrowWide className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 inline" />
                     </div>
                   </th>
                 )}
-                {visibleColumns.request_date !== false && <th className="py-3.5 px-4">Tanggal Permintaan</th>}
-                {visibleColumns.branch !== false && <th className="py-3.5 px-4">Cabang Outlet</th>}
-                {visibleColumns.items !== false && <th className="py-3.5 px-4">Item &amp; Alokasi</th>}
-                {visibleColumns.images !== false && <th className="py-3.5 px-4 text-center">Gambar</th>}
-                {visibleColumns.stage !== false && <th className="py-3.5 px-4">Tahapan Alur Operasional</th>}
-                {visibleColumns.actions !== false && <th className="py-3.5 px-4 text-right">Aksi Alur Kerja</th>}
+                {visibleColumns.request_date !== false && (
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    Tanggal Permintaan
+                  </th>
+                )}
+                {visibleColumns.branch !== false && (
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    Cabang Outlet
+                  </th>
+                )}
+                {visibleColumns.items !== false && (
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    Item &amp; Alokasi
+                  </th>
+                )}
+                {visibleColumns.images !== false && (
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    Gambar
+                  </th>
+                )}
+                {visibleColumns.stage !== false && (
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    Tahapan Alur Operasional
+                  </th>
+                )}
+                {visibleColumns.actions !== false && (
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 text-right shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    Aksi Alur Kerja
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">

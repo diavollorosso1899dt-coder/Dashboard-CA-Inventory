@@ -520,12 +520,12 @@ export function TrashAndLogView({
 
           {/* Trash Table */}
           <div className="rounded-3xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] overflow-hidden shadow-sm">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto relative scrollbar-thin">
               <table className="w-full text-left text-xs">
-                <thead className="bg-[#f0f4f9] dark:bg-[#282a2c] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#444746]">
+                <thead className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] shadow-xs">
                   <tr>
                     {isTrashColVisible('select') && (
-                      <th className="py-3.5 px-3 w-8 text-center">
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 w-8 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
                         <button
                           onClick={() => {
                             if (selectedTrashIds.length === filteredTrash.length) {
@@ -543,11 +543,11 @@ export function TrashAndLogView({
                         </button>
                       </th>
                     )}
-                    {isTrashColVisible('item_info') && <th className="py-3.5 px-4">Nama Item &amp; Keterangan</th>}
-                    {isTrashColVisible('module') && <th className="py-3.5 px-3">Modul</th>}
-                    {isTrashColVisible('deleted_by') && <th className="py-3.5 px-3">Dihapus Oleh</th>}
-                    {isTrashColVisible('deleted_at') && <th className="py-3.5 px-3">Waktu Penghapusan</th>}
-                    {isTrashColVisible('actions') && <th className="py-3.5 px-4 text-right">Opsi Tindakan</th>}
+                    {isTrashColVisible('item_info') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Nama Item &amp; Keterangan</th>}
+                    {isTrashColVisible('module') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Modul</th>}
+                    {isTrashColVisible('deleted_by') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Dihapus Oleh</th>}
+                    {isTrashColVisible('deleted_at') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Waktu Penghapusan</th>}
+                    {isTrashColVisible('actions') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 text-right shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Opsi Tindakan</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
@@ -765,16 +765,16 @@ export function TrashAndLogView({
 
           {/* Audit Logs Table */}
           <div className="rounded-3xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] overflow-hidden shadow-sm">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto relative scrollbar-thin">
               <table className="w-full text-left text-xs">
-                <thead className="bg-[#f0f4f9] dark:bg-[#282a2c] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#444746]">
+                <thead className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] shadow-xs">
                   <tr>
-                    {isLogColVisible('timestamp') && <th className="py-3.5 px-4">Waktu Kejadian</th>}
-                    {isLogColVisible('actor') && <th className="py-3.5 px-4">Aktor Pengubah</th>}
-                    {isLogColVisible('action_type') && <th className="py-3.5 px-3">Tipe Aksi</th>}
-                    {isLogColVisible('module') && <th className="py-3.5 px-3">Modul / Entitas</th>}
-                    {isLogColVisible('details') && <th className="py-3.5 px-4">Rincian Perubahan</th>}
-                    {isLogColVisible('actions') && <th className="py-3.5 px-4 text-right">Aksi</th>}
+                    {isLogColVisible('timestamp') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Waktu Kejadian</th>}
+                    {isLogColVisible('actor') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Aktor Pengubah</th>}
+                    {isLogColVisible('action_type') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Tipe Aksi</th>}
+                    {isLogColVisible('module') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Modul / Entitas</th>}
+                    {isLogColVisible('details') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Rincian Perubahan</th>}
+                    {isLogColVisible('actions') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 text-right shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Aksi</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">

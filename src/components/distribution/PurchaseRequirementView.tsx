@@ -37,8 +37,8 @@ const PR_COLUMNS: ColumnItem[] = [
   { id: 'image', label: 'Gambar', defaultVisible: true },
   { id: 'qty', label: 'Qty PR', defaultVisible: true },
   { id: 'req_date', label: 'Tgl Permintaan', defaultVisible: true },
-  { id: 'pr_po_date', label: 'Tgl PR & PO', defaultVisible: true },
-  { id: 'vendor_deal', label: 'Vendor & Harga Deal', defaultVisible: true },
+  { id: 'pr_po_date', label: 'Tgl PR', defaultVisible: true },
+  { id: 'vendor_deal', label: 'Nama Vendor', defaultVisible: true },
   { id: 'status', label: 'Status Pengadaan', defaultVisible: true },
   { id: 'actions', label: 'Aksi Tanggal', defaultVisible: true, alwaysVisible: true },
 ];
@@ -94,10 +94,8 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   const [editOrderDate, setEditOrderDate] = useState('');
   const [editReceivedDate, setEditReceivedDate] = useState('');
   const [editPrDate, setEditPrDate] = useState('');
-  const [editPoDate, setEditPoDate] = useState('');
   const [editVendor, setEditVendor] = useState('');
   const [editStatus, setEditStatus] = useState<'belum' | 'proses' | 'po' | 'selesai'>('proses');
-  const [editDealPrice, setEditDealPrice] = useState(0);
   const [saving, setSaving] = useState(false);
 
   const openEditModal = (item: AssetRequest, forceReadyStock: boolean = false) => {
@@ -105,13 +103,11 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
     setEditOrderDate(item.order_datetime ? item.order_datetime.split('T')[0] : '');
     setEditReceivedDate(item.received_date ? item.received_date.split('T')[0] : new Date().toISOString().split('T')[0]);
     setEditPrDate(item.pr_datetime ? item.pr_datetime.split('T')[0] : '');
-    setEditPoDate(item.po_date || '');
     setEditVendor(item.vendor_name || '');
     setEditStatus(forceReadyStock ? 'selesai' : (item.procurement_status || 'proses'));
-    setEditDealPrice(item.deal_price || item.rab_price || 0);
   };
 
-  const handleSavePrDates = async (e?: React.FormEvent, isTransitionToReadyStock: boolean = false) => {
+  const handleSavePrDates = async (e?: React.FormEvent, isTransitionToReadyStock: boolean = true) => {
     if (e) e.preventDefault();
     if (!editingItem) return;
 
@@ -122,10 +118,8 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
         order_datetime: editOrderDate ? new Date(editOrderDate).toISOString() : editingItem.order_datetime,
         received_date: editReceivedDate ? editReceivedDate : null,
         pr_datetime: editPrDate ? new Date(editPrDate).toISOString() : null,
-        po_date: editPoDate || null,
         vendor_name: editVendor,
         procurement_status: finalStatus,
-        deal_price: editDealPrice,
       };
 
       if (isTransitionToReadyStock || finalStatus === 'selesai') {
@@ -283,19 +277,19 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
 
       {/* Main Table */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto relative scrollbar-thin">
           <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
-            <thead className="bg-slate-50 dark:bg-slate-800/80 font-bold uppercase text-[11px] text-slate-500 border-b border-slate-200 dark:border-slate-800">
+            <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 font-bold uppercase text-[11px] text-slate-500 shadow-xs">
               <tr>
-                {isVisible('rab_branch') && <th className="py-3.5 px-4">No. RAB &amp; Cabang</th>}
-                {isVisible('item_name') && <th className="py-3.5 px-4">Nama Item Aset</th>}
-                {isVisible('image') && <th className="py-3.5 px-4 text-center">Gambar</th>}
-                {isVisible('qty') && <th className="py-3.5 px-4">Qty PR</th>}
-                {isVisible('req_date') && <th className="py-3.5 px-4">Tgl Permintaan</th>}
-                {isVisible('pr_po_date') && <th className="py-3.5 px-4">Tgl PR &amp; PO</th>}
-                {isVisible('vendor_deal') && <th className="py-3.5 px-4">Vendor &amp; Harga Deal</th>}
-                {isVisible('status') && <th className="py-3.5 px-4">Status Pengadaan</th>}
-                {isVisible('actions') && <th className="py-3.5 px-4 text-right">Aksi Tanggal</th>}
+                {isVisible('rab_branch') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">No. RAB &amp; Cabang</th>}
+                {isVisible('item_name') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Nama Item Aset</th>}
+                {isVisible('image') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Gambar</th>}
+                {isVisible('qty') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Qty PR</th>}
+                {isVisible('req_date') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Tgl Permintaan</th>}
+                {isVisible('pr_po_date') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Tgl PR</th>}
+                {isVisible('vendor_deal') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Nama Vendor</th>}
+                {isVisible('status') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Status Pengadaan</th>}
+                {isVisible('actions') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-right shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi Tanggal</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -380,17 +374,13 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                         </td>
                       )}
                       {isVisible('pr_po_date') && (
-                        <td className="py-3.5 px-4">
-                          <div className="text-[11px]"><strong>PR:</strong> {prDate}</div>
-                          <div className="text-[11px] text-slate-500"><strong>PO:</strong> {poDate}</div>
+                        <td className="py-3.5 px-4 font-mono text-slate-700 dark:text-slate-300">
+                          {prDate || '-'}
                         </td>
                       )}
                       {isVisible('vendor_deal') && (
                         <td className="py-3.5 px-4">
                           <div className="font-medium text-slate-900 dark:text-white">{it.vendor_name || 'Belum Ditentukan'}</div>
-                          <div className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
-                            Rp {(it.deal_price || it.rab_price || 0).toLocaleString('id-ID')}
-                          </div>
                         </td>
                       )}
                       {isVisible('status') && (
@@ -507,22 +497,22 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
               </button>
             </div>
 
-            <form onSubmit={(e) => handleSavePrDates(e, false)} className="space-y-3.5 text-xs">
+            <form onSubmit={(e) => handleSavePrDates(e, true)} className="space-y-4 text-xs">
               {/* Flowchart Integration Card: Update Status ke Ready Stock */}
-              <div className="p-3.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/70 dark:bg-emerald-950/40 space-y-2.5">
+              <div className="p-4 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/70 dark:bg-emerald-950/40 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5 text-xs">
                     <Boxes className="w-4 h-4 text-emerald-600" />
                     Alur Flowchart: Update Status ke Ready Stock
                   </span>
-                  <span className="text-[10px] bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100 font-bold px-2 py-0.5 rounded-full">
+                  <span className="text-[10px] bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100 font-bold px-2.5 py-0.5 rounded-full">
                     Masuk Pemantauan Distribusi
                   </span>
                 </div>
                 <p className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-tight">
                   Pilih <strong>Tanggal Permintaan Aset</strong> dan <strong>Tanggal Penerimaan Aset</strong> untuk mengalihkan barang pengadaan ke antrean <em>Ready Stock / Pemantauan Distribusi</em>.
                 </p>
-                <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                       1. Tanggal Permintaan Aset
@@ -531,7 +521,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                       type="date"
                       value={editOrderDate}
                       onChange={(e) => setEditOrderDate(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-medium"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-medium"
                     />
                   </div>
                   <div>
@@ -542,38 +532,27 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                       type="date"
                       value={editReceivedDate}
                       onChange={(e) => setEditReceivedDate(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-lg border border-emerald-400 dark:border-emerald-600 bg-white dark:bg-slate-900 font-bold text-emerald-700 dark:text-emerald-300"
+                      className="w-full px-3 py-2 rounded-lg border border-emerald-400 dark:border-emerald-600 bg-white dark:bg-slate-900 font-bold text-emerald-700 dark:text-emerald-300"
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Tanggal PR (Purchase Requirement)
-                  </label>
-                  <input
-                    type="date"
-                    value={editPrDate}
-                    onChange={(e) => setEditPrDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Tanggal PO Vendor
-                  </label>
-                  <input
-                    type="date"
-                    value={editPoDate}
-                    onChange={(e) => setEditPoDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
-                  />
-                </div>
+              {/* Tanggal PR */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Tanggal PR (Purchase Requirement)
+                </label>
+                <input
+                  type="date"
+                  value={editPrDate}
+                  onChange={(e) => setEditPrDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Status Pengadaan PR & Nama Vendor Terpilih */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Status Pengadaan PR
@@ -584,7 +563,6 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold"
                   >
                     <option value="proses">Dalam Proses PR</option>
-                    <option value="po">Sudah Terbit PO Vendor</option>
                     <option value="selesai">Selesai (Ready Stock)</option>
                     <option value="belum">Belum Proses</option>
                   </select>
@@ -603,25 +581,11 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                 </div>
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Harga Deal / Realisasi (Rp)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1000}
-                  value={editDealPrice}
-                  onChange={(e) => setEditDealPrice(parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono"
-                />
-              </div>
-
               <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setEditingItem(null)}
-                  className="px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold"
+                  className="px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                 >
                   Batal
                 </button>

@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     const assetData = assetRes.status === 'fulfilled' ? assetRes.value : null;
     const roData = roRes.status === 'fulfilled' ? roRes.value : null;
 
-    const roChanged = Boolean(roData && roData.success && (roData.newOrdersAdded > 0 || roData.uniqueOrdersCount > 0));
+    const roChanged = Boolean(roData && roData.success && roData.changed);
     const changed = Boolean((assetData && assetData.changed) || roChanged);
 
     return NextResponse.json({
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     const assetData = assetRes.status === 'fulfilled' ? assetRes.value : null;
     const roData = roRes.status === 'fulfilled' ? roRes.value : null;
 
-    const roChanged = Boolean(roData && roData.success && (roData.newOrdersAdded > 0 || roData.uniqueOrdersCount > 0));
+    const roChanged = Boolean(roData && roData.success && roData.changed);
     const changed = Boolean((assetData && assetData.changed) || roChanged);
 
     return NextResponse.json({
