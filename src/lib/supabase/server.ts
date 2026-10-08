@@ -688,7 +688,14 @@ export async function updateAssetRequest(
     // Support updating items from Request Orders (PR items)
     if (id.startsWith('ro-pr-') || id.startsWith('roi-') || id.includes('RO-') || id.includes('ro-')) {
       cache.manualEdits.set(id, updatePayload);
-      for (const ro of cache.requestOrders || []) {
+      const allRos = [
+        ...(global.__RO_CACHE__?.items || []),
+        ...(cache.requestOrders || [])
+      ];
+      
+      let itemUpdated = false;
+
+      for (const ro of allRos) {
         const item = (ro.items || []).find(
           (it) => it.id === id || `ro-pr-${ro.id}-${encodeURIComponent(it.item_name)}` === id
         );
@@ -719,9 +726,15 @@ export async function updateAssetRequest(
             pr_vendor_name: ro.pr_vendor_name,
             pr_po_number: ro.pr_po_number,
           });
+          
+          itemUpdated = true;
           break;
         }
       }
+      if (!itemUpdated) {
+        console.warn(`[PR Update] RO item not found for ID: ${id}`);
+      }
+
       return {
         success: true,
         data: {
