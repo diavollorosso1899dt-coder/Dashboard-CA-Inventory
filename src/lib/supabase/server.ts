@@ -2807,7 +2807,7 @@ export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): P
         external_id: ro.ro_number,
         region: ro.region === 'KALBAR' ? 'KALBAR' : 'JABODETABEK',
         sheet_row_index: 0,
-        order_datetime: ro.request_date || ro.created_at || new Date().toISOString(),
+        order_datetime: ro.target_delivery_date || ro.request_date || ro.created_at || new Date().toISOString(),
         requester_name: ro.requester_name || 'Outlet Staff',
         requester_division: 'Logistik RO',
         category: 'Perlengkapan RO',

@@ -136,6 +136,35 @@ export async function getAuditLogs(options?: {
   actionType?: string;
   limit?: number;
 }): Promise<{ data: AuditLogEntry[]; total: number }> {
+  const limit = options?.limit || 100;
+
+  // Try fetching from Supabase first
+  try {
+    const admin = getAdminClient();
+    if (admin) {
+      let query = admin.from('audit_logs').select('*', { count: 'exact' });
+      
+      if (options?.actionType && options.actionType !== 'ALL') {
+        query = query.eq('action_type', options.actionType);
+      }
+      
+      if (options?.search) {
+        const s = options.search;
+        query = query.or(`entity_title.ilike.%${s}%,details.ilike.%${s}%,actor_name.ilike.%${s}%`);
+      }
+      
+      query = query.order('timestamp', { ascending: false }).limit(limit);
+      
+      const { data, count, error } = await query;
+      if (!error && data && data.length > 0) {
+        return { data: data as AuditLogEntry[], total: count || data.length };
+      }
+    }
+  } catch (err) {
+    console.warn('Gagal ambil audit_logs dari Supabase, fallback ke memory', err);
+  }
+
+  // Fallback to memory store
   let list = [...auditStore.logs];
 
   if (options?.actionType && options.actionType !== 'ALL') {
@@ -152,7 +181,6 @@ export async function getAuditLogs(options?: {
     );
   }
 
-  const limit = options?.limit || 100;
   return {
     data: list.slice(0, limit),
     total: list.length,
@@ -220,6 +248,22 @@ export async function revertAuditLog(
 // TRASH / RECYCLE BIN SERVICE
 // -------------------------------------------------------------
 export async function getTrashItems(): Promise<TrashItem[]> {
+  try {
+    const admin = getAdminClient();
+    if (admin) {
+      const { data, error } = await admin
+        .from('trash_items')
+        .select('*')
+        .order('deleted_at', { ascending: false });
+        
+      if (!error && data && data.length > 0) {
+        return data as TrashItem[];
+      }
+    }
+  } catch (err) {
+    console.warn('Gagal ambil trash_items dari Supabase, fallback ke memory', err);
+  }
+
   return [...auditStore.trash];
 }
 
@@ -250,6 +294,16 @@ export async function moveItemToTrash(
 
   auditStore.trash.unshift(trashItem);
 
+  // Attempt to persist to Supabase trash_items table
+  try {
+    const admin = getAdminClient();
+    if (admin) {
+      await admin.from('trash_items').insert([trashItem]);
+    }
+  } catch (err) {
+    console.warn('Gagal memindahkan ke trash_items di Supabase', err);
+  }
+
   // Record Audit Trail
   await recordAuditLog(
     actorName,
@@ -269,12 +323,47 @@ export async function restoreItemFromTrash(
   actorName: string = 'Super User',
   actorRole: string = 'Super User'
 ): Promise<{ success: boolean; restoredItem?: TrashItem; error?: string }> {
+  let itemToRestore: TrashItem | undefined = undefined;
+  let fromMemory = false;
+
   const index = auditStore.trash.findIndex((t) => t.id === trashId);
-  if (index === -1) {
+  if (index !== -1) {
+    itemToRestore = auditStore.trash[index];
+    fromMemory = true;
+  } else {
+    // Coba cari di Supabase
+    try {
+      const admin = getAdminClient();
+      if (admin) {
+        const { data, error } = await admin.from('trash_items').select('*').eq('id', trashId).single();
+        if (!error && data) {
+          itemToRestore = data as TrashItem;
+        }
+      }
+    } catch (err) {
+      console.warn('Gagal ambil item dari trash_items di Supabase', err);
+    }
+  }
+
+  if (!itemToRestore) {
     return { success: false, error: 'Item tidak ditemukan di tempat sampah' };
   }
 
-  const [item] = auditStore.trash.splice(index, 1);
+  // Try removing from Supabase
+  try {
+    const admin = getAdminClient();
+    if (admin) {
+      await admin.from('trash_items').delete().eq('id', trashId);
+    }
+  } catch (err) {
+    console.warn('Gagal menghapus dari trash_items di Supabase', err);
+  }
+
+  if (fromMemory) {
+    auditStore.trash.splice(index, 1);
+  }
+  
+  const item = itemToRestore;
 
   // If restoring an Asset, reinsert back to Supabase / memory cache
   try {

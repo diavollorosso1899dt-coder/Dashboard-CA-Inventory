@@ -38,7 +38,7 @@ const PR_COLUMNS: ColumnItem[] = [
   { id: 'qty', label: 'Qty PR', defaultVisible: true },
   { id: 'req_date', label: 'Tgl Permintaan', defaultVisible: true },
   { id: 'pr_po_date', label: 'Tgl PR', defaultVisible: true },
-  { id: 'vendor_deal', label: 'Nama Vendor', defaultVisible: true },
+  { id: 'received_date', label: 'Tgl Penerimaan Aset', defaultVisible: true },
   { id: 'status', label: 'Status Pengadaan', defaultVisible: true },
   { id: 'actions', label: 'Aksi Tanggal', defaultVisible: true, alwaysVisible: true },
 ];
@@ -94,7 +94,6 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   const [editOrderDate, setEditOrderDate] = useState('');
   const [editReceivedDate, setEditReceivedDate] = useState('');
   const [editPrDate, setEditPrDate] = useState('');
-  const [editVendor, setEditVendor] = useState('');
   const [editStatus, setEditStatus] = useState<'belum' | 'proses' | 'po' | 'selesai'>('proses');
   const [saving, setSaving] = useState(false);
 
@@ -103,7 +102,6 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
     setEditOrderDate(item.order_datetime ? item.order_datetime.split('T')[0] : '');
     setEditReceivedDate(item.received_date ? item.received_date.split('T')[0] : new Date().toISOString().split('T')[0]);
     setEditPrDate(item.pr_datetime ? item.pr_datetime.split('T')[0] : '');
-    setEditVendor(item.vendor_name || '');
     setEditStatus(forceReadyStock ? 'selesai' : (item.procurement_status || 'proses'));
   };
 
@@ -118,7 +116,6 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
         order_datetime: editOrderDate ? new Date(editOrderDate).toISOString() : editingItem.order_datetime,
         received_date: editReceivedDate ? editReceivedDate : null,
         pr_datetime: editPrDate ? new Date(editPrDate).toISOString() : null,
-        vendor_name: editVendor,
         procurement_status: finalStatus,
       };
 
@@ -167,8 +164,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
     const matchSearch =
       it.item_name.toLowerCase().includes(q) ||
       it.branch_name.toLowerCase().includes(q) ||
-      it.rab_number.toLowerCase().includes(q) ||
-      (it.vendor_name && it.vendor_name.toLowerCase().includes(q));
+      it.rab_number.toLowerCase().includes(q);
 
     const matchStatus =
       statusFilter === 'ALL' || it.procurement_status === statusFilter;
@@ -287,7 +283,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                 {isVisible('qty') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Qty PR</th>}
                 {isVisible('req_date') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Tgl Permintaan</th>}
                 {isVisible('pr_po_date') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Tgl PR</th>}
-                {isVisible('vendor_deal') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Nama Vendor</th>}
+                {isVisible('received_date') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Tgl Penerimaan Aset</th>}
                 {isVisible('status') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Status Pengadaan</th>}
                 {isVisible('actions') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-right shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi Tanggal</th>}
               </tr>
@@ -304,6 +300,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                   const reqDate = formatDateSlash(it.order_datetime);
                   const prDate = formatDateSlash(it.pr_datetime);
                   const poDate = formatDateSlash(it.po_date);
+                  const receiveDate = formatDateSlash(it.received_date);
 
                   return (
                     <tr key={it.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
@@ -378,9 +375,9 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                           {prDate || '-'}
                         </td>
                       )}
-                      {isVisible('vendor_deal') && (
-                        <td className="py-3.5 px-4">
-                          <div className="font-medium text-slate-900 dark:text-white">{it.vendor_name || 'Belum Ditentukan'}</div>
+                      {isVisible('received_date') && (
+                        <td className="py-3.5 px-4 font-mono text-slate-700 dark:text-slate-300">
+                          {receiveDate || '-'}
                         </td>
                       )}
                       {isVisible('status') && (
@@ -551,34 +548,20 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                 />
               </div>
 
-              {/* Status Pengadaan PR & Nama Vendor Terpilih */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Status Pengadaan PR
-                  </label>
-                  <select
-                    value={editStatus}
-                    onChange={(e: any) => setEditStatus(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold"
-                  >
-                    <option value="proses">Dalam Proses PR</option>
-                    <option value="selesai">Selesai (Ready Stock)</option>
-                    <option value="belum">Belum Proses</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Nama Vendor Terpilih
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Contoh: PT Surya Kitchen Abadi"
-                    value={editVendor}
-                    onChange={(e) => setEditVendor(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
-                  />
-                </div>
+              {/* Status Pengadaan PR */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Status Pengadaan PR
+                </label>
+                <select
+                  value={editStatus}
+                  onChange={(e: any) => setEditStatus(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold"
+                >
+                  <option value="proses">Dalam Proses PR</option>
+                  <option value="selesai">Selesai (Ready Stock)</option>
+                  <option value="belum">Belum Proses</option>
+                </select>
               </div>
 
               <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
