@@ -38,7 +38,8 @@ import {
   FileEdit,
   Ban,
   Building2,
-  ArrowDownNarrowWide
+  ArrowDownNarrowWide,
+  FileText
 } from 'lucide-react';
 import { RequestOrder, Outlet, ROItem, ROStatus } from '@/lib/supabase/types';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
@@ -1584,19 +1585,33 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                         <td className="py-3.5 px-4 max-w-xs">
                           <div className="space-y-1">
                             {uniqueItems.slice(0, 3).map((it, idx) => (
-                              <div key={idx} className="flex items-center gap-1.5 text-[11px]">
-                                <Package className="h-3 w-3 text-[#0b57d0] dark:text-[#a8c7fa] shrink-0" />
-                                <span className={`font-medium truncate ${it.stock_source === 'CANCELLED' ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
-                                  {it.item_name}
-                                </span>
-                                <span className="text-[#747775] shrink-0">
-                                  (x{it.quantity_ordered} {it.unit || 'unit'})
-                                </span>
-                                <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                                  On Proses
-                                </span>
+                              <div key={idx} className="space-y-0.5">
+                                <div className="flex items-center gap-1.5 text-[11px]">
+                                  <Package className="h-3 w-3 text-[#0b57d0] dark:text-[#a8c7fa] shrink-0" />
+                                  <span className={`font-medium truncate ${it.stock_source === 'CANCELLED' ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
+                                    {it.item_name}
+                                  </span>
+                                  <span className="text-[#747775] shrink-0">
+                                    (x{it.quantity_ordered} {it.unit || 'unit'})
+                                  </span>
+                                  <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                    On Proses
+                                  </span>
+                                </div>
+                                {it.notes && (
+                                  <div className="text-[10px] text-amber-700 dark:text-amber-400 flex items-center gap-1 pl-4.5">
+                                    <FileText className="w-2.5 h-2.5 shrink-0" />
+                                    <span className="truncate italic">Catatan: {it.notes}</span>
+                                  </div>
+                                )}
                               </div>
                             ))}
+                            {o.notes && o.notes.replace(/\[PROCESSED_FROM_RO\]/g, '').trim() && (
+                              <div className="text-[10px] text-blue-700 dark:text-blue-400 bg-blue-50/70 dark:bg-blue-950/40 px-2 py-0.5 rounded border border-blue-200/60 dark:border-blue-800/60 flex items-center gap-1 mt-1">
+                                <FileText className="w-2.5 h-2.5 shrink-0" />
+                                <span className="truncate">RO: {o.notes.replace(/\[PROCESSED_FROM_RO\]/g, '').trim()}</span>
+                              </div>
+                            )}
                             {uniqueItems.length > 3 && (
                               <span className="text-[10px] font-semibold text-[#0b57d0]">
                                 +{uniqueItems.length - 3} item lainnya
@@ -1850,63 +1865,103 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                     </button>
                   </div>
                 </div>
-                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
                   {selectedRoForProcess.items.map((it, idx) => {
                     const imgUrl = getItemImageUrl(it.item_name);
                     return (
-                      <div key={it.id || idx} className="flex items-center justify-between p-2.5 rounded-lg border border-[#e0e2ec] dark:border-[#35383a] bg-white dark:bg-[#282a2c]">
-                        <div className="flex items-center gap-2.5 pr-2 min-w-0">
-                          {imgUrl ? (
-                            <button
-                              type="button"
-                              onClick={() => setPreviewImage({ url: imgUrl, title: it.item_name })}
-                              className="shrink-0 w-10 h-10 rounded-lg border border-[#e0e2ec] dark:border-[#444746] overflow-hidden hover:scale-105 transition-transform"
-                              title="Klik untuk memperbesar foto"
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={imgUrl} alt={it.item_name} className="w-full h-full object-cover" />
-                            </button>
-                          ) : (
-                            <div className="shrink-0 w-10 h-10 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-center text-slate-400">
-                              <ImageIcon className="h-4 w-4 opacity-40" />
+                      <div key={it.id || idx} className="p-3 rounded-xl border border-[#e0e2ec] dark:border-[#35383a] bg-white dark:bg-[#282a2c] space-y-2.5 shadow-2xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5 pr-2 min-w-0">
+                            {imgUrl ? (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewImage({ url: imgUrl, title: it.item_name })}
+                                className="shrink-0 w-10 h-10 rounded-lg border border-[#e0e2ec] dark:border-[#444746] overflow-hidden hover:scale-105 transition-transform"
+                                title="Klik untuk memperbesar foto"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={imgUrl} alt={it.item_name} className="w-full h-full object-cover" />
+                              </button>
+                            ) : (
+                              <div className="shrink-0 w-10 h-10 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-center text-slate-400">
+                                <ImageIcon className="h-4 w-4 opacity-40" />
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className={`font-semibold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate ${it.stock_source === 'CANCELLED' ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
+                                {it.item_name}
+                              </div>
+                              <div className="text-[10px] text-[#747775]">Jumlah: {it.quantity_ordered} {it.unit || 'unit'}</div>
                             </div>
-                          )}
-                          <div className="min-w-0">
-                            <div className={`font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] truncate ${it.stock_source === 'CANCELLED' ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
-                              {it.item_name}
-                            </div>
-                            <div className="text-[10px] text-[#747775]">Jumlah: {it.quantity_ordered} {it.unit || 'unit'}</div>
                           </div>
+                          <select
+                            value={it.stock_source || 'ON_PROSES'}
+                            onChange={(e) => {
+                              const val = e.target.value as any;
+                              const updated = [...selectedRoForProcess.items];
+                              updated[idx] = { ...updated[idx], stock_source: val };
+                              setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
+                            }}
+                            className={`rounded-lg border px-2 py-1 text-xs font-semibold outline-hidden transition-colors shrink-0 ${
+                              it.stock_source === 'CANCELLED'
+                                ? 'bg-rose-50 border-rose-300 text-rose-800 dark:bg-rose-950/50 dark:border-rose-700 dark:text-rose-200'
+                                : it.stock_source === 'PR_VENDOR'
+                                ? 'bg-orange-50 border-orange-300 text-orange-800 dark:bg-orange-950/50 dark:border-orange-700 dark:text-orange-200'
+                                : it.stock_source === 'GUDANG_SCGA'
+                                ? 'bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-700 dark:text-emerald-200'
+                                : 'bg-blue-50 border-blue-300 text-blue-800 dark:bg-blue-950/50 dark:border-blue-700 dark:text-blue-200'
+                            }`}
+                          >
+                            <option value="ON_PROSES">On Proses (Belum Ditentukan)</option>
+                            <option value="GUDANG_SCGA">Ready Stock (Gudang SCGA)</option>
+                            <option value="PR_VENDOR">Belum Tersedia (Butuh PR)</option>
+                            <option value="CANCELLED">Cancel / Tolak Item</option>
+                          </select>
                         </div>
-                      <select
-                        value={it.stock_source || 'ON_PROSES'}
-                        onChange={(e) => {
-                          const val = e.target.value as any;
-                          const updated = [...selectedRoForProcess.items];
-                          updated[idx] = { ...updated[idx], stock_source: val };
-                          setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
-                        }}
-                        className={`rounded-lg border px-2 py-1 text-xs font-semibold outline-hidden transition-colors ${
-                          it.stock_source === 'CANCELLED'
-                            ? 'bg-rose-50 border-rose-300 text-rose-800 dark:bg-rose-950/50 dark:border-rose-700 dark:text-rose-200'
-                            : it.stock_source === 'PR_VENDOR'
-                            ? 'bg-orange-50 border-orange-300 text-orange-800 dark:bg-orange-950/50 dark:border-orange-700 dark:text-orange-200'
-                            : it.stock_source === 'GUDANG_SCGA'
-                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-700 dark:text-emerald-200'
-                            : 'bg-blue-50 border-blue-300 text-blue-800 dark:bg-blue-950/50 dark:border-blue-700 dark:text-blue-200'
-                        }`}
-                      >
-                        <option value="ON_PROSES">On Proses (Belum Ditentukan)</option>
-                        <option value="GUDANG_SCGA">Ready Stock (Gudang SCGA)</option>
-                        <option value="PR_VENDOR">Belum Tersedia (Butuh PR)</option>
-                        <option value="CANCELLED">Cancel / Tolak Item</option>
-                      </select>
-                    </div>
-                  );
-                })}
+
+                        {/* Kolom Catatan Tiap Item */}
+                        <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-[#35383a]">
+                          <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 shrink-0 flex items-center gap-1">
+                            <FileText className="w-3 h-3 text-slate-400" />
+                            <span>Catatan:</span>
+                          </span>
+                          <input
+                            type="text"
+                            placeholder="Tambah catatan/keterangan item ini (opsional)..."
+                            value={it.notes || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const updated = [...selectedRoForProcess.items];
+                              updated[idx] = { ...updated[idx], notes: val };
+                              setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
+                            }}
+                            className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#1a1c1e] text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Kolom Catatan Keseluruhan Dokumen RO */}
+                <div className="pt-2 border-t border-[#e0e2ec] dark:border-[#35383a] space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>Catatan Keseluruhan Dokumen RO (Opsional):</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Tulis keterangan atau instruksi khusus untuk dokumen RO ini..."
+                    value={(selectedRoForProcess.notes || '').replace(/\[PROCESSED_FROM_RO\]/g, '').trim()}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedRoForProcess({ ...selectedRoForProcess, notes: val });
+                    }}
+                    className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#1a1c1e] text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+                  />
+                </div>
               </div>
             </div>
-          </div>
 
           <div className="flex items-center justify-between gap-2 pt-3 border-t">
               <button

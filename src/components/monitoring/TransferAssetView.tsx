@@ -116,12 +116,14 @@ export function TransferAssetView({
     const handleRoUpdated = () => fetchLatestRo();
     window.addEventListener('storage', handleRoUpdated);
     window.addEventListener('ca_ro_updated', handleRoUpdated);
+    window.addEventListener('ca_pr_updated', handleRoUpdated);
 
     return () => {
       isMounted = false;
       clearInterval(interval);
       window.removeEventListener('storage', handleRoUpdated);
       window.removeEventListener('ca_ro_updated', handleRoUpdated);
+      window.removeEventListener('ca_pr_updated', handleRoUpdated);
     };
   }, []);
 
@@ -142,9 +144,10 @@ export function TransferAssetView({
       if (ro.status === 'REJECTED' || ro.current_stage === 'DIBATALKAN') return;
       if (!matchesRegion(ro.region, regionFilter)) return;
 
-      // Dokumen RO yang masih On Proses (belum diproses/dialokasikan statusnya di Kelola RO)
-      // TIDAK BOLEH masuk ke Pemantauan Distribusi!
+      // Dokumen RO yang memiliki item Ready Stock atau sudah dialokasikan statusnya
+      const hasReadyItem = (ro.items || []).some((it) => it.stock_source === 'GUDANG_SCGA');
       const isRoExplicitlyProcessed = 
+        hasReadyItem ||
         ro.notes?.includes('[PROCESSED_FROM_RO]') ||
         ro.current_stage === 'READY_STOCK' ||
         ro.current_stage === 'SURAT_JALAN' ||
@@ -163,7 +166,7 @@ export function TransferAssetView({
         // Hanya item yang berstatus Ready Stock (GUDANG_SCGA)
         if (item.stock_source === 'GUDANG_SCGA') {
           list.push({
-            id: `ro-${ro.id}-${item.id}`,
+            id: `ro-${ro.id}-${item.id || encodeURIComponent(item.item_name)}`,
             external_id: ro.ro_number,
             branch_name: ro.branch_name,
             region: ro.region,

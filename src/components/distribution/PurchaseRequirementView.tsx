@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { Toast, ToastMessage } from '@/components/ui/Toast';
 import { 
   Clock, 
   Search, 
@@ -49,6 +50,7 @@ interface PurchaseRequirementViewProps {
 }
 
 export default function PurchaseRequirementView({ initialItems, region }: PurchaseRequirementViewProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialTab = searchParams.get('tab') === 'input' ? 'input' : 'monitoring';
   const urlRegion = searchParams ? searchParams.get('region') : null;
@@ -58,6 +60,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   const [items, setItems] = useState<AssetRequest[]>(initialItems);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [toast, setToast] = useState<ToastMessage | null>(null);
 
   // Sync selectedRegion with URL query param
   React.useEffect(() => {
@@ -132,25 +135,47 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
 
       const json = await res.json();
       if (json.success) {
-        setItems((prev) =>
-          prev.map((it) => (it.id === editingItem.id ? { ...it, ...payload } : it))
-        );
+        if (isTransitionToReadyStock || finalStatus === 'selesai') {
+          // Otomatis hilangkan item dari daftar Purchase Requirement seketika tanpa refresh
+          setItems((prev) => prev.filter((it) => it.id !== editingItem.id));
+          setToast({
+            type: 'success',
+            message: `Aset "${editingItem.item_name}" berhasil dialihkan ke antrean Pemantauan Distribusi (Ready Stock).`
+          });
+        } else {
+          setItems((prev) =>
+            prev.map((it) => (it.id === editingItem.id ? { ...it, ...payload } : it))
+          );
+          setToast({
+            type: 'success',
+            message: `Perubahan data PR aset "${editingItem.item_name}" berhasil disimpan.`
+          });
+        }
+
+        // Sinkronisasi server cache Next.js di background tanpa reload
+        try {
+          router.refresh();
+        } catch {}
 
         // Broadcast event real-time ke menu Pemantauan Distribusi & Kelola RO
         try {
           localStorage.setItem('ca_ro_last_update', Date.now().toString());
           window.dispatchEvent(new Event('ca_ro_updated'));
+          window.dispatchEvent(new Event('ca_pr_updated'));
         } catch {}
 
-        if (isTransitionToReadyStock || finalStatus === 'selesai') {
-          alert(`Status berhasil diupdate ke Ready Stock! Aset "${editingItem.item_name}" dialihkan ke Pemantauan Distribusi.`);
-        }
         setEditingItem(null);
       } else {
-        alert(json.error || 'Gagal menyimpan perubahan tanggal PR');
+        setToast({
+          type: 'error',
+          message: json.error || 'Gagal menyimpan perubahan tanggal PR'
+        });
       }
     } catch (err) {
-      alert('Terjadi kesalahan jaringan');
+      setToast({
+        type: 'error',
+        message: 'Terjadi kesalahan jaringan'
+      });
     } finally {
       setSaving(false);
     }
@@ -690,6 +715,9 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
           }}
         />
       )}
+
+      {/* Floating Notification Toast */}
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

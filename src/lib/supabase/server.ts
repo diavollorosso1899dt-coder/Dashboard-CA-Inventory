@@ -686,62 +686,128 @@ export async function updateAssetRequest(
     }
 
     // Support updating items from Request Orders (PR items)
-    if (id.startsWith('ro-pr-') || id.startsWith('roi-') || id.includes('RO-') || id.includes('ro-')) {
+    const isRoItemId =
+      id.startsWith('ro-pr-') ||
+      id.startsWith('roi-') ||
+      id.startsWith('ro-') ||
+      id.includes('RO-') ||
+      id.includes('ro-');
+
+    if (isRoItemId) {
+      console.log(`[PR UPDATE] Processing RO Item ID: ${id}`);
       cache.manualEdits.set(id, updatePayload);
-      const allRos = [
-        ...(global.__RO_CACHE__?.items || []),
-        ...(cache.requestOrders || [])
-      ];
-      
-      let itemUpdated = false;
+
+      // Pastikan cache RO termuat dari DB Supabase
+      const allRos = await getRequestOrders();
+      console.log(`[PR UPDATE] Total ROs loaded: ${allRos.length}`);
+
+      const rawDecodedId = decodeURIComponent(id).trim().toLowerCase();
+      let matchedRo: RequestOrder | null = null;
+      let matchedItem: any = null;
 
       for (const ro of allRos) {
-        const item = (ro.items || []).find(
-          (it) => it.id === id || `ro-pr-${ro.id}-${encodeURIComponent(it.item_name)}` === id
-        );
-        if (item) {
-          const isFinished = payload.procurement_status === 'selesai' || (payload.item_delivery_status && payload.item_delivery_status.toLowerCase().includes('ready'));
-          if (isFinished) {
-            item.stock_source = 'GUDANG_SCGA';
-            ro.current_stage = 'READY_STOCK';
-            ro.status = 'READY_STOCK';
-          }
-          if (payload.order_datetime) {
-            ro.request_date = payload.order_datetime.includes('T') ? payload.order_datetime.split('T')[0] : payload.order_datetime;
-          }
-          if (payload.received_date) {
-            ro.received_date = payload.received_date;
-            ro.arrival_datetime = payload.received_date;
-          }
-          if (payload.vendor_name) ro.pr_vendor_name = payload.vendor_name;
-          if (payload.po_date) ro.pr_po_number = ro.pr_po_number || 'PO-AUTO';
+        const roIdStr = (ro.id || '').toLowerCase();
+        const roNumStr = (ro.ro_number || '').toLowerCase();
+        const rawRoStr = (ro.raw_ro_id || '').toLowerCase();
 
-          await updateRequestOrder(ro.id, {
-            items: ro.items,
-            current_stage: ro.current_stage,
-            status: ro.status,
-            request_date: ro.request_date,
-            received_date: ro.received_date,
-            arrival_datetime: ro.arrival_datetime,
-            pr_vendor_name: ro.pr_vendor_name,
-            pr_po_number: ro.pr_po_number,
-          });
-          
-          itemUpdated = true;
-          break;
+        const roCouldMatch =
+          !id.startsWith('ro-pr-') ||
+          (roIdStr && rawDecodedId.includes(roIdStr)) ||
+          (roNumStr && rawDecodedId.includes(roNumStr)) ||
+          (rawRoStr && rawDecodedId.includes(rawRoStr));
+
+        for (const it of (ro.items || [])) {
+          const itId = (it.id || '').toLowerCase();
+          const itName = (it.item_name || '').toLowerCase().trim();
+
+          const checkId1 = `ro-pr-${ro.id}-${encodeURIComponent(it.item_name)}`.toLowerCase();
+          const checkId2 = `ro-pr-${ro.id}-${it.item_name}`.toLowerCase();
+          const checkId3 = it.id ? `ro-pr-${ro.id}-${it.id}`.toLowerCase() : '';
+          const checkId4 = it.id ? `ro-${ro.id}-${it.id}`.toLowerCase() : '';
+
+          const isDirectMatch =
+            (itId && itId === rawDecodedId) ||
+            checkId1 === rawDecodedId ||
+            checkId2 === rawDecodedId ||
+            (checkId3 && checkId3 === rawDecodedId) ||
+            (checkId4 && checkId4 === rawDecodedId);
+
+          const isPartialMatch =
+            roCouldMatch && (
+              (itId && rawDecodedId.includes(itId)) ||
+              (itName && rawDecodedId.includes(itName))
+            );
+
+          if (isDirectMatch || isPartialMatch) {
+            matchedRo = ro;
+            matchedItem = it;
+            break;
+          }
         }
-      }
-      if (!itemUpdated) {
-        console.warn(`[PR Update] RO item not found for ID: ${id}`);
+        if (matchedItem) break;
       }
 
-      return {
-        success: true,
-        data: {
-          id,
-          ...payload,
-        } as any,
-      };
+      if (matchedRo && matchedItem) {
+        console.log(`[PR UPDATE] Found matched item "${matchedItem.item_name}" in RO ${matchedRo.ro_number}`);
+
+        const isFinished =
+          payload.procurement_status === 'selesai' ||
+          (payload.item_delivery_status && payload.item_delivery_status.toLowerCase().includes('ready')) ||
+          (payload.stock_status && payload.stock_status.toLowerCase().includes('ready'));
+
+        if (isFinished) {
+          console.log(`[PR UPDATE] Marking item as GUDANG_SCGA (Ready Stock)`);
+          matchedItem.stock_source = 'GUDANG_SCGA';
+          matchedItem.quantity_fulfilled = matchedItem.quantity_ordered;
+          matchedItem.is_arrived_at_warehouse = true;
+          if (payload.received_date) {
+            matchedItem.pr_arrival_date = payload.received_date;
+          }
+
+          const activeItems = (matchedRo.items || []).filter((i: any) => i.stock_source !== 'CANCELLED');
+          const allReady = activeItems.length > 0 && activeItems.every((i: any) => i.stock_source === 'GUDANG_SCGA');
+          if (allReady) {
+            matchedRo.current_stage = 'READY_STOCK';
+            matchedRo.status = 'READY_STOCK';
+          } else {
+            matchedRo.current_stage = 'KELOLA_PR';
+          }
+        }
+
+        if (payload.order_datetime) {
+          matchedRo.request_date = payload.order_datetime.includes('T') ? payload.order_datetime.split('T')[0] : payload.order_datetime;
+        }
+        if (payload.received_date) {
+          matchedRo.received_date = payload.received_date;
+          matchedRo.arrival_datetime = payload.received_date;
+        }
+        if (payload.vendor_name) matchedRo.pr_vendor_name = payload.vendor_name;
+        if (payload.po_date) matchedRo.pr_po_number = matchedRo.pr_po_number || 'PO-AUTO';
+
+        const updateSuccess = await updateRequestOrder(matchedRo.id, {
+          items: matchedRo.items,
+          current_stage: matchedRo.current_stage,
+          status: matchedRo.status,
+          request_date: matchedRo.request_date,
+          received_date: matchedRo.received_date,
+          arrival_datetime: matchedRo.arrival_datetime,
+          pr_vendor_name: matchedRo.pr_vendor_name,
+          pr_po_number: matchedRo.pr_po_number,
+        });
+
+        invalidateRoCache();
+
+        return {
+          success: updateSuccess,
+          data: {
+            id,
+            ...payload,
+          } as any,
+        };
+      } else {
+        console.error(`[PR UPDATE ERROR] RO item not found for ID: ${id}`);
+        return { success: false, error: `Item RO tidak ditemukan untuk ID: ${id}` };
+      }
     }
 
     return { success: false, error: 'Item not found' };
@@ -2787,9 +2853,10 @@ export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): P
   const { data: allItems } = await getAssetRequests({ region, limit: 5000 });
   const sheetPrItems = allItems.filter(
     (it) =>
-      it.quantity_pr > 0 ||
-      it.stock_status.includes('Not Ready') ||
-      (it.procurement_status && it.procurement_status !== 'selesai')
+      it.procurement_status !== 'selesai' &&
+      !it.item_delivery_status?.toLowerCase().includes('ready') &&
+      !it.stock_status?.toLowerCase().includes('ready stock') &&
+      (it.quantity_pr > 0 || it.stock_status.includes('Not Ready') || Boolean(it.procurement_status))
   );
 
   // Fetch RO items that require PR (stock_source === 'PR_VENDOR')
@@ -2803,7 +2870,7 @@ export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): P
 
     const prItems = (ro.items || []).filter((it) => it.stock_source === 'PR_VENDOR');
     for (const it of prItems) {
-      const itemId = it.id || `ro-pr-${ro.id}-${encodeURIComponent(it.item_name)}`;
+      const itemId = `ro-pr-${ro.id}-${it.id || encodeURIComponent(it.item_name)}`;
       if (seenIds.has(itemId)) continue;
       seenIds.add(itemId);
 
