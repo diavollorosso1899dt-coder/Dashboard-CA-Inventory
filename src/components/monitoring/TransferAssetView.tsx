@@ -177,7 +177,8 @@ export function TransferAssetView({
             specification: item.specification || '',
             photo_url: item.photo_url || null,
             item_delivery_status: 'Ready Antar',
-            notes: `No. RO: ${ro.ro_number} • Pemohon: ${ro.requester_name}`,
+            notes: item.notes || `No. RO: ${ro.ro_number} • Pemohon: ${ro.requester_name}`,
+            item_notes: item.notes || '',
             order_datetime: roDate,
             created_at: ro.created_at || new Date().toISOString(),
             updated_at: ro.updated_at || new Date().toISOString(),
@@ -327,14 +328,18 @@ export function TransferAssetView({
 
   const handleProcessFromQueue = (selected: AssetRequest[], targetOutletName?: string) => {
     const targetOutlet = targetOutletName || selected[0]?.branch_name || '';
-    const formattedItems: TransferItem[] = selected.map((a, idx) => ({
-      id: `ti-dist-${Date.now()}-${idx}`,
-      asset_id: a.id || a.external_id,
-      item_name: a.item_name,
-      specification: a.classification,
-      quantity: a.quantity_needed || 1,
-      condition: 'BAIK',
-    }));
+    const formattedItems: TransferItem[] = selected.map((a, idx) => {
+      const itemNote = a.item_notes || (a.notes && !a.notes.startsWith('No. RO:') ? a.notes : '');
+      return {
+        id: `ti-dist-${Date.now()}-${idx}`,
+        asset_id: a.id || a.external_id,
+        item_name: a.item_name,
+        specification: a.classification,
+        quantity: a.quantity_needed || 1,
+        condition: 'BAIK',
+        notes: itemNote || (a.notes || ''),
+      };
+    });
 
     setItemsList(formattedItems);
     setDestinationType('OUTLET');
@@ -832,6 +837,21 @@ export function TransferAssetView({
                                   </span>
                                 )}
                               </div>
+
+                              {/* Catatan Item Prominent Notice */}
+                              {(asset.item_notes || (asset.notes && !asset.notes.startsWith('No. RO:'))) && (
+                                <div className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700/80 p-1.5 text-[11px] text-amber-900 dark:text-amber-200 shadow-2xs">
+                                  <span className="relative flex h-2 w-2 mt-0.5 shrink-0">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                                  </span>
+                                  <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                                  <div className="min-w-0 flex-1 leading-tight">
+                                    <span className="font-bold text-amber-800 dark:text-amber-300">Catatan:</span>{' '}
+                                    <span className="italic">{asset.item_notes || asset.notes}</span>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
 

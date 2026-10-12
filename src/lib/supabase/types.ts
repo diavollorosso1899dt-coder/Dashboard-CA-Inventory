@@ -70,6 +70,7 @@ export interface AssetRequest {
   lead_time_days: number;
   pic_receiver: string;
   notes: string;
+  item_notes?: string;
   
   is_manually_edited: boolean;
   is_system_transfer?: boolean;

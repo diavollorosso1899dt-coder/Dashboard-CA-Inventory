@@ -914,7 +914,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
           specification: it.specification,
           quantity: it.quantity_ordered,
           unit: it.unit || 'Unit',
-          notes: it.stock_source === 'GUDANG_SCGA' ? 'Dari Stok Gudang SCGA' : 'Pengadaan PR Vendor (Aset Tiba)',
+          notes: it.notes || (it.stock_source === 'GUDANG_SCGA' ? 'Dari Stok Gudang SCGA' : 'Pengadaan PR Vendor (Aset Tiba)'),
         }));
 
       if (itemsToShip.length === 0) {
@@ -1599,9 +1599,13 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                                   </span>
                                 </div>
                                 {it.notes && (
-                                  <div className="text-[10px] text-amber-700 dark:text-amber-400 flex items-center gap-1 pl-4.5">
-                                    <FileText className="w-2.5 h-2.5 shrink-0" />
-                                    <span className="truncate italic">Catatan: {it.notes}</span>
+                                  <div className="text-[10px] text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-300/80 dark:border-amber-700/80 px-1.5 py-0.5 rounded-md flex items-center gap-1.5 mt-0.5 shadow-2xs">
+                                    <span className="relative flex h-1.5 w-1.5 shrink-0">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                                    </span>
+                                    <FileText className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                                    <span className="truncate italic"><strong className="font-semibold not-italic">Catatan:</strong> {it.notes}</span>
                                   </div>
                                 )}
                               </div>
@@ -2266,6 +2270,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                                 <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-xs">
                                   {it.specification || 'Tidak ada spesifikasi'}
                                 </div>
+                                {it.notes && (
+                                  <div className="mt-1 flex items-center gap-1.5 text-[10px] text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-300/80 dark:border-amber-700/80 px-2 py-0.5 rounded-md shadow-2xs">
+                                    <span className="relative flex h-1.5 w-1.5 shrink-0">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                                    </span>
+                                    <FileText className="w-3 h-3 text-amber-600 dark:text-amber-400 shrink-0" />
+                                    <span className="italic truncate"><strong className="font-semibold not-italic">Catatan:</strong> {it.notes}</span>
+                                  </div>
+                                )}
                               </div>
                             </div>
 

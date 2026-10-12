@@ -783,6 +783,9 @@ export async function updateAssetRequest(
         }
         if (payload.vendor_name) matchedRo.pr_vendor_name = payload.vendor_name;
         if (payload.po_date) matchedRo.pr_po_number = matchedRo.pr_po_number || 'PO-AUTO';
+        if (payload.notes || payload.item_notes) {
+          matchedItem.notes = payload.item_notes || payload.notes;
+        }
 
         const updateSuccess = await updateRequestOrder(matchedRo.id, {
           items: matchedRo.items,
@@ -2922,7 +2925,8 @@ export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): P
         received_date: ro.arrival_datetime || null,
         lead_time_days: 0,
         pic_receiver: ro.pic_receiver || '',
-        notes: `Sumber dari Request Order ${ro.ro_number}`,
+        notes: it.notes || `Sumber dari Request Order ${ro.ro_number}`,
+        item_notes: it.notes || '',
         is_manually_edited: false,
         created_at: ro.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),

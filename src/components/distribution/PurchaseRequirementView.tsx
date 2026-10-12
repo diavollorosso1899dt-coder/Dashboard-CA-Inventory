@@ -21,7 +21,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Boxes,
-  ArrowRight
+  ArrowRight,
+  FileText
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
@@ -35,6 +36,7 @@ import { formatDateSlash } from '@/lib/utils/date-formatter';
 const PR_COLUMNS: ColumnItem[] = [
   { id: 'rab_branch', label: 'No. RAB & Cabang', defaultVisible: true, alwaysVisible: true },
   { id: 'item_name', label: 'Nama Item Aset', defaultVisible: true },
+  { id: 'notes', label: 'Catatan', defaultVisible: true },
   { id: 'image', label: 'Gambar', defaultVisible: true },
   { id: 'qty', label: 'Qty PR', defaultVisible: true },
   { id: 'req_date', label: 'Tgl Permintaan', defaultVisible: true },
@@ -98,6 +100,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
   const [editReceivedDate, setEditReceivedDate] = useState('');
   const [editPrDate, setEditPrDate] = useState('');
   const [editStatus, setEditStatus] = useState<'belum' | 'proses' | 'po' | 'selesai'>('proses');
+  const [editNotes, setEditNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
   const openEditModal = (item: AssetRequest, forceReadyStock: boolean = false) => {
@@ -106,6 +109,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
     setEditReceivedDate(item.received_date ? item.received_date.split('T')[0] : new Date().toISOString().split('T')[0]);
     setEditPrDate(item.pr_datetime ? item.pr_datetime.split('T')[0] : '');
     setEditStatus(forceReadyStock ? 'selesai' : (item.procurement_status || 'proses'));
+    setEditNotes(item.item_notes || (item.notes && !item.notes.startsWith('Sumber dari Request Order') && !item.notes.startsWith('No. RO:') ? item.notes : ''));
   };
 
   const handleSavePrDates = async (e?: React.FormEvent, isTransitionToReadyStock: boolean = true) => {
@@ -120,6 +124,8 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
         received_date: editReceivedDate ? editReceivedDate : null,
         pr_datetime: editPrDate ? new Date(editPrDate).toISOString() : null,
         procurement_status: finalStatus,
+        notes: editNotes,
+        item_notes: editNotes,
       };
 
       if (isTransitionToReadyStock || finalStatus === 'selesai') {
@@ -304,6 +310,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
               <tr>
                 {isVisible('rab_branch') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">No. RAB &amp; Cabang</th>}
                 {isVisible('item_name') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Nama Item Aset</th>}
+                {isVisible('notes') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Catatan</th>}
                 {isVisible('image') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Gambar</th>}
                 {isVisible('qty') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Qty PR</th>}
                 {isVisible('req_date') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Tgl Permintaan</th>}
@@ -326,6 +333,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                   const prDate = formatDateSlash(it.pr_datetime);
                   const poDate = formatDateSlash(it.po_date);
                   const receiveDate = formatDateSlash(it.received_date);
+                  const noteText = it.item_notes || (it.notes && !it.notes.startsWith('Sumber dari Request Order') && !it.notes.startsWith('No. RO:') ? it.notes : null);
 
                   return (
                     <tr key={it.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
@@ -344,8 +352,32 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                       )}
                       {isVisible('item_name') && (
                         <td className="py-3.5 px-4">
-                          <div className="font-semibold text-slate-900 dark:text-white">{it.item_name}</div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-slate-900 dark:text-white">{it.item_name}</span>
+                            {Boolean(noteText) && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 shadow-2xs">
+                                <span className="relative flex h-1.5 w-1.5 shrink-0">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                                </span>
+                                <FileText className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />
+                                <span>Ada Catatan</span>
+                              </span>
+                            )}
+                          </div>
                           <div className="text-[11px] text-slate-400">{it.classification}</div>
+                        </td>
+                      )}
+                      {isVisible('notes') && (
+                        <td className="py-3.5 px-4 max-w-xs">
+                          {noteText ? (
+                            <div className="flex items-start gap-1.5 p-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-300/80 dark:border-amber-700/80 text-amber-900 dark:text-amber-200 text-xs shadow-2xs">
+                              <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                              <span className="italic leading-snug">{noteText}</span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 text-xs italic">-</span>
+                          )}
                         </td>
                       )}
                       {isVisible('image') && (
@@ -587,6 +619,31 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                   <option value="selesai">Selesai (Ready Stock)</option>
                   <option value="belum">Belum Proses</option>
                 </select>
+              </div>
+              {/* Catatan / Keterangan Khusus Item */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                    <span>Catatan / Keterangan Item</span>
+                  </span>
+                  {editNotes && (
+                    <span className="text-[10px] text-amber-700 dark:text-amber-300 font-bold bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-700 flex items-center gap-1">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                      </span>
+                      Ada Catatan
+                    </span>
+                  )}
+                </label>
+                <textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  rows={2}
+                  placeholder="Tambahkan atau perbarui catatan khusus untuk item ini (akan terbaca di Pemantauan Distribusi)..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs focus:border-amber-500 focus:outline-none placeholder:text-slate-400"
+                />
               </div>
 
               <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
