@@ -148,6 +148,15 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
             type: 'success',
             message: `Aset "${editingItem.item_name}" berhasil dialihkan ke antrean Pemantauan Distribusi (Ready Stock).`
           });
+
+          // Catat ID ke local storage ca_system_transfer_ids untuk sinkronisasi antrean distribusi instan
+          try {
+            const saved = localStorage.getItem('ca_system_transfer_ids');
+            const ids: string[] = saved ? JSON.parse(saved) : [];
+            if (!ids.includes(editingItem.id)) ids.push(editingItem.id);
+            if (editingItem.external_id && !ids.includes(editingItem.external_id)) ids.push(editingItem.external_id);
+            localStorage.setItem('ca_system_transfer_ids', JSON.stringify(ids));
+          } catch {}
         } else {
           setItems((prev) =>
             prev.map((it) => (it.id === editingItem.id ? { ...it, ...payload } : it))

@@ -665,6 +665,7 @@ export async function updateAssetRequest(
       if (error) {
         console.error('[Supabase updateAssetRequest error]:', error.message);
       } else if (data) {
+        invalidateAssetRequestsCache();
         const index = cache.items.findIndex((item) => item.id === id || item.external_id === id);
         if (index !== -1) {
           cache.items[index] = { ...cache.items[index], ...data };
@@ -682,6 +683,7 @@ export async function updateAssetRequest(
       };
       cache.items[index] = updated;
       cache.manualEdits.set(id, updatePayload);
+      invalidateAssetRequestsCache();
       return { success: true, data: updated };
     }
 

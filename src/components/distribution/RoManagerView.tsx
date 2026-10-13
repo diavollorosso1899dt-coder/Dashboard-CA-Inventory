@@ -233,14 +233,25 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     }
   };
 
-  // Background Auto-Sync effect (every 30 seconds)
+  // Background Auto-Sync effect (every 30 seconds & event listener)
   useEffect(() => {
+    const handleUpdate = () => {
+      fetchLatestOrders(false);
+    };
+    window.addEventListener('ca_ro_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         fetchLatestOrders(false);
       }
     }, 30000);
-    return () => clearInterval(interval);
+
+    return () => {
+      window.removeEventListener('ca_ro_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+      clearInterval(interval);
+    };
   }, []);
 
   // Pagination state
@@ -1328,119 +1339,6 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               <PlusCircle className="h-3.5 w-3.5" />
               <span>Buat RO Baru</span>
             </button>
-          </div>
-        </div>
-
-        {/* REGION, SOURCE & SMART DEDUPLICATION CONTROLS BAR */}
-        <div className="flex flex-col gap-2.5 pt-2.5 border-t border-[#e0e2ec] dark:border-[#35383a] text-xs">
-          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 flex-wrap">
-            {/* Region Tabs */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
-                <MapPin className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-                Filter Area:
-              </span>
-              <AreaFilterPills
-                value={selectedRegion}
-                onChange={(reg) => setSelectedRegion(reg)}
-                syncUrl={true}
-              />
-              <span className="text-[11px] font-semibold text-[#0b57d0] dark:text-[#a8c7fa] bg-[#e8f0fe] dark:bg-[#004a77]/50 px-2 py-0.5 rounded-full">
-                {regionStats[selectedRegion]?.orders ?? filteredOrders.length} RO
-              </span>
-            </div>
-
-            {/* Source Filter Tabs */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
-                <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
-                Sumber:
-              </span>
-              <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c] flex-wrap">
-                <button
-                  onClick={() => setSelectedSource('ALL')}
-                  className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                    selectedSource === 'ALL' ? 'bg-white dark:bg-[#1a1c1e] text-[#0b57d0] font-bold shadow-xs' : 'text-[#747775]'
-                  }`}
-                >
-                  Semua ({sourceStats.ALL})
-                </button>
-                <button
-                  onClick={() => setSelectedSource('KALBAR_SHEET')}
-                  className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                    selectedSource === 'KALBAR_SHEET' ? 'bg-white dark:bg-[#1a1c1e] text-emerald-600 font-bold shadow-xs' : 'text-[#747775]'
-                  }`}
-                >
-                  Sheet Kalbar ({sourceStats.KALBAR_SHEET})
-                </button>
-                <button
-                  onClick={() => setSelectedSource('JABO_SHEET')}
-                  className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                    selectedSource === 'JABO_SHEET' ? 'bg-white dark:bg-[#1a1c1e] text-blue-600 font-bold shadow-xs' : 'text-[#747775]'
-                  }`}
-                >
-                  Sheet Jabo ({sourceStats.JABO_SHEET})
-                </button>
-                <button
-                  onClick={() => setSelectedSource('MANUAL')}
-                  className={`interactive-tap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                    selectedSource === 'MANUAL' ? 'bg-white dark:bg-[#1a1c1e] text-purple-600 font-bold shadow-xs' : 'text-[#747775]'
-                  }`}
-                >
-                  Manual ({sourceStats.MANUAL})
-                </button>
-              </div>
-            </div>
-
-            {/* Deduplication Controls */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-[#747775] dark:text-[#8e918f] uppercase tracking-wider text-[10px] flex items-center gap-1">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-                Duplikasi:
-              </span>
-              <div className="inline-flex rounded-lg border border-[#e0e2ec] dark:border-[#444746] p-0.5 bg-[#f8f9fa] dark:bg-[#282a2c]">
-                <button
-                  onClick={() => setSmartFilter('ALL')}
-                  className={`interactive-tap px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
-                    smartFilter === 'ALL' ? 'bg-white dark:bg-[#1a1c1e] text-[#0b57d0] font-bold shadow-xs' : 'text-[#747775]'
-                  }`}
-                >
-                  Semua
-                </button>
-                <button
-                  onClick={() => setSmartFilter('CLEAN')}
-                  className={`interactive-tap px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
-                    smartFilter === 'CLEAN' ? 'bg-white dark:bg-[#1a1c1e] text-emerald-600 font-bold shadow-xs' : 'text-[#747775]'
-                  }`}
-                >
-                  Bersih ({orders.length - (duplicateOrdersCount > 0 ? duplicateOrdersCount - deduplicationMap.size : 0)})
-                </button>
-                <button
-                  onClick={() => setSmartFilter('DUPLICATES')}
-                  className={`interactive-tap px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
-                    smartFilter === 'DUPLICATES' ? 'bg-white dark:bg-[#1a1c1e] text-amber-600 font-bold shadow-xs' : 'text-[#747775]'
-                  }`}
-                >
-                  Duplikat ({duplicateOrdersCount})
-                </button>
-              </div>
-
-              {duplicateOrdersCount > 0 && (
-                <button
-                  onClick={handleCleanDuplicates}
-                  className="flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:underline ml-1"
-                >
-                  <Trash2 className="h-3 w-3" />
-                  <span>Bersihkan</span>
-                </button>
-              )}
-            </div>
-
-            {/* Sort Status Indicator */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-[11px] font-bold text-blue-900 dark:text-blue-200">
-              <ArrowDownNarrowWide className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-              <span>Urutan: Data Terbaru di Atas</span>
-            </div>
           </div>
         </div>
 

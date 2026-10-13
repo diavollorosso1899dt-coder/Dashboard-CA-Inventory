@@ -22,7 +22,12 @@ import {
   Boxes,
   Sparkles,
   Layers,
-  Calendar
+  Calendar,
+  Copy,
+  LayoutGrid,
+  List,
+  Table as TableIcon,
+  CheckCheck
 } from 'lucide-react';
 import { AssetTransfer, Outlet, AssetRequest, TransferStatus, TransferItem, RequestOrder } from '@/lib/supabase/types';
 import { getItemImageUrl } from '@/lib/assetImageHelper';
@@ -89,10 +94,162 @@ export function TransferAssetView({
   const [isOutletMenuOpen, setIsOutletMenuOpen] = useState(false);
   const [selectedQueueOutlet, setSelectedQueueOutlet] = useState<string>('ALL');
   const [queueSourceFilter, setQueueSourceFilter] = useState<'ALL' | 'RO_ONLY' | 'MONITORING_ONLY'>('ALL');
+  const [queueViewMode, setQueueViewMode] = useState<'grid' | 'detail' | 'table'>('grid');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [requestOrders, setRequestOrders] = useState<RequestOrder[]>(initialRequestOrders || []);
+  const [monitoringAssets, setMonitoringAssets] = useState<AssetRequest[]>(initialAssets || []);
   const [lastRoSyncTime, setLastRoSyncTime] = useState<Date>(new Date());
 
-  // Real-time synchronization dengan Kelola RO (/api/distribution/ro)
+  // Load saved view mode from localStorage
+  useEffect(() => {
+    try {
+      const savedMode = localStorage.getItem('ca_queue_view_mode') as 'grid' | 'detail' | 'table';
+      if (savedMode && ['grid', 'detail', 'table'].includes(savedMode)) {
+        setQueueViewMode(savedMode);
+      }
+    } catch (e) {}
+  }, []);
+
+  const handleChangeViewMode = (mode: 'grid' | 'detail' | 'table') => {
+    setQueueViewMode(mode);
+    try {
+      localStorage.setItem('ca_queue_view_mode', mode);
+    } catch (e) {}
+  };
+
+  const copyToClipboard = async (text: string, label: string, id: string = 'global') => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedId(id);
+      setCopyFeedback(`Data ${label} berhasil disalin ke clipboard!`);
+      setTimeout(() => {
+        setCopiedId(null);
+        setCopyFeedback(null);
+      }, 2500);
+    } catch (err) {
+      console.error('Failed to copy to clipboard', err);
+    }
+  };
+
+  const formatOutletText = (grp: { branchName: string; assets: AssetRequest[]; totalUnits: number; count: number }) => {
+    const dateStr = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+    const lines = [
+      `📦 *ANTREAN DISTRIBUSI - ${grp.branchName.toUpperCase()}*`,
+      `Total: ${grp.count} Item (${grp.totalUnits} Unit) | ${dateStr}`,
+      `----------------------------------------`,
+    ];
+
+    grp.assets.forEach((a, idx) => {
+      const rawDate = a.order_datetime || (a as any).request_date || (a.created_at ? a.created_at.split('T')[0] : null);
+      const reqDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate.split(' ')[0]) : null;
+      const note = a.item_notes || (a.notes && !a.notes.startsWith('No. RO:') ? a.notes : '');
+
+      lines.push(`${idx + 1}. ${a.item_name} (${a.quantity_needed || 1} unit)`);
+      if (a.external_id) lines.push(`   • No. RO: ${a.external_id}`);
+      if (reqDate) lines.push(`   • Tgl Permintaan: ${formatDateOnly(reqDate)}`);
+      if (a.specification) lines.push(`   • Spesifikasi: ${a.specification}`);
+      if (note) lines.push(`   • Catatan: ${note}`);
+    });
+
+    return lines.join('\n');
+  };
+
+  const formatAllQueueText = () => {
+    const activeGroups = outletGroups.filter(
+      (grp) => selectedQueueOutlet === 'ALL' || grp.branchName === selectedQueueOutlet
+    );
+    if (activeGroups.length === 0) return 'Tidak ada data antrean distribusi.';
+
+    const totalAllItems = activeGroups.reduce((acc, g) => acc + g.count, 0);
+    const totalAllUnits = activeGroups.reduce((acc, g) => acc + g.totalUnits, 0);
+    const nowStr = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const sections = [
+      `🚚 *REKAP ANTREAN ASET SIAP DISTRIBUSI*`,
+      `Total: ${activeGroups.length} Cabang | ${totalAllItems} Item (${totalAllUnits} Unit)`,
+      `Waktu Rekap: ${nowStr}`,
+      `========================================\n`,
+    ];
+
+    activeGroups.forEach((grp) => {
+      sections.push(formatOutletText(grp));
+      sections.push('\n');
+    });
+
+    return sections.join('\n');
+  };
+
+  const formatSingleItemText = (asset: AssetRequest, branchName: string) => {
+    const rawDate = asset.order_datetime || (asset as any).request_date || (asset.created_at ? asset.created_at.split('T')[0] : null);
+    const reqDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate.split(' ')[0]) : null;
+    const note = asset.item_notes || (asset.notes && !asset.notes.startsWith('No. RO:') ? asset.notes : '');
+
+    let text = `📦 ${asset.item_name} (${asset.quantity_needed || 1} unit) - Tujuan: ${branchName}`;
+    if (asset.external_id) text += ` | RO: ${asset.external_id}`;
+    if (reqDate) text += ` | Tgl: ${formatDateOnly(reqDate)}`;
+    if (asset.specification) text += ` | Spek: ${asset.specification}`;
+    if (note) text += ` | Catatan: "${note}"`;
+    return text;
+  };
+
+  const formatTransferDocText = (t: AssetTransfer) => {
+    const itemsCount = t.items?.length || 0;
+    const lines = [
+      `📄 *SURAT JALAN DISTRIBUSI: ${t.transfer_number}*`,
+      `Rute: ${t.from_location} ➔ ${t.to_location}`,
+      `Status: ${t.status === 'IN_TRANSIT' ? 'Dalam Perjalanan' : t.status === 'RECEIVED' ? 'Diterima' : t.status}`,
+      `Kurir: ${t.expedition_courier || '-'} | Resi: ${t.tracking_number || '-'}`,
+      `Tanggal Kirim: ${t.transfer_date ? formatDateOnly(t.transfer_date) : '-'}`,
+      `PIC Pengirim: ${t.sender_pic || '-'} | PIC Penerima: ${t.receiver_pic || '-'}`,
+      `Item (${itemsCount}):`,
+    ];
+    (t.items || []).forEach((it, idx) => {
+      lines.push(`${idx + 1}. ${it.item_name} (${it.quantity} unit) ${it.notes ? `[${it.notes}]` : ''}`);
+    });
+    if (t.notes) lines.push(`Catatan: ${t.notes}`);
+    return lines.join('\n');
+  };
+
+  const formatAllTransfersText = () => {
+    if (filteredTransfers.length === 0) return 'Tidak ada dokumen distribusi.';
+    const lines = [
+      `📋 *DAFTAR DOKUMEN SURAT JALAN DISTRIBUSI (${filteredTransfers.length})*`,
+      `========================================\n`,
+    ];
+    filteredTransfers.forEach((t) => {
+      lines.push(formatTransferDocText(t));
+      lines.push('\n----------------------------------------\n');
+    });
+    return lines.join('\n');
+  };
+
+  // Sync monitoringAssets with initialAssets prop
+  useEffect(() => {
+    if (initialAssets && initialAssets.length > 0) {
+      setMonitoringAssets(initialAssets);
+    }
+  }, [initialAssets]);
+
+  // Real-time synchronization dengan Kelola RO (/api/distribution/ro) dan Aset (/api/assets)
   useEffect(() => {
     let isMounted = true;
     const fetchLatestRo = async () => {
@@ -110,20 +267,41 @@ export function TransferAssetView({
       }
     };
 
-    fetchLatestRo();
-    const interval = setInterval(fetchLatestRo, 3500);
+    const fetchLatestAssets = async () => {
+      try {
+        const res = await fetch('/api/assets?limit=5000');
+        if (res.ok) {
+          const json = await res.json();
+          if (json.data && Array.isArray(json.data) && isMounted) {
+            setMonitoringAssets(json.data);
+          }
+        }
+      } catch (err) {
+        // silent fallback
+      }
+    };
 
-    const handleRoUpdated = () => fetchLatestRo();
-    window.addEventListener('storage', handleRoUpdated);
-    window.addEventListener('ca_ro_updated', handleRoUpdated);
-    window.addEventListener('ca_pr_updated', handleRoUpdated);
+    fetchLatestRo();
+    fetchLatestAssets();
+    const interval = setInterval(() => {
+      fetchLatestRo();
+      fetchLatestAssets();
+    }, 3500);
+
+    const handleDataUpdated = () => {
+      fetchLatestRo();
+      fetchLatestAssets();
+    };
+    window.addEventListener('storage', handleDataUpdated);
+    window.addEventListener('ca_ro_updated', handleDataUpdated);
+    window.addEventListener('ca_pr_updated', handleDataUpdated);
 
     return () => {
       isMounted = false;
       clearInterval(interval);
-      window.removeEventListener('storage', handleRoUpdated);
-      window.removeEventListener('ca_ro_updated', handleRoUpdated);
-      window.removeEventListener('ca_pr_updated', handleRoUpdated);
+      window.removeEventListener('storage', handleDataUpdated);
+      window.removeEventListener('ca_ro_updated', handleDataUpdated);
+      window.removeEventListener('ca_pr_updated', handleDataUpdated);
     };
   }, []);
 
@@ -199,13 +377,16 @@ export function TransferAssetView({
       }
     } catch (e) {}
 
-    return (initialAssets || []).filter((a) => {
+    return (monitoringAssets || []).filter((a) => {
       if (!matchesRegion(a.region, regionFilter)) return false;
       const status = (a.item_delivery_status || '').trim().toLowerCase();
-      const aId = a.id || a.external_id;
-      return status === 'ready antar' || Boolean(a.is_system_transfer) || storedIds.includes(aId);
+      const isStored = Boolean(
+        (a.id && storedIds.includes(a.id)) ||
+        (a.external_id && storedIds.includes(a.external_id))
+      );
+      return status === 'ready antar' || Boolean(a.is_system_transfer) || isStored;
     });
-  }, [initialAssets, regionFilter]);
+  }, [monitoringAssets, regionFilter]);
 
   // Automatic Queue of Assets (Gabungan Kelola RO Ready Stock & Monitoring Aset)
   const readyDistributionAssets = useMemo(() => {
@@ -662,8 +843,8 @@ export function TransferAssetView({
           </div>
         </div>
 
-        {/* Source Filter Tabs */}
-        <div className="flex flex-wrap items-center gap-2 justify-between">
+        {/* Source Filter Tabs & View Mode Toolbar */}
+        <div className="flex flex-wrap items-center gap-2.5 justify-between">
           <div className="flex items-center gap-1 bg-white/80 dark:bg-[#1e1f20]/80 p-1 rounded-xl border border-[#c2e7ff] dark:border-[#004a77] text-xs">
             <button
               onClick={() => setQueueSourceFilter('ALL')}
@@ -698,9 +879,75 @@ export function TransferAssetView({
             </button>
           </div>
 
-          <div className="text-[10px] text-slate-500 flex items-center gap-1">
-            <span>Sinkronisasi terakhir:</span>
-            <span className="font-mono font-semibold">{lastRoSyncTime.toLocaleTimeString()}</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Model UI View Switcher */}
+            <div className="flex items-center gap-1 bg-white/90 dark:bg-[#1e1f20]/90 p-1 rounded-xl border border-[#c2e7ff] dark:border-[#004a77] text-xs shadow-2xs">
+              <span className="text-[10px] font-bold text-[#747775] dark:text-[#8e918f] px-1 uppercase tracking-wider hidden sm:inline">
+                Tampilan:
+              </span>
+              <button
+                onClick={() => handleChangeViewMode('grid')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  queueViewMode === 'grid'
+                    ? 'bg-[#0b57d0] text-white shadow-xs'
+                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/40'
+                }`}
+                title="Model Kolom / Kartu Grid"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Kolom</span>
+              </button>
+              <button
+                onClick={() => handleChangeViewMode('detail')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  queueViewMode === 'detail'
+                    ? 'bg-[#0b57d0] text-white shadow-xs'
+                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/40'
+                }`}
+                title="Model Baris Detail Lengkap"
+              >
+                <List className="w-3.5 h-3.5" />
+                <span>Detail</span>
+              </button>
+              <button
+                onClick={() => handleChangeViewMode('table')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  queueViewMode === 'table'
+                    ? 'bg-[#0b57d0] text-white shadow-xs'
+                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/40'
+                }`}
+                title="Model Tabel Kompak"
+              >
+                <TableIcon className="w-3.5 h-3.5" />
+                <span>Tabel</span>
+              </button>
+            </div>
+
+            {/* Tombol Copy Semua Antrean */}
+            {readyDistributionAssets.length > 0 && (
+              <button
+                onClick={() => copyToClipboard(formatAllQueueText(), 'Semua Antrean', 'all-queue')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-blue-200 dark:border-blue-800 bg-white dark:bg-[#1e1f20] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold text-[11px] transition-all shadow-xs cursor-pointer group"
+                title="Salin semua data antrean distribusi untuk WA / Laporan"
+              >
+                {copiedId === 'all-queue' ? (
+                  <>
+                    <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-emerald-700 dark:text-emerald-300">Tersalin!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 transition-transform group-hover:scale-110" />
+                    <span>Salin Data Antrean</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            <div className="text-[10px] text-slate-500 hidden sm:flex items-center gap-1">
+              <span>Sync:</span>
+              <span className="font-mono font-semibold">{lastRoSyncTime.toLocaleTimeString()}</span>
+            </div>
           </div>
         </div>
 
@@ -745,16 +992,16 @@ export function TransferAssetView({
             menjadi &quot;Ready Stock (Gudang SCGA)&quot; agar otomatis muncul di sini.
           </div>
         ) : (
-          <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
+          <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
             {outletGroups
               .filter((grp) => selectedQueueOutlet === 'ALL' || grp.branchName === selectedQueueOutlet)
               .map((group) => (
                 <div
                   key={group.branchName}
-                  className="rounded-2xl border border-[#c2e7ff] dark:border-[#004a77] bg-white/90 dark:bg-[#1e1f20]/95 p-3.5 shadow-xs space-y-2.5 transition-all hover:border-[#0b57d0]/60"
+                  className="rounded-2xl border border-[#c2e7ff] dark:border-[#004a77] bg-white/90 dark:bg-[#1e1f20]/95 p-3.5 shadow-xs space-y-3 transition-all hover:border-[#0b57d0]/60"
                 >
-                  {/* Outlet Group Header & Shortcut Action */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#e0e2ec]/80 dark:border-[#333538] pb-2">
+                  {/* Outlet Group Header & Shortcut Actions */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-[#e0e2ec]/80 dark:border-[#333538] pb-2.5">
                     <div className="flex items-center gap-2.5">
                       <div className="h-8 w-8 rounded-xl bg-[#0b57d0]/10 dark:bg-[#a8c7fa]/20 flex items-center justify-center text-[#0b57d0] dark:text-[#a8c7fa] shrink-0">
                         <Building2 className="h-4 w-4" />
@@ -772,100 +1019,352 @@ export function TransferAssetView({
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => handleProcessFromQueue(group.assets, group.branchName)}
-                      className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-3.5 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-all shadow-xs self-start sm:self-auto group"
-                    >
-                      <Truck className="h-3.5 w-3.5 transition-transform group-hover:scale-110" />
-                      <span>Terbitkan Surat Jalan Outlet Ini ({group.count} Item)</span>
-                    </button>
+                    <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+                      {/* Tombol Copy Data Outlet */}
+                      <button
+                        onClick={() => copyToClipboard(formatOutletText(group), `Cabang ${group.branchName}`, `outlet-${group.branchName}`)}
+                        className="flex items-center gap-1.5 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#282a2c] px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-all shadow-xs cursor-pointer group"
+                        title={`Salin daftar item ${group.branchName} untuk WA / Chat Tim Logistik`}
+                      >
+                        {copiedId === `outlet-${group.branchName}` ? (
+                          <>
+                            <CheckCheck className="h-3.5 w-3.5 text-emerald-600" />
+                            <span className="text-emerald-700 dark:text-emerald-300 font-bold">Data Disalin</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400 group-hover:scale-110 transition-transform" />
+                            <span>Salin Data Cabang</span>
+                          </>
+                        )}
+                      </button>
+
+                      {/* Tombol Terbitkan Surat Jalan Outlet Ini */}
+                      <button
+                        onClick={() => handleProcessFromQueue(group.assets, group.branchName)}
+                        className="flex items-center gap-1.5 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] px-3.5 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-all shadow-xs group"
+                      >
+                        <Truck className="h-3.5 w-3.5 transition-transform group-hover:scale-110" />
+                        <span>Terbitkan Surat Jalan ({group.count} Item)</span>
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Asset Items Grid in Outlet */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                    {group.assets.map((asset) => {
-                      const isFromRo = asset.id?.startsWith('ro-');
-                      const photoUrl = asset.photo_url || getItemImageUrl(asset.item_name);
-                      const rawDate = asset.order_datetime || (asset as any).request_date || (asset.created_at ? asset.created_at.split('T')[0] : null);
-                      const reqDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate.split(' ')[0]) : null;
+                  {/* 1. MODEL KOLOM / GRID (Card Columns) */}
+                  {queueViewMode === 'grid' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                      {group.assets.map((asset) => {
+                        const isFromRo = asset.id?.startsWith('ro-');
+                        const photoUrl = asset.photo_url || getItemImageUrl(asset.item_name);
+                        const rawDate = asset.order_datetime || (asset as any).request_date || (asset.created_at ? asset.created_at.split('T')[0] : null);
+                        const reqDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate.split(' ')[0]) : null;
+                        const assetKey = asset.id || asset.external_id;
 
-                      return (
-                        <div
-                          key={asset.id || asset.external_id}
-                          className={`flex items-center justify-between rounded-xl border p-2.5 transition-colors ${
-                            isFromRo
-                              ? 'border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/40 dark:bg-emerald-950/20 hover:border-emerald-400'
-                              : 'border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 hover:border-[#0b57d0]/40'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 min-w-0 pr-2 flex-1">
-                            {/* Thumbnail Foto Aset */}
-                            {photoUrl ? (
-                              <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0">
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={photoUrl} alt={asset.item_name} className="w-full h-full object-cover" />
-                              </div>
-                            ) : (
-                              <div className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-center shrink-0">
-                                <Package className="w-4 h-4 text-slate-400" />
-                              </div>
-                            )}
-
-                            <div className="min-w-0 flex-1">
-                              <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
-                                {asset.item_name}
-                              </div>
-                              <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] flex flex-wrap items-center gap-1.5 mt-0.5">
-                                <strong className={isFromRo ? 'text-emerald-700 dark:text-emerald-300 font-mono' : 'text-[#0b57d0] dark:text-[#a8c7fa] font-mono'}>
-                                  {asset.quantity_needed || 1} unit
-                                </strong>
-
-                                {isFromRo ? (
-                                  <span className="rounded-full bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1 shrink-0">
-                                    <span>RO: {asset.external_id}</span>
-                                  </span>
-                                ) : (
-                                  <span className="rounded-full bg-blue-100 dark:bg-blue-950/60 px-1.5 py-0.5 text-[9px] font-bold text-blue-800 dark:text-blue-300 shrink-0">
-                                    Ready Antar
-                                  </span>
-                                )}
-
-                                {reqDate && (
-                                  <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[9px] font-medium text-[#444746] dark:text-[#c4c7c5] border border-slate-200 dark:border-slate-700 flex items-center gap-1 shrink-0" title="Tanggal Permintaan">
-                                    <Calendar className="h-2.5 w-2.5 text-[#747775] dark:text-[#8e918f]" />
-                                    <span>{formatDateOnly(reqDate)}</span>
-                                  </span>
-                                )}
-                              </div>
-
-                              {/* Catatan Item Prominent Notice */}
-                              {(asset.item_notes || (asset.notes && !asset.notes.startsWith('No. RO:'))) && (
-                                <div className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700/80 p-1.5 text-[11px] text-amber-900 dark:text-amber-200 shadow-2xs">
-                                  <span className="relative flex h-2 w-2 mt-0.5 shrink-0">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                                  </span>
-                                  <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                                  <div className="min-w-0 flex-1 leading-tight">
-                                    <span className="font-bold text-amber-800 dark:text-amber-300">Catatan:</span>{' '}
-                                    <span className="italic">{asset.item_notes || asset.notes}</span>
-                                  </div>
+                        return (
+                          <div
+                            key={assetKey}
+                            className={`flex items-center justify-between rounded-xl border p-2.5 transition-colors ${
+                              isFromRo
+                                ? 'border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/40 dark:bg-emerald-950/20 hover:border-emerald-400'
+                                : 'border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 hover:border-[#0b57d0]/40'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 pr-2 flex-1">
+                              {/* Thumbnail Foto Aset */}
+                              {photoUrl ? (
+                                <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={photoUrl} alt={asset.item_name} className="w-full h-full object-cover" />
+                                </div>
+                              ) : (
+                                <div className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-center shrink-0">
+                                  <Package className="w-4 h-4 text-slate-400" />
                                 </div>
                               )}
+
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
+                                  {asset.item_name}
+                                </div>
+                                <div className="text-[10px] text-[#444746] dark:text-[#c4c7c5] flex flex-wrap items-center gap-1.5 mt-0.5">
+                                  <strong className={isFromRo ? 'text-emerald-700 dark:text-emerald-300 font-mono' : 'text-[#0b57d0] dark:text-[#a8c7fa] font-mono'}>
+                                    {asset.quantity_needed || 1} unit
+                                  </strong>
+
+                                  {isFromRo ? (
+                                    <span className="rounded-full bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1 shrink-0">
+                                      <span>RO: {asset.external_id}</span>
+                                    </span>
+                                  ) : (
+                                    <span className="rounded-full bg-blue-100 dark:bg-blue-950/60 px-1.5 py-0.5 text-[9px] font-bold text-blue-800 dark:text-blue-300 shrink-0">
+                                      Ready Antar
+                                    </span>
+                                  )}
+
+                                  {reqDate && (
+                                    <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[9px] font-medium text-[#444746] dark:text-[#c4c7c5] border border-slate-200 dark:border-slate-700 flex items-center gap-1 shrink-0" title="Tanggal Permintaan">
+                                      <Calendar className="h-2.5 w-2.5 text-[#747775] dark:text-[#8e918f]" />
+                                      <span>{formatDateOnly(reqDate)}</span>
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Catatan Item Prominent Notice */}
+                                {(asset.item_notes || (asset.notes && !asset.notes.startsWith('No. RO:'))) && (
+                                  <div className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700/80 p-1.5 text-[11px] text-amber-900 dark:text-amber-200 shadow-2xs">
+                                    <span className="relative flex h-2 w-2 mt-0.5 shrink-0">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                                    </span>
+                                    <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                                    <div className="min-w-0 flex-1 leading-tight">
+                                      <span className="font-bold text-amber-800 dark:text-amber-300">Catatan:</span>{' '}
+                                      <span className="italic">{asset.item_notes || asset.notes}</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0 ml-1">
+                              {/* Quick Copy Item */}
+                              <button
+                                onClick={() => copyToClipboard(formatSingleItemText(asset, group.branchName), asset.item_name, assetKey)}
+                                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1e1f20] text-slate-500 hover:text-[#0b57d0] hover:border-[#0b57d0] transition-colors cursor-pointer"
+                                title="Salin rincian item ini"
+                              >
+                                {copiedId === assetKey ? (
+                                  <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+
+                              <button
+                                onClick={() => handleProcessFromQueue([asset], group.branchName)}
+                                className="rounded-full bg-white dark:bg-[#1e1f20] border border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors shrink-0 shadow-xs cursor-pointer"
+                                title="Kirim hanya item ini"
+                              >
+                                Kirim Ini Saja
+                              </button>
                             </div>
                           </div>
+                        );
+                      })}
+                    </div>
+                  )}
 
-                          <button
-                            onClick={() => handleProcessFromQueue([asset], group.branchName)}
-                            className="rounded-full bg-white dark:bg-[#1e1f20] border border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors shrink-0 shadow-xs cursor-pointer ml-1"
-                            title="Kirim hanya item ini"
+                  {/* 2. MODEL DETAIL (Expanded Horizontal Rows) */}
+                  {queueViewMode === 'detail' && (
+                    <div className="space-y-2">
+                      {group.assets.map((asset) => {
+                        const isFromRo = asset.id?.startsWith('ro-');
+                        const photoUrl = asset.photo_url || getItemImageUrl(asset.item_name);
+                        const rawDate = asset.order_datetime || (asset as any).request_date || (asset.created_at ? asset.created_at.split('T')[0] : null);
+                        const reqDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate.split(' ')[0]) : null;
+                        const itemNote = asset.item_notes || (asset.notes && !asset.notes.startsWith('No. RO:') ? asset.notes : '');
+                        const assetKey = asset.id || asset.external_id;
+
+                        return (
+                          <div
+                            key={assetKey}
+                            className={`rounded-xl border p-3 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
+                              isFromRo
+                                ? 'border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/30 dark:bg-emerald-950/20 hover:border-emerald-400'
+                                : 'border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 hover:border-[#0b57d0]/40'
+                            }`}
                           >
-                            Kirim Ini Saja
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                            <div className="flex items-start gap-3 min-w-0 flex-1">
+                              {photoUrl ? (
+                                <div className="w-12 h-12 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0 shadow-2xs">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={photoUrl} alt={asset.item_name} className="w-full h-full object-cover" />
+                                </div>
+                              ) : (
+                                <div className="w-12 h-12 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-center shrink-0">
+                                  <Package className="w-6 h-6 text-slate-400" />
+                                </div>
+                              )}
+
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h4 className="font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3]">
+                                    {asset.item_name}
+                                  </h4>
+                                  <span className="rounded-full bg-[#0b57d0]/10 dark:bg-[#a8c7fa]/20 text-[#0b57d0] dark:text-[#a8c7fa] px-2.5 py-0.5 text-xs font-bold font-mono">
+                                    {asset.quantity_needed || 1} unit
+                                  </span>
+                                  {isFromRo ? (
+                                    <span className="rounded-full bg-emerald-100 dark:bg-emerald-900/60 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700">
+                                      RO: {asset.external_id}
+                                    </span>
+                                  ) : (
+                                    <span className="rounded-full bg-blue-100 dark:bg-blue-950/60 px-2 py-0.5 text-[10px] font-bold text-blue-800 dark:text-blue-300">
+                                      Ready Antar
+                                    </span>
+                                  )}
+                                  {reqDate && (
+                                    <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-[#444746] dark:text-[#c4c7c5] border border-slate-200 dark:border-slate-700 flex items-center gap-1">
+                                      <Calendar className="h-3 w-3 text-[#747775]" />
+                                      <span>Tgl: {formatDateOnly(reqDate)}</span>
+                                    </span>
+                                  )}
+                                </div>
+
+                                {(asset.specification || asset.classification) && (
+                                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                                    <span className="font-semibold text-slate-500">Spesifikasi:</span> {asset.specification || asset.classification}
+                                  </p>
+                                )}
+
+                                {itemNote && (
+                                  <div className="flex items-start gap-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700/80 p-2 text-xs text-amber-900 dark:text-amber-200 mt-1 max-w-2xl">
+                                    <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                                    <div className="leading-tight">
+                                      <span className="font-bold text-amber-800 dark:text-amber-300">Catatan:</span>{' '}
+                                      <span className="italic">{itemNote}</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                              <button
+                                onClick={() => copyToClipboard(formatSingleItemText(asset, group.branchName), asset.item_name, assetKey)}
+                                className="flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#1e1f20] px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-[#0b57d0] hover:text-[#0b57d0] transition-colors shadow-xs cursor-pointer"
+                                title="Salin rincian item ini"
+                              >
+                                {copiedId === assetKey ? (
+                                  <>
+                                    <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span className="text-emerald-700 dark:text-emerald-300 font-bold">Disalin</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span>Salin</span>
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                onClick={() => handleProcessFromQueue([asset], group.branchName)}
+                                className="flex items-center gap-1.5 rounded-xl bg-[#0b57d0] dark:bg-[#a8c7fa] px-3.5 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-xs cursor-pointer"
+                              >
+                                <Truck className="w-3.5 h-3.5" />
+                                <span>Kirim Ini Saja</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* 3. MODEL TABEL (Compact Data Grid) */}
+                  {queueViewMode === 'table' && (
+                    <div className="overflow-x-auto rounded-xl border border-[#e0e2ec] dark:border-[#333538] bg-white dark:bg-[#1e1f20]">
+                      <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
+                        <thead className="bg-[#f0f4f9] dark:bg-[#282a2c] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#333538]">
+                          <tr>
+                            <th className="py-2.5 px-3 w-10 text-center">No</th>
+                            <th className="py-2.5 px-3">Item Aset</th>
+                            <th className="py-2.5 px-3">Spesifikasi</th>
+                            <th className="py-2.5 px-3 text-center">Jumlah</th>
+                            <th className="py-2.5 px-3">Sumber / No. RO</th>
+                            <th className="py-2.5 px-3">Tgl Permintaan</th>
+                            <th className="py-2.5 px-3">Catatan</th>
+                            <th className="py-2.5 px-3 text-right">Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#e0e2ec]/60 dark:divide-[#333538]/60">
+                          {group.assets.map((asset, idx) => {
+                            const isFromRo = asset.id?.startsWith('ro-');
+                            const photoUrl = asset.photo_url || getItemImageUrl(asset.item_name);
+                            const rawDate = asset.order_datetime || (asset as any).request_date || (asset.created_at ? asset.created_at.split('T')[0] : null);
+                            const reqDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate.split(' ')[0]) : null;
+                            const itemNote = asset.item_notes || (asset.notes && !asset.notes.startsWith('No. RO:') ? asset.notes : '');
+                            const assetKey = asset.id || asset.external_id;
+
+                            return (
+                              <tr key={assetKey} className="hover:bg-[#f8fafd] dark:hover:bg-[#282a2c]/50 transition-colors">
+                                <td className="py-2.5 px-3 text-center text-slate-400 font-medium">{idx + 1}</td>
+                                <td className="py-2.5 px-3">
+                                  <div className="flex items-center gap-2">
+                                    {photoUrl ? (
+                                      <div className="w-7 h-7 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-white shrink-0">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={photoUrl} alt={asset.item_name} className="w-full h-full object-cover" />
+                                      </div>
+                                    ) : (
+                                      <div className="w-7 h-7 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center justify-center shrink-0">
+                                        <Package className="w-3.5 h-3.5 text-slate-400" />
+                                      </div>
+                                    )}
+                                    <div className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">{asset.item_name}</div>
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400 max-w-[200px] truncate">
+                                  {asset.specification || asset.classification || '-'}
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <span className="font-bold font-mono text-[#0b57d0] dark:text-[#a8c7fa]">
+                                    {asset.quantity_needed || 1} unit
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {isFromRo ? (
+                                    <span className="inline-flex rounded-full bg-emerald-100 dark:bg-emerald-900/60 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700">
+                                      RO: {asset.external_id}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex rounded-full bg-blue-100 dark:bg-blue-950/60 px-2 py-0.5 text-[10px] font-bold text-blue-800 dark:text-blue-300">
+                                      Ready Antar
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                                  {reqDate ? formatDateOnly(reqDate) : '-'}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {itemNote ? (
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-300 dark:border-amber-700">
+                                      <FileText className="w-3 h-3 text-amber-600 shrink-0" />
+                                      <span className="truncate max-w-[180px]">{itemNote}</span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">-</span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      onClick={() => copyToClipboard(formatSingleItemText(asset, group.branchName), asset.item_name, assetKey)}
+                                      className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1e1f20] text-slate-500 hover:text-[#0b57d0] hover:border-[#0b57d0] transition-colors cursor-pointer"
+                                      title="Salin ringkasan baris ini"
+                                    >
+                                      {copiedId === assetKey ? (
+                                        <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                                      ) : (
+                                        <Copy className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={() => handleProcessFromQueue([asset], group.branchName)}
+                                      className="rounded-full bg-white dark:bg-[#1e1f20] border border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors shrink-0 shadow-xs cursor-pointer"
+                                      title="Kirim hanya item ini"
+                                    >
+                                      Kirim
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               ))}
           </div>
@@ -874,16 +1373,37 @@ export function TransferAssetView({
 
       {/* 4. Main Distribution Table */}
       <div className="panel-card overflow-hidden">
-        <div className="p-3 px-4 border-b border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#1e1f20] flex items-center justify-between gap-3">
+        <div className="p-3 px-4 border-b border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#1e1f20] flex items-center justify-between gap-3 flex-wrap">
           <div className="text-xs font-bold text-[#444746] dark:text-[#c4c7c5]">
             Daftar Dokumen Distribusi ({filteredTransfers.length})
           </div>
-          <ColumnVisibilityPicker
-            columns={TRANSFER_COLUMNS}
-            visibleColumns={visibleColumns}
-            onChange={setVisibleColumns}
-            storageKey="ca_transfer_columns"
-          />
+          <div className="flex items-center gap-2">
+            {filteredTransfers.length > 0 && (
+              <button
+                onClick={() => copyToClipboard(formatAllTransfersText(), 'Semua Dokumen Distribusi', 'all-docs')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#1e1f20] hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors shadow-xs cursor-pointer group"
+                title="Salin semua rekap dokumen surat jalan"
+              >
+                {copiedId === 'all-docs' ? (
+                  <>
+                    <CheckCheck className="h-3.5 w-3.5 text-emerald-600" />
+                    <span className="text-emerald-700 dark:text-emerald-300 font-bold">Tersalin!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5 group-hover:scale-110 transition-transform" />
+                    <span>Salin Dokumen</span>
+                  </>
+                )}
+              </button>
+            )}
+            <ColumnVisibilityPicker
+              columns={TRANSFER_COLUMNS}
+              visibleColumns={visibleColumns}
+              onChange={setVisibleColumns}
+              storageKey="ca_transfer_columns"
+            />
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
@@ -1041,6 +1561,18 @@ export function TransferAssetView({
                                 <span>Konfirmasi Tiba</span>
                               </button>
                             )}
+
+                            <button
+                              onClick={() => copyToClipboard(formatTransferDocText(t), `Surat Jalan ${t.transfer_number}`, `doc-${t.id}`)}
+                              className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors cursor-pointer"
+                              title="Salin ringkasan surat jalan ini"
+                            >
+                              {copiedId === `doc-${t.id}` ? (
+                                <CheckCheck className="h-3.5 w-3.5 text-emerald-600" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
+                            </button>
 
                             <button
                               onClick={() => {
@@ -1723,6 +2255,16 @@ export function TransferAssetView({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast Feedback Notifikasi Salin Data */}
+      {copyFeedback && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-2xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 px-4 py-3 text-xs font-semibold shadow-2xl border border-slate-700/50 dark:border-slate-200/50 animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <div className="h-6 w-6 rounded-full bg-emerald-500/20 text-emerald-400 dark:text-emerald-600 flex items-center justify-center shrink-0">
+            <CheckCheck className="w-4 h-4" />
+          </div>
+          <span>{copyFeedback}</span>
         </div>
       )}
     </div>
