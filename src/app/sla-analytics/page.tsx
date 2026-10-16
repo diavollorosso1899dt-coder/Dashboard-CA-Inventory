@@ -1,5 +1,5 @@
 import React from 'react';
-import { calculateDashboardMetrics, getAssetRequests, getRequestOrders, getBranchOpeningSummaries } from '@/lib/supabase/server';
+import { calculateDashboardMetrics, getAssetRequests, getRequestOrders, getBranchOpeningSummaries, getAssetTransfers } from '@/lib/supabase/server';
 import { RegionType } from '@/lib/supabase/types';
 import InteractiveSlaDashboard from '@/components/sla/InteractiveSlaDashboard';
 
@@ -18,11 +18,12 @@ export default async function SlaAnalyticsPage({ searchParams }: PageProps) {
   const { region: rawRegion } = await searchParams;
   const region = (rawRegion as RegionType) || 'ALL';
 
-  const [metrics, assetResponse, roOrders, branchSummaries] = await Promise.all([
+  const [metrics, assetResponse, roOrders, branchSummaries, transfers] = await Promise.all([
     calculateDashboardMetrics(region),
     getAssetRequests({ region, limit: 3000 }),
     getRequestOrders(),
     getBranchOpeningSummaries(region),
+    getAssetTransfers(),
   ]);
 
   return (
@@ -30,6 +31,7 @@ export default async function SlaAnalyticsPage({ searchParams }: PageProps) {
       initialRoOrders={roOrders}
       initialAssetRequests={assetResponse.data}
       initialBranchSummaries={branchSummaries}
+      initialTransfers={transfers}
       metrics={metrics}
       initialRegion={region}
     />

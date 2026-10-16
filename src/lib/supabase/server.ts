@@ -1568,6 +1568,20 @@ export async function updateAssetTransfer(id: string, payload: Partial<AssetTran
   return updated;
 }
 
+export async function deleteAssetTransfer(id: string): Promise<{ success: boolean }> {
+  invalidateTransfersCache();
+  const admin = getAdminClient();
+  if (admin) {
+    try {
+      await admin.from('asset_transfers').delete().eq('id', id);
+    } catch (err: any) {
+      console.error('[Supabase deleteAssetTransfer exception]:', err.message);
+    }
+  }
+  cache.transfers = cache.transfers.filter((t) => t.id !== id);
+  return { success: true };
+}
+
 export async function clearAllAssetTransfers(): Promise<{ success: boolean; count: number }> {
   invalidateTransfersCache();
   const admin = getAdminClient();

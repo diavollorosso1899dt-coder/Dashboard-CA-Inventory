@@ -1,10 +1,11 @@
 import React from 'react';
+import Link from 'next/link';
 import { UpcomingOpeningsCard } from '@/components/dashboard/UpcomingOpeningsCard';
 import { ExecutiveKpiCards } from '@/components/dashboard/ExecutiveKpiCards';
 import { AssetDataTable } from '@/components/tracker/AssetDataTable';
 import { getBranchOpeningSummaries, getAssetRequests, getRequestOrders, getSuratJalanList } from '@/lib/supabase/server';
 import { RegionType } from '@/lib/supabase/types';
-import { Layers } from 'lucide-react';
+import { Layers, ClipboardCheck, ArrowRight } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,9 +67,35 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </span>
           </div>
           <p className="text-xs sm:text-sm text-[#444746] dark:text-[#c4c7c5] mt-1">
-            Monitoring terpusat permohonan aset, durasi SLA, dan kesiapan outlet baru.
+             Monitoring terpusat permohonan aset, durasi SLA, dan kesiapan outlet baru.
           </p>
         </div>
+      </div>
+
+      {/* Banner Akses Fitur Baru: Stock Opname Harian */}
+      <div className="bg-gradient-to-r from-sky-600 via-indigo-600 to-indigo-800 text-white rounded-2xl p-4 sm:p-5 shadow-sm hover:shadow-md transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="p-3 bg-white/20 backdrop-blur-md rounded-xl text-white shrink-0">
+            <ClipboardCheck className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-emerald-400/20 text-emerald-200 rounded-full text-[10px] font-bold uppercase tracking-wider mb-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>Fitur Baru Terintegrasi</span>
+            </div>
+            <h2 className="text-base font-bold">Stock Opname Harian (SO Harian)</h2>
+            <p className="text-xs text-sky-100 max-w-xl">
+              Rekonsiliasi mutasi harian RO, Penerimaan, dan cek fisik rak (Peralatan &amp; Perlengkapan Tetap) dengan scanner barcode kamera HP/PC.
+            </p>
+          </div>
+        </div>
+        <Link
+          href="/stock-opname"
+          className="px-4 py-2.5 bg-white text-indigo-700 hover:bg-sky-50 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 shrink-0"
+        >
+          <span>Buka Modul SO</span>
+          <ArrowRight className="w-4 h-4" />
+        </Link>
       </div>
 
       {/* 1. Ringkasan Eksekutif KPI */}

@@ -27,21 +27,24 @@ import {
   LayoutGrid,
   List,
   Table as TableIcon,
-  CheckCheck
+  CheckCheck,
+  Clock
 } from 'lucide-react';
+import Link from 'next/link';
 import { AssetTransfer, Outlet, AssetRequest, TransferStatus, TransferItem, RequestOrder } from '@/lib/supabase/types';
 import { getItemImageUrl } from '@/lib/assetImageHelper';
 import { formatDateOnly } from '@/lib/utils/date-formatter';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
 import AreaFilterPills from '@/components/ui/AreaFilterPills';
 import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
+import { useAuth } from '@/components/auth/AuthContext';
 
 const TRANSFER_COLUMNS: ColumnItem[] = [
   { id: 'doc_number', label: 'No. Dokumen & Surat Jalan', defaultVisible: true, alwaysVisible: true },
   { id: 'route', label: 'Rute Distribusi', defaultVisible: true },
   { id: 'dates_courier', label: 'Tanggal & Kurir', defaultVisible: true },
   { id: 'pics', label: 'PIC Pengirim / Penerima', defaultVisible: true },
-  { id: 'items', label: 'Item', defaultVisible: true },
+  { id: 'items', label: 'Item & Tindakan Hapus', defaultVisible: true },
   { id: 'status', label: 'Status', defaultVisible: true },
   { id: 'actions', label: 'Aksi', defaultVisible: true, alwaysVisible: true },
 ];
@@ -65,7 +68,7 @@ export function TransferAssetView({
 
   const [transfers, setTransfers] = useState<AssetTransfer[]>(initialTransfers);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | TransferStatus>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ACTIVE' | 'RECEIVED' | 'ALL'>('ACTIVE');
 
   // Sync regionFilter when URL parameter changes
   useEffect(() => {
@@ -97,16 +100,39 @@ export function TransferAssetView({
   const [queueViewMode, setQueueViewMode] = useState<'grid' | 'detail' | 'table'>('grid');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [viewingAsset, setViewingAsset] = useState<AssetRequest | null>(null);
   const [requestOrders, setRequestOrders] = useState<RequestOrder[]>(initialRequestOrders || []);
   const [monitoringAssets, setMonitoringAssets] = useState<AssetRequest[]>(initialAssets || []);
   const [lastRoSyncTime, setLastRoSyncTime] = useState<Date>(new Date());
 
-  // Load saved view mode from localStorage
+  // Authentication & Superuser check
+  const { user } = useAuth();
+  const isSuperUser = Boolean(
+    user?.role === 'Super User' || 
+    user?.role === 'super_user' || 
+    user?.email === 'superuser@coffee-arabica.co.id'
+  );
+
+  // Dispatched items tracking
+  const [dispatchedKeys, setDispatchedKeys] = useState<string[]>([]);
+  const [isSuperUserModalOpen, setIsSuperUserModalOpen] = useState(false);
+  const [superUserPasswordInput, setSuperUserPasswordInput] = useState('');
+  const [superUserError, setSuperUserError] = useState<string | null>(null);
+  const [pendingDeleteAction, setPendingDeleteAction] = useState<{
+    transfer: AssetTransfer;
+    item: TransferItem;
+  } | null>(null);
+
+  // Load saved view mode and dispatched keys from localStorage
   useEffect(() => {
     try {
       const savedMode = localStorage.getItem('ca_queue_view_mode') as 'grid' | 'detail' | 'table';
       if (savedMode && ['grid', 'detail', 'table'].includes(savedMode)) {
         setQueueViewMode(savedMode);
+      }
+      const savedDispatched = localStorage.getItem('ca_dispatched_asset_keys');
+      if (savedDispatched) {
+        setDispatchedKeys(JSON.parse(savedDispatched));
       }
     } catch (e) {}
   }, []);
@@ -388,16 +414,62 @@ export function TransferAssetView({
     });
   }, [monitoringAssets, regionFilter]);
 
+  // Set of transferred / dispatched item keys to filter out from Outlet Queue
+  const transferredKeysSet = useMemo(() => {
+    const set = new Set<string>();
+
+    (transfers || []).forEach((t) => {
+      if (t.status === 'CANCELLED') return;
+      const dest = (t.to_location || '').toLowerCase().trim();
+      (t.items || []).forEach((item) => {
+        if (item.asset_id) {
+          set.add(item.asset_id.toLowerCase().trim());
+        }
+        const itName = (item.item_name || '').toLowerCase().trim();
+        if (itName && dest) {
+          set.add(`${dest}:::${itName}`);
+        }
+        if (item.notes) {
+          const roMatch = item.notes.match(/RO[:\-\s]*([A-Za-z0-9\-]+)/i);
+          if (roMatch && roMatch[1] && dest) {
+            set.add(`${dest}:::${roMatch[1].toLowerCase().trim()}:::${itName}`);
+          }
+        }
+      });
+    });
+
+    dispatchedKeys.forEach((k) => set.add(k.toLowerCase().trim()));
+
+    return set;
+  }, [transfers, dispatchedKeys]);
+
   // Automatic Queue of Assets (Gabungan Kelola RO Ready Stock & Monitoring Aset)
   const readyDistributionAssets = useMemo(() => {
+    let rawList: AssetRequest[] = [];
     if (queueSourceFilter === 'RO_ONLY') {
-      return roReadyAssets;
+      rawList = roReadyAssets;
+    } else if (queueSourceFilter === 'MONITORING_ONLY') {
+      rawList = baseMonitoringReadyAssets;
+    } else {
+      rawList = [...roReadyAssets, ...baseMonitoringReadyAssets];
     }
-    if (queueSourceFilter === 'MONITORING_ONLY') {
-      return baseMonitoringReadyAssets;
-    }
-    return [...roReadyAssets, ...baseMonitoringReadyAssets];
-  }, [roReadyAssets, baseMonitoringReadyAssets, queueSourceFilter]);
+
+    // Filter out items that are already transferred or dispatched
+    return rawList.filter((asset) => {
+      const assetId = (asset.id || '').toLowerCase().trim();
+      const extId = (asset.external_id || '').toLowerCase().trim();
+      const branch = (asset.branch_name || '').toLowerCase().trim();
+      const itemName = (asset.item_name || '').toLowerCase().trim();
+      const branchItemKey = `${branch}:::${itemName}`;
+      const branchExtItemKey = extId ? `${branch}:::${extId}:::${itemName}` : '';
+
+      if (assetId && transferredKeysSet.has(assetId)) return false;
+      if (branchItemKey && transferredKeysSet.has(branchItemKey)) return false;
+      if (branchExtItemKey && transferredKeysSet.has(branchExtItemKey)) return false;
+
+      return true;
+    });
+  }, [roReadyAssets, baseMonitoringReadyAssets, queueSourceFilter, transferredKeysSet]);
 
   // Group ready assets by outlet/branch name
   const groupedReadyAssets = useMemo(() => {
@@ -571,14 +643,209 @@ export function TransferAssetView({
       if (json.success && json.data) {
         setTransfers((prev) => [json.data, ...prev]);
         setIsCreateModalOpen(false);
+
+        // Record all dispatched items so they disappear from Outlet queue
+        const newlyDispatched: string[] = [];
+        itemsList.forEach((it) => {
+          if (it.asset_id) newlyDispatched.push(it.asset_id);
+          if (it.item_name && toLocation) {
+            newlyDispatched.push(`${toLocation.toLowerCase()}:::${it.item_name.toLowerCase()}`);
+          }
+        });
+
+        const updatedKeys = Array.from(new Set([...dispatchedKeys, ...newlyDispatched])).filter(Boolean);
+        setDispatchedKeys(updatedKeys);
+        try {
+          localStorage.setItem('ca_dispatched_asset_keys', JSON.stringify(updatedKeys));
+        } catch (e) {}
+
         setItemsList([]);
         setNotes('');
         setTrackingNumber('');
+        setCopyFeedback(`Surat Jalan ${json.data.surat_jalan_number} berhasil diterbitkan (${itemsList.length} item).`);
+        setTimeout(() => setCopyFeedback(null), 3500);
       } else {
         alert(json.error || 'Gagal membuat dokumen surat jalan pendistribusian');
       }
     } catch (err: any) {
       console.error('Failed to submit transfer:', err);
+      alert(`Terjadi kesalahan: ${err.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Direct Ship Single Item ("Kirim Ini Saja")
+  const handleDirectShipSingleItem = async (asset: AssetRequest, branchName: string) => {
+    const confirmSend = window.confirm(
+      `Terbitkan Surat Jalan & kirim item ini sekarang?\n\n• Item: ${asset.item_name}\n• Jumlah: ${asset.quantity_needed || 1} unit\n• Cabang Tujuan: ${branchName}\n\nItem akan langsung dipindahkan ke Daftar Dokumen Distribusi dan dihapus dari antrean Outlet.`
+    );
+    if (!confirmSend) return;
+
+    try {
+      setIsSubmitting(true);
+      const year = new Date().getFullYear();
+      const rand = Math.floor(1000 + Math.random() * 9000);
+      const itemNote = asset.item_notes || (asset.notes && !asset.notes.startsWith('No. RO:') ? asset.notes : '');
+      const assetKey = asset.id || asset.external_id || `${branchName}:::${asset.item_name}`;
+
+      const formattedItem: TransferItem = {
+        id: `ti-dist-${Date.now()}-0`,
+        asset_id: asset.id || asset.external_id,
+        item_name: asset.item_name,
+        specification: asset.classification || asset.specification || '',
+        quantity: asset.quantity_needed || 1,
+        condition: 'BAIK',
+        notes: itemNote || (asset.notes || ''),
+      };
+
+      const payload: Partial<AssetTransfer> = {
+        transfer_number: `DIST/${year}/${rand}`,
+        surat_jalan_number: `SJ-DIST/${year}/${rand}`,
+        source_type: 'GUDANG_PUSAT',
+        from_location: 'Gudang Pusat SCGA',
+        destination_type: 'OUTLET',
+        to_location: branchName,
+        transfer_date: new Date().toISOString().split('T')[0],
+        status: 'IN_TRANSIT',
+        sender_pic: user?.full_name || 'Staff Logistik SCGA',
+        receiver_pic: '',
+        expedition_courier: 'Armada Internal SCGA',
+        tracking_number: `RESI-${Date.now().toString().slice(-6)}`,
+        items: [formattedItem],
+        notes: `Surat Jalan Distribusi khusus untuk ${asset.item_name} ke ${branchName}.`,
+      };
+
+      const res = await fetch('/api/transfers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json();
+      if (json.success && json.data) {
+        setTransfers((prev) => [json.data, ...prev]);
+
+        const newKeys = Array.from(new Set([
+          ...dispatchedKeys,
+          assetKey,
+          asset.id || '',
+          asset.external_id || '',
+          `${branchName.toLowerCase()}:::${asset.item_name.toLowerCase()}`
+        ])).filter(Boolean);
+
+        setDispatchedKeys(newKeys);
+        try {
+          localStorage.setItem('ca_dispatched_asset_keys', JSON.stringify(newKeys));
+        } catch (e) {}
+
+        setCopyFeedback(`Surat Jalan ${json.data.surat_jalan_number} berhasil diterbitkan! Item "${asset.item_name}" dipindahkan ke Dokumen Distribusi.`);
+        setTimeout(() => setCopyFeedback(null), 3500);
+      } else {
+        alert(json.error || 'Gagal menerbitkan surat jalan pendistribusian');
+      }
+    } catch (err: any) {
+      console.error('Failed to submit direct transfer:', err);
+      alert(`Terjadi kesalahan: ${err.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Delete item from distribution document (Restricted to Superuser)
+  const promptDeleteItem = (transfer: AssetTransfer, item: TransferItem) => {
+    if (isSuperUser) {
+      const confirmDelete = window.confirm(
+        `Hapus item "${item.item_name}" (${item.quantity} unit) dari Dokumen Distribusi ${transfer.surat_jalan_number || transfer.transfer_number}?\n\nItem ini akan otomatis dikembalikan ke kolom antrean Outlet.`
+      );
+      if (confirmDelete) {
+        executeDeleteItem(transfer, item);
+      }
+    } else {
+      setPendingDeleteAction({ transfer, item });
+      setSuperUserPasswordInput('');
+      setSuperUserError(null);
+      setIsSuperUserModalOpen(true);
+    }
+  };
+
+  const handleVerifySuperUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (superUserPasswordInput !== 'usergacor') {
+      setSuperUserError('Kata sandi Superuser salah. Akses ditolak!');
+      return;
+    }
+    setIsSuperUserModalOpen(false);
+    if (pendingDeleteAction) {
+      await executeDeleteItem(pendingDeleteAction.transfer, pendingDeleteAction.item);
+      setPendingDeleteAction(null);
+    }
+  };
+
+  const executeDeleteItem = async (transfer: AssetTransfer, itemToDelete: TransferItem) => {
+    try {
+      setIsSubmitting(true);
+      const remainingItems = (transfer.items || []).filter((it) => it.id !== itemToDelete.id);
+
+      if (remainingItems.length === 0) {
+        // Hapus dokumen transfer secara keseluruhan jika tidak ada item tersisa
+        const res = await fetch(`/api/transfers?id=${transfer.id}`, {
+          method: 'DELETE',
+        });
+        const json = await res.json();
+        if (!json.success) {
+          alert(json.error || 'Gagal menghapus dokumen transfer');
+          return;
+        }
+
+        setTransfers((prev) => prev.filter((t) => t.id !== transfer.id));
+        if (selectedTransfer?.id === transfer.id) {
+          setIsDetailModalOpen(false);
+          setSelectedTransfer(null);
+        }
+      } else {
+        // Update item tersisa pada dokumen transfer
+        const res = await fetch('/api/transfers', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: transfer.id,
+            items: remainingItems,
+          }),
+        });
+        const json = await res.json();
+        if (!json.success) {
+          alert(json.error || 'Gagal memperbarui item dokumen transfer');
+          return;
+        }
+
+        const updatedDoc = json.data;
+        setTransfers((prev) => prev.map((t) => (t.id === transfer.id ? updatedDoc : t)));
+        if (selectedTransfer?.id === transfer.id) {
+          setSelectedTransfer(updatedDoc);
+        }
+      }
+
+      // Hapus dari dispatchedKeys agar item kembali muncul di kolom antrean outlet
+      const targetBranch = (transfer.to_location || '').toLowerCase().trim();
+      const targetItem = (itemToDelete.item_name || '').toLowerCase().trim();
+      const branchKey = `${targetBranch}:::${targetItem}`;
+
+      const updatedKeys = dispatchedKeys.filter(
+        (k) => 
+          k.toLowerCase() !== (itemToDelete.asset_id || '').toLowerCase() &&
+          k.toLowerCase() !== branchKey &&
+          k.toLowerCase() !== targetItem
+      );
+      setDispatchedKeys(updatedKeys);
+      try {
+        localStorage.setItem('ca_dispatched_asset_keys', JSON.stringify(updatedKeys));
+      } catch (e) {}
+
+      setCopyFeedback(`Item "${itemToDelete.item_name}" berhasil dihapus dari Dokumen Distribusi & dikembalikan ke antrean Outlet.`);
+      setTimeout(() => setCopyFeedback(null), 3500);
+    } catch (err: any) {
+      console.error('Failed to delete item from transfer:', err);
       alert(`Terjadi kesalahan: ${err.message}`);
     } finally {
       setIsSubmitting(false);
@@ -620,7 +887,70 @@ export function TransferAssetView({
       if (json.success && json.data) {
         setTransfers((prev) => prev.map((t) => (t.id === selectedTransfer.id ? json.data : t)));
         setIsReceiveModalOpen(false);
+
+        // Sinkronisasi item yang diterima ke Kelola RO untuk pengukuran SLA
+        try {
+          const destOutlet = (selectedTransfer.to_location || '').toLowerCase().trim();
+          for (const item of selectedTransfer.items || []) {
+            const itName = (item.item_name || '').toLowerCase().trim();
+            // Cari dokumen RO yang cocok
+            const targetRo = (requestOrders || []).find((ro) => {
+              if (item.asset_id && (item.asset_id === ro.ro_number || item.asset_id.startsWith(`ro-${ro.id}`))) {
+                return true;
+              }
+              if (item.notes && item.notes.includes(ro.ro_number)) {
+                return true;
+              }
+              const roBranch = (ro.branch_name || '').toLowerCase().trim();
+              if (roBranch === destOutlet && (ro.items || []).some((ri) => (ri.item_name || '').toLowerCase().trim() === itName)) {
+                return true;
+              }
+              return false;
+            });
+
+            if (targetRo) {
+              const updatedRoItems = (targetRo.items || []).map((ri) => {
+                if ((ri.item_name || '').toLowerCase().trim() === itName) {
+                  return {
+                    ...ri,
+                    quantity_fulfilled: item.quantity || ri.quantity_ordered,
+                    stock_source: 'GUDANG_SCGA',
+                  };
+                }
+                return ri;
+              });
+
+              const allFulfilled = updatedRoItems.every(
+                (ri) => (ri.quantity_fulfilled || 0) >= (ri.quantity_ordered || 1)
+              );
+
+              await fetch('/api/distribution/ro', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  id: targetRo.id,
+                  updates: {
+                    items: updatedRoItems,
+                    arrival_datetime: receiveDate,
+                    received_date: receiveDate,
+                    pic_receiver: receivePic.trim(),
+                    checklist_notes: receiveNotes.trim(),
+                    current_stage: allFulfilled ? 'SELESAI' : 'ASET_SAMPAI',
+                    status: allFulfilled ? 'COMPLETED' : targetRo.status,
+                  },
+                }),
+              });
+            }
+          }
+          window.dispatchEvent(new Event('ca_ro_updated'));
+          window.dispatchEvent(new Event('storage'));
+        } catch (syncErr) {
+          console.warn('Sync to RO failed:', syncErr);
+        }
+
         setSelectedTransfer(null);
+        setCopyFeedback(`Aset berhasil diterima outlet! Dokumen keluar dari antrean aktif dan data item masuk ke Monitoring SLA.`);
+        setTimeout(() => setCopyFeedback(null), 4500);
       } else {
         alert(json.error || 'Gagal mengonfirmasi penerimaan aset di outlet');
       }
@@ -674,7 +1004,13 @@ export function TransferAssetView({
       const tReg = (t as any).region || outletRegionMap.get((t.to_location || '').toLowerCase().trim()) || (t.to_location.toLowerCase().includes('kalbar') ? 'KALBAR' : 'JABODETABEK');
       if (!matchesRegion(tReg, regionFilter)) return false;
 
-      if (statusFilter !== 'ALL' && t.status !== statusFilter) return false;
+      // Status filter logic: Dokumen yang sudah diterima outlet keluar dari daftar aktif
+      if (statusFilter === 'ACTIVE') {
+        if (t.status === 'RECEIVED' || t.status === 'COMPLETED') return false;
+      } else if (statusFilter === 'RECEIVED') {
+        if (t.status !== 'RECEIVED' && t.status !== 'COMPLETED') return false;
+      }
+
       if (search.trim()) {
         const q = search.toLowerCase();
         const match =
@@ -715,17 +1051,21 @@ export function TransferAssetView({
           </div>
 
           <div className="flex items-center gap-1 bg-[#f0f4f9] dark:bg-[#1e1f20] p-1 rounded-full border border-[#e0e2ec] dark:border-[#444746] text-xs">
-            {(['ALL', 'IN_TRANSIT', 'RECEIVED'] as const).map((st) => (
+            {[
+              { id: 'ACTIVE', label: 'Dalam Perjalanan (Aktif)' },
+              { id: 'RECEIVED', label: 'Diterima Outlet (SLA)' },
+              { id: 'ALL', label: 'Semua' },
+            ].map((tab) => (
               <button
-                key={st}
-                onClick={() => setStatusFilter(st)}
+                key={tab.id}
+                onClick={() => setStatusFilter(tab.id as any)}
                 className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all ${
-                  statusFilter === st
+                  statusFilter === tab.id
                     ? 'bg-[#0b57d0] text-white shadow-xs'
                     : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
                 }`}
               >
-                {st === 'ALL' ? 'Semua' : st === 'IN_TRANSIT' ? 'Perjalanan' : 'Diterima'}
+                {tab.label}
               </button>
             ))}
           </div>
@@ -779,7 +1119,71 @@ export function TransferAssetView({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto relative">
+          <div className="flex items-center gap-2 self-start sm:self-auto relative flex-wrap">
+            {/* View Mode Switcher Langsung di Header Kartu */}
+            <div className="flex items-center gap-0.5 bg-white dark:bg-[#1e1f20] p-1 rounded-full border-2 border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 shadow-xs">
+              <span className="text-[10px] font-bold text-[#747775] dark:text-[#8e918f] pl-2 pr-1 uppercase tracking-wider hidden md:inline">
+                Model:
+              </span>
+              <button
+                onClick={() => handleChangeViewMode('grid')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                  queueViewMode === 'grid'
+                    ? 'bg-[#0b57d0] text-white shadow-xs'
+                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#0b57d0] hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/30'
+                }`}
+                title="Tampilan Model Kolom (Grid)"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Kolom</span>
+              </button>
+              <button
+                onClick={() => handleChangeViewMode('detail')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                  queueViewMode === 'detail'
+                    ? 'bg-[#0b57d0] text-white shadow-xs'
+                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#0b57d0] hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/30'
+                }`}
+                title="Tampilan Model Baris Detail Lengkap"
+              >
+                <List className="w-3.5 h-3.5" />
+                <span>Detail</span>
+              </button>
+              <button
+                onClick={() => handleChangeViewMode('table')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                  queueViewMode === 'table'
+                    ? 'bg-[#0b57d0] text-white shadow-xs'
+                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#0b57d0] hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/30'
+                }`}
+                title="Tampilan Model Tabel Kompak"
+              >
+                <TableIcon className="w-3.5 h-3.5" />
+                <span>Tabel</span>
+              </button>
+            </div>
+
+            {/* Tombol Copy Semua Antrean di Header */}
+            {readyDistributionAssets.length > 0 && (
+              <button
+                onClick={() => copyToClipboard(formatAllQueueText(), 'Semua Antrean', 'header-all-queue')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-blue-300 dark:border-blue-700 bg-white dark:bg-[#1e1f20] hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold text-xs transition-all shadow-xs cursor-pointer group"
+                title="Salin semua data antrean distribusi"
+              >
+                {copiedId === 'header-all-queue' ? (
+                  <>
+                    <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-emerald-700 dark:text-emerald-300">Tersalin!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
+                    <span className="hidden sm:inline">Salin Antrean</span>
+                  </>
+                )}
+              </button>
+            )}
+
             {readyDistributionAssets.length > 0 && (
               <>
                 {outletGroups.length === 1 ? (
@@ -1127,6 +1531,16 @@ export function TransferAssetView({
                             </div>
 
                             <div className="flex items-center gap-1 shrink-0 ml-1">
+                              {/* Tombol View Detail Aset */}
+                              <button
+                                onClick={() => setViewingAsset(asset)}
+                                className="flex items-center gap-1 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 px-2 py-1 text-[10px] font-bold text-slate-700 dark:text-slate-200 transition-colors shrink-0 shadow-2xs cursor-pointer border border-slate-200 dark:border-slate-700"
+                                title="Lihat detail lengkap barang ini"
+                              >
+                                <Eye className="w-3 h-3 text-[#0b57d0]" />
+                                <span>View</span>
+                              </button>
+
                               {/* Quick Copy Item */}
                               <button
                                 onClick={() => copyToClipboard(formatSingleItemText(asset, group.branchName), asset.item_name, assetKey)}
@@ -1141,9 +1555,9 @@ export function TransferAssetView({
                               </button>
 
                               <button
-                                onClick={() => handleProcessFromQueue([asset], group.branchName)}
+                                onClick={() => handleDirectShipSingleItem(asset, group.branchName)}
                                 className="rounded-full bg-white dark:bg-[#1e1f20] border border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors shrink-0 shadow-xs cursor-pointer"
-                                title="Kirim hanya item ini"
+                                title="Kirim hanya item ini (terbitkan Surat Jalan langsung & pindahkan ke Dokumen Distribusi)"
                               >
                                 Kirim Ini Saja
                               </button>
@@ -1230,6 +1644,16 @@ export function TransferAssetView({
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                              {/* Tombol View Detail Aset */}
+                              <button
+                                onClick={() => setViewingAsset(asset)}
+                                className="flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 px-3 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 transition-colors shadow-xs cursor-pointer"
+                                title="Buka modal detail lengkap aset ini"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                                <span>View Detail</span>
+                              </button>
+
                               <button
                                 onClick={() => copyToClipboard(formatSingleItemText(asset, group.branchName), asset.item_name, assetKey)}
                                 className="flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#1e1f20] px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-[#0b57d0] hover:text-[#0b57d0] transition-colors shadow-xs cursor-pointer"
@@ -1248,8 +1672,9 @@ export function TransferAssetView({
                                 )}
                               </button>
                               <button
-                                onClick={() => handleProcessFromQueue([asset], group.branchName)}
+                                onClick={() => handleDirectShipSingleItem(asset, group.branchName)}
                                 className="flex items-center gap-1.5 rounded-xl bg-[#0b57d0] dark:bg-[#a8c7fa] px-3.5 py-1.5 text-xs font-bold text-white dark:text-[#041e49] hover:bg-[#0842a0] dark:hover:bg-[#d3e3fd] transition-colors shadow-xs cursor-pointer"
+                                title="Kirim hanya item ini (terbitkan Surat Jalan langsung & pindahkan ke Dokumen Distribusi)"
                               >
                                 <Truck className="w-3.5 h-3.5" />
                                 <span>Kirim Ini Saja</span>
@@ -1338,6 +1763,16 @@ export function TransferAssetView({
                                 </td>
                                 <td className="py-2.5 px-3 text-right">
                                   <div className="flex items-center justify-end gap-1.5">
+                                    {/* Tombol View Detail Aset */}
+                                    <button
+                                      onClick={() => setViewingAsset(asset)}
+                                      className="flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[10px] font-bold text-slate-700 dark:text-slate-200 hover:text-[#0b57d0] hover:border-[#0b57d0] transition-colors cursor-pointer"
+                                      title="Lihat detail lengkap aset"
+                                    >
+                                      <Eye className="w-3 h-3 text-[#0b57d0]" />
+                                      <span>View</span>
+                                    </button>
+
                                     <button
                                       onClick={() => copyToClipboard(formatSingleItemText(asset, group.branchName), asset.item_name, assetKey)}
                                       className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1e1f20] text-slate-500 hover:text-[#0b57d0] hover:border-[#0b57d0] transition-colors cursor-pointer"
@@ -1350,11 +1785,11 @@ export function TransferAssetView({
                                       )}
                                     </button>
                                     <button
-                                      onClick={() => handleProcessFromQueue([asset], group.branchName)}
+                                      onClick={() => handleDirectShipSingleItem(asset, group.branchName)}
                                       className="rounded-full bg-white dark:bg-[#1e1f20] border border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 px-2.5 py-1 text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#0b57d0] hover:text-white dark:hover:bg-[#a8c7fa] dark:hover:text-[#041e49] transition-colors shrink-0 shadow-xs cursor-pointer"
-                                      title="Kirim hanya item ini"
+                                      title="Kirim hanya item ini (terbitkan Surat Jalan langsung & pindahkan ke Dokumen Distribusi)"
                                     >
-                                      Kirim
+                                      Kirim Ini Saja
                                     </button>
                                   </div>
                                 </td>
@@ -1374,10 +1809,25 @@ export function TransferAssetView({
       {/* 4. Main Distribution Table */}
       <div className="panel-card overflow-hidden">
         <div className="p-3 px-4 border-b border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#1e1f20] flex items-center justify-between gap-3 flex-wrap">
-          <div className="text-xs font-bold text-[#444746] dark:text-[#c4c7c5]">
-            Daftar Dokumen Distribusi ({filteredTransfers.length})
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-bold text-[#444746] dark:text-[#c4c7c5]">
+              Daftar Dokumen Distribusi {statusFilter === 'ACTIVE' ? 'Aktif' : statusFilter === 'RECEIVED' ? 'Diterima di Outlet (SLA)' : ''} ({filteredTransfers.length})
+            </span>
+            {statusFilter === 'ACTIVE' && (
+              <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800">
+                Item diterima otomatis keluar &amp; masuk ke SLA
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link
+              href="/distribution/sla"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-xs font-semibold transition-colors shadow-2xs"
+              title="Buka Monitoring SLA untuk melihat ketepatan waktu pengiriman vs permintaan"
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+              <span>Monitoring SLA</span>
+            </Link>
             {filteredTransfers.length > 0 && (
               <button
                 onClick={() => copyToClipboard(formatAllTransfersText(), 'Semua Dokumen Distribusi', 'all-docs')}
@@ -1508,18 +1958,52 @@ export function TransferAssetView({
                         </td>
                       )}
 
-                      {/* Items Count */}
+                      {/* Items Column with Item List & Superuser Delete Button */}
                       {isVisible('items') && (
-                        <td className="py-3 px-3 text-center">
-                          <button
-                            onClick={() => {
-                              setSelectedTransfer(t);
-                              setIsDetailModalOpen(true);
-                            }}
-                            className="rounded-full bg-[#f0f4f9] dark:bg-[#282a2c] hover:bg-[#e0e2ec] px-2.5 py-1 text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] transition-colors"
-                          >
-                            {t.items?.length || 0} Unit
-                          </button>
+                        <td className="py-3 px-3">
+                          <div className="space-y-1.5 min-w-[220px] max-w-[320px]">
+                            {t.items && t.items.length > 0 ? (
+                              t.items.map((it) => (
+                                <div
+                                  key={it.id}
+                                  className="flex items-center justify-between gap-1.5 p-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 text-xs shadow-2xs hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
+                                      {it.item_name}
+                                    </div>
+                                    <div className="text-[10px] text-[#747775] dark:text-[#8e918f] flex items-center gap-1.5">
+                                      <span className="font-bold text-[#0b57d0] dark:text-[#a8c7fa] font-mono">
+                                        {it.quantity} unit
+                                      </span>
+                                      {it.condition && <span>• {it.condition}</span>}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      promptDeleteItem(t, it);
+                                    }}
+                                    className="p-1.5 rounded-lg text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-transparent hover:border-rose-200 transition-colors shrink-0 cursor-pointer"
+                                    title="Hapus item ini dari dokumen distribusi (Superuser)"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setSelectedTransfer(t);
+                                  setIsDetailModalOpen(true);
+                                }}
+                                className="rounded-full bg-[#f0f4f9] dark:bg-[#282a2c] hover:bg-[#e0e2ec] px-2.5 py-1 text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] transition-colors"
+                              >
+                                0 Unit
+                              </button>
+                            )}
+                          </div>
                         </td>
                       )}
 
@@ -2177,19 +2661,33 @@ export function TransferAssetView({
               </div>
 
               <div>
-                <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] mb-2">
-                  Daftar Barang ({selectedTransfer.items?.length || 0})
+                <div className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] mb-2 flex items-center justify-between">
+                  <span>Daftar Barang ({selectedTransfer.items?.length || 0})</span>
+                  <span className="text-[10px] text-[#747775] dark:text-[#8e918f]">
+                    Superuser dapat menghapus item untuk koreksi distribusi
+                  </span>
                 </div>
                 <div className="divide-y divide-[#e0e2ec] dark:divide-[#444746] border border-[#e0e2ec] dark:border-[#444746] rounded-xl overflow-hidden">
                   {selectedTransfer.items?.map((it) => (
-                    <div key={it.id} className="p-2.5 flex items-center justify-between">
-                      <div>
+                    <div key={it.id} className="p-2.5 flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                      <div className="min-w-0 flex-1">
                         <div className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">{it.item_name}</div>
                         {it.notes && <div className="text-[11px] text-[#747775]">{it.notes}</div>}
                       </div>
-                      <div className="text-right">
-                        <span className="font-bold text-[#0b57d0]">{it.quantity} Unit</span>
-                        <div className="text-[10px] text-[#747775]">{it.condition}</div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right">
+                          <span className="font-bold text-[#0b57d0]">{it.quantity} Unit</span>
+                          <div className="text-[10px] text-[#747775]">{it.condition}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => promptDeleteItem(selectedTransfer, it)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-[11px] font-semibold transition-colors cursor-pointer"
+                          title="Hapus item ini dari dokumen distribusi (Superuser)"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Hapus</span>
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -2254,6 +2752,218 @@ export function TransferAssetView({
                 <span>{isResetting ? 'Membersihkan...' : 'Ya, Bersihkan Semua'}</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 6: PREVIEW DETAIL ASET (TOMBOL VIEW) */}
+      {viewingAsset && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-lg rounded-3xl border border-[#c2e7ff] dark:border-[#004a77] bg-white dark:bg-[#1e1f20] p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[#e0e2ec] dark:border-[#333538] pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="h-9 w-9 rounded-xl bg-[#0b57d0]/10 dark:bg-[#a8c7fa]/20 text-[#0b57d0] dark:text-[#a8c7fa] flex items-center justify-center">
+                  <Eye className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-[#1f1f1f] dark:text-[#e3e3e3]">
+                    Detail Aset Distribusi
+                  </h3>
+                  <p className="text-xs text-[#747775] dark:text-[#8e918f]">
+                    Informasi lengkap barang siap antar ke cabang
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setViewingAsset(null)}
+                className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              {/* Foto Item */}
+              <div className="flex items-center gap-4 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                {(viewingAsset.photo_url || getItemImageUrl(viewingAsset.item_name)) ? (
+                  <div className="w-20 h-20 rounded-xl overflow-hidden border border-slate-300 dark:border-slate-600 bg-white shrink-0 shadow-xs">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={viewingAsset.photo_url || getItemImageUrl(viewingAsset.item_name) || undefined}
+                      alt={viewingAsset.item_name}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-20 h-20 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 flex items-center justify-center shrink-0">
+                    <Package className="w-8 h-8 text-slate-400" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3]">
+                    {viewingAsset.item_name}
+                  </div>
+                  <div className="text-xs text-blue-700 dark:text-blue-300 font-bold font-mono">
+                    Jumlah: {viewingAsset.quantity_needed || 1} Unit
+                  </div>
+                  <div className="text-[11px] text-[#747775] dark:text-[#8e918f]">
+                    Cabang Tujuan: <strong className="text-slate-800 dark:text-slate-200">{viewingAsset.branch_name || 'Semua Cabang'}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rincian Spesifikasi & RO */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Nomor RO / ID</div>
+                  <div className="font-mono font-bold text-emerald-700 dark:text-emerald-300 text-xs mt-0.5">
+                    {viewingAsset.external_id || viewingAsset.id || '-'}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Tanggal Permintaan</div>
+                  <div className="font-bold text-slate-700 dark:text-slate-200 text-xs mt-0.5">
+                    {formatDateOnly(viewingAsset.order_datetime || (viewingAsset as any).request_date || viewingAsset.created_at)}
+                  </div>
+                </div>
+              </div>
+
+              {viewingAsset.specification && (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Spesifikasi Teknis</div>
+                  <div className="text-xs text-slate-700 dark:text-slate-300 mt-0.5">
+                    {viewingAsset.specification}
+                  </div>
+                </div>
+              )}
+
+              {/* Catatan */}
+              {(viewingAsset.item_notes || viewingAsset.notes) && (
+                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700/80 text-amber-900 dark:text-amber-200 space-y-1">
+                  <div className="text-[10px] uppercase font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Catatan Khusus Pengiriman</span>
+                  </div>
+                  <div className="text-xs italic leading-relaxed">
+                    {viewingAsset.item_notes || viewingAsset.notes}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-[#e0e2ec] dark:border-[#333538] pt-3">
+              <button
+                onClick={() => {
+                  copyToClipboard(formatSingleItemText(viewingAsset, viewingAsset.branch_name || ''), viewingAsset.item_name, 'modal-view');
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Salin Data Item</span>
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setViewingAsset(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100"
+                >
+                  Tutup
+                </button>
+                <button
+                  onClick={() => {
+                    const asset = viewingAsset;
+                    setViewingAsset(null);
+                    handleDirectShipSingleItem(asset, asset.branch_name);
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0b57d0] text-white text-xs font-bold hover:bg-[#0842a0] cursor-pointer"
+                  title="Kirim hanya item ini (terbitkan Surat Jalan langsung & pindahkan ke Dokumen Distribusi)"
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>Kirim Ini Saja</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL OTORISASI SUPERUSER UNTUK HAPUS ITEM */}
+      {isSuperUserModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-3xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#e0e2ec] dark:border-[#444746] pb-3 mb-4">
+              <div className="flex items-center gap-2.5 text-rose-600 dark:text-rose-400">
+                <div className="h-9 w-9 rounded-xl bg-rose-50 dark:bg-rose-950/60 flex items-center justify-center border border-rose-200 dark:border-rose-900">
+                  <ShieldAlert className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3]">
+                    Otorisasi Superuser Diperlukan
+                  </h3>
+                  <p className="text-[11px] text-[#747775] dark:text-[#8e918f]">
+                    Khusus Super User untuk cegah kesalahan distribusi
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsSuperUserModalOpen(false);
+                  setPendingDeleteAction(null);
+                }}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-[#444746] dark:text-[#c4c7c5] leading-relaxed mb-4">
+              Item <strong>&quot;{pendingDeleteAction?.item.item_name}&quot;</strong> akan dihapus dari Dokumen Distribusi <strong>{pendingDeleteAction?.transfer.surat_jalan_number || pendingDeleteAction?.transfer.transfer_number}</strong> dan dikembalikan ke antrean Outlet.
+            </p>
+
+            <form onSubmit={handleVerifySuperUser} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] mb-1">
+                  Masukkan Kata Sandi Superuser:
+                </label>
+                <input
+                  type="password"
+                  autoFocus
+                  required
+                  value={superUserPasswordInput}
+                  onChange={(e) => {
+                    setSuperUserPasswordInput(e.target.value);
+                    setSuperUserError(null);
+                  }}
+                  placeholder="Kata sandi Superuser..."
+                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#282a2c] px-3.5 py-2 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                />
+                {superUserError && (
+                  <p className="text-[11px] text-rose-600 dark:text-rose-400 font-medium mt-1">
+                    {superUserError}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSuperUserModalOpen(false);
+                    setPendingDeleteAction(null);
+                  }}
+                  className="rounded-full border border-[#e0e2ec] dark:border-[#444746] px-4 py-1.5 text-xs text-[#444746] dark:text-[#c4c7c5] hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !superUserPasswordInput}
+                  className="flex items-center gap-1.5 rounded-full bg-rose-600 hover:bg-rose-700 text-white px-5 py-1.5 text-xs font-bold transition-colors shadow-xs disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Verifikasi &amp; Hapus</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAssetTransfers, createAssetTransfer, updateAssetTransfer, clearAllAssetTransfers } from '@/lib/supabase/server';
+import { getAssetTransfers, createAssetTransfer, updateAssetTransfer, clearAllAssetTransfers, deleteAssetTransfer } from '@/lib/supabase/server';
 import { recordAuditLog } from '@/lib/audit/audit-store';
 
 export const dynamic = 'force-dynamic';
@@ -52,8 +52,8 @@ export async function PATCH(req: NextRequest) {
       'outlet_manager',
       'STATUS_CHANGE',
       'TRANSFER',
-      `Konfirmasi Penerimaan Mutasi ${updated.transfer_number}`,
-      `Status diubah ke ${updated.status}. Diterima oleh ${updated.receiver_pic || '-'} pada ${updated.received_date || '-'}. Catatan: ${updated.received_notes || '-'}`,
+      `Konfirmasi / Update Mutasi ${updated.transfer_number}`,
+      `Perubahan dokumen transfer. Status: ${updated.status}. Diterima oleh ${updated.receiver_pic || '-'}. Catatan: ${updated.received_notes || '-'}`,
       { entityId: id }
     );
 
@@ -63,8 +63,25 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(req: NextRequest) {
   try {
+    const url = new URL(req.url);
+    const id = url.searchParams.get('id');
+
+    if (id) {
+      await deleteAssetTransfer(id);
+      await recordAuditLog(
+        'Super User',
+        'Super User',
+        'PERMANENT_DELETE',
+        'TRANSFER',
+        `Hapus Dokumen Transfer ${id}`,
+        `Dokumen transfer aset ${id} berhasil dihapus oleh Superuser`,
+        { entityId: id }
+      );
+      return NextResponse.json({ success: true, message: `Dokumen transfer ${id} berhasil dihapus` });
+    }
+
     const result = await clearAllAssetTransfers();
 
     await recordAuditLog(

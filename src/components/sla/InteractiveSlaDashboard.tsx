@@ -26,7 +26,7 @@ import {
   FileSpreadsheet,
   Store
 } from 'lucide-react';
-import { RequestOrder, AssetRequest, RegionType, ROItem, BranchOpeningSummary } from '@/lib/supabase/types';
+import { RequestOrder, AssetRequest, RegionType, ROItem, BranchOpeningSummary, AssetTransfer, TransferItem } from '@/lib/supabase/types';
 import AreaFilterPills from '@/components/ui/AreaFilterPills';
 import ColumnVisibilityPicker, { ColumnItem } from '@/components/ui/ColumnVisibilityPicker';
 import { StandardRegion, matchesRegion, normalizeRegion } from '@/lib/utils/region-helper';
@@ -38,6 +38,7 @@ interface InteractiveSlaDashboardProps {
   initialRoOrders: RequestOrder[];
   initialAssetRequests: AssetRequest[];
   initialBranchSummaries?: BranchOpeningSummary[];
+  initialTransfers?: AssetTransfer[];
   metrics: {
     avg_lead_time_days: number;
     sla_on_time_count: number;
@@ -90,6 +91,13 @@ interface EnrichedSlaItem {
   slaLabel: string;
   isFulfilled: boolean;
   parentRo: EnrichedRO;
+  // SLA Distribusi: Tanggal Kirim Surat Jalan vs Tanggal Permintaan
+  shipping_date?: string | null;
+  received_date?: string | null;
+  surat_jalan_number?: string | null;
+  transfer_status?: string | null;
+  courier?: string | null;
+  slaLeadTimeDays?: number | null;
 }
 
 const SLA_RO_COLUMNS: ColumnItem[] = [
@@ -107,9 +115,12 @@ const SLA_ITEM_COLUMNS: ColumnItem[] = [
   { id: 'item_name', label: 'Nama Item & Spesifikasi', alwaysVisible: true },
   { id: 'ro_number', label: 'No. RO & Wilayah' },
   { id: 'branch_name', label: 'Cabang Outlet' },
-  { id: 'request_date', label: 'Tanggal Order' },
+  { id: 'request_date', label: 'Tgl Permintaan (RO)' },
   { id: 'target_delivery_date', label: 'Target Permintaan' },
-  { id: 'sla_status', label: 'Status SLA & Deadline' },
+  { id: 'shipping_date', label: 'Tgl Pengiriman (SJ)' },
+  { id: 'received_date', label: 'Tgl Diterima Outlet' },
+  { id: 'sla_lead_time', label: 'Durasi SLA Kirim' },
+  { id: 'sla_status', label: 'Ketepatan SLA' },
   { id: 'quantity', label: 'Jumlah Permintaan' },
   { id: 'stock_source', label: 'Alokasi Stok' },
   { id: 'stage', label: 'Tahap Alur' },
@@ -133,6 +144,7 @@ export default function InteractiveSlaDashboard({
   initialRoOrders = [],
   initialAssetRequests = [],
   initialBranchSummaries = [],
+  initialTransfers = [],
   metrics,
   initialRegion = 'ALL',
 }: InteractiveSlaDashboardProps) {
@@ -180,6 +192,9 @@ export default function InteractiveSlaDashboard({
       branch_name: true,
       request_date: true,
       target_delivery_date: true,
+      shipping_date: true,
+      received_date: true,
+      sla_lead_time: true,
       sla_status: true,
       quantity: true,
       stock_source: true,
@@ -277,19 +292,92 @@ export default function InteractiveSlaDashboard({
     });
   }, [initialRoOrders, today]);
 
-  // 2. Flatten all RO items to enriched items list
+  // Map transfers by RO Number, Asset ID, and Branch + Item Name for distribution SLA tracking
+  const transferItemMap = useMemo(() => {
+    const map = new Map<string, {
+      transfer: AssetTransfer;
+      item: TransferItem;
+    }>();
+
+    (initialTransfers || []).forEach((t) => {
+      const dest = (t.to_location || '').toLowerCase().trim();
+      (t.items || []).forEach((it) => {
+        const itName = (it.item_name || '').toLowerCase().trim();
+        const assetId = (it.asset_id || '').toLowerCase().trim();
+        
+        if (assetId) {
+          map.set(assetId, { transfer: t, item: it });
+        }
+        if (dest && itName) {
+          map.set(`${dest}:::${itName}`, { transfer: t, item: it });
+        }
+        if (it.notes) {
+          const roMatch = it.notes.match(/RO[:\-\s]*([A-Za-z0-9\-]+)/i);
+          if (roMatch && roMatch[1]) {
+            map.set(`${roMatch[1].toLowerCase().trim()}:::${itName}`, { transfer: t, item: it });
+          }
+        }
+      });
+    });
+
+    return map;
+  }, [initialTransfers]);
+
+  // 2. Flatten all RO items to enriched items list with Distribution SLA metrics
   const enrichedItems: EnrichedSlaItem[] = useMemo(() => {
     const list: EnrichedSlaItem[] = [];
     enrichedOrders.forEach((ro) => {
       (ro.items || []).forEach((it, idx) => {
-        const isFulfilled = (it.quantity_fulfilled || 0) >= (it.quantity_ordered || 1);
+        const assetKey = (it.id || '').toLowerCase().trim();
+        const branchItemKey = `${ro.branch_name.toLowerCase().trim()}:::${(it.item_name || '').toLowerCase().trim()}`;
+        const roItemKey = `${ro.ro_number.toLowerCase().trim()}:::${(it.item_name || '').toLowerCase().trim()}`;
+        
+        const matched = transferItemMap.get(assetKey) || transferItemMap.get(roItemKey) || transferItemMap.get(branchItemKey);
+
+        const shippingDate = matched?.transfer.transfer_date || null;
+        const receivedDate = matched?.transfer.received_date || ro.arrival_datetime || null;
+        const sjNumber = matched?.transfer.surat_jalan_number || null;
+        const transferStatus = matched?.transfer.status || null;
+        const courier = matched?.transfer.expedition_courier || null;
+
+        // Hitung selisih SLA: Tanggal Pengiriman vs Tanggal Permintaan di Kelola RO
+        let slaLeadTimeDays: number | null = null;
+        if (shippingDate && ro.request_date) {
+          const reqTime = new Date(ro.request_date).getTime();
+          const shipTime = new Date(shippingDate).getTime();
+          slaLeadTimeDays = Math.max(0, Math.round((shipTime - reqTime) / (1000 * 60 * 60 * 24)));
+        }
+
+        const isTransferredAndReceived = transferStatus === 'RECEIVED' || Boolean(receivedDate);
+        const isFulfilled = (it.quantity_fulfilled || 0) >= (it.quantity_ordered || 1) || isTransferredAndReceived;
         
         let itemSlaCategory = ro.slaCategory;
         let itemSlaLabel = ro.slaLabel;
 
-        if (isFulfilled) {
-          itemSlaCategory = 'COMPLETED';
-          itemSlaLabel = 'Lengkap Terpenuhi';
+        if (isTransferredAndReceived || isFulfilled) {
+          if (ro.target_delivery_date && shippingDate) {
+            const targetTime = new Date(ro.target_delivery_date).getTime();
+            const shipTime = new Date(shippingDate).getTime();
+            const diffTarget = Math.round((shipTime - targetTime) / (1000 * 60 * 60 * 24));
+            if (diffTarget <= 0) {
+              itemSlaCategory = 'ON_TIME';
+              itemSlaLabel = `Tepat Target (${slaLeadTimeDays !== null ? slaLeadTimeDays + 'h Kirim' : 'Sesuai Target'})`;
+            } else {
+              itemSlaCategory = 'OVERDUE';
+              itemSlaLabel = `Kirim Terlambat (+${diffTarget} Hari)`;
+            }
+          } else if (slaLeadTimeDays !== null) {
+            if (slaLeadTimeDays <= 7) {
+              itemSlaCategory = 'ON_TIME';
+              itemSlaLabel = `Tepat SLA (${slaLeadTimeDays} Hari)`;
+            } else {
+              itemSlaCategory = 'OVERDUE';
+              itemSlaLabel = `Lewat SLA (${slaLeadTimeDays} Hari)`;
+            }
+          } else {
+            itemSlaCategory = 'COMPLETED';
+            itemSlaLabel = 'Diterima di Outlet';
+          }
         } else if (ro.slaCategory === 'COMPLETED' && !isFulfilled) {
           itemSlaCategory = 'CRITICAL';
           itemSlaLabel = 'Belum Lengkap';
@@ -308,19 +396,25 @@ export default function InteractiveSlaDashboard({
           item_name: it.item_name,
           specification: it.specification,
           quantity_ordered: it.quantity_ordered || 1,
-          quantity_fulfilled: it.quantity_fulfilled || 0,
-          stock_source: it.stock_source || 'ON_PROSES',
+          quantity_fulfilled: isTransferredAndReceived ? (matched?.item.quantity || it.quantity_ordered) : (it.quantity_fulfilled || 0),
+          stock_source: it.stock_source || (matched ? 'GUDANG_SCGA' : 'ON_PROSES'),
           pr_vendor_name: it.pr_vendor_name,
           slaCategory: itemSlaCategory,
           diffDays: ro.diffDays,
           slaLabel: itemSlaLabel,
           isFulfilled,
           parentRo: ro,
+          shipping_date: shippingDate,
+          received_date: receivedDate,
+          surat_jalan_number: sjNumber,
+          transfer_status: transferStatus,
+          courier,
+          slaLeadTimeDays,
         });
       });
     });
     return list;
-  }, [enrichedOrders]);
+  }, [enrichedOrders, transferItemMap]);
 
   // 3. Filter by Region first (Scope for dropdown options)
   const regionOrders = useMemo(() => {
@@ -1285,9 +1379,12 @@ export default function InteractiveSlaDashboard({
                       {visibleItemColumns.item_name !== false && <th className="py-3 px-3.5">Nama Item Aset / Perlengkapan</th>}
                       {visibleItemColumns.ro_number !== false && <th className="py-3 px-3.5">No. RO & Wilayah</th>}
                       {visibleItemColumns.branch_name !== false && <th className="py-3 px-3.5">Cabang Outlet</th>}
-                      {visibleItemColumns.request_date !== false && <th className="py-3 px-3.5">Tgl Order</th>}
+                      {visibleItemColumns.request_date !== false && <th className="py-3 px-3.5">Tgl Order (RO)</th>}
                       {visibleItemColumns.target_delivery_date !== false && <th className="py-3 px-3.5">Target Permintaan</th>}
-                      {visibleItemColumns.sla_status !== false && <th className="py-3 px-3.5">Status SLA Item</th>}
+                      {visibleItemColumns.shipping_date !== false && <th className="py-3 px-3.5">Tgl Pengiriman (SJ)</th>}
+                      {visibleItemColumns.received_date !== false && <th className="py-3 px-3.5">Tgl Diterima Outlet</th>}
+                      {visibleItemColumns.sla_lead_time !== false && <th className="py-3 px-3.5 text-center">Durasi SLA Kirim</th>}
+                      {visibleItemColumns.sla_status !== false && <th className="py-3 px-3.5">Ketepatan SLA</th>}
                       {visibleItemColumns.quantity !== false && <th className="py-3 px-3.5">Jumlah Qty</th>}
                       {visibleItemColumns.stock_source !== false && <th className="py-3 px-3.5">Alokasi Stok</th>}
                       {visibleItemColumns.stage !== false && <th className="py-3 px-3.5">Tahap Alur</th>}
@@ -1297,7 +1394,7 @@ export default function InteractiveSlaDashboard({
                   <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
                     {paginatedItems.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
+                        <td colSpan={13} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
                           <Package className="h-8 w-8 mx-auto mb-2 opacity-40" />
                           <p className="font-semibold text-sm">Tidak ada baris item yang sesuai kriteria filter aktif</p>
                           <p className="text-xs mt-1">Coba ubah pilihan filter cabang, alokasi stok, atau reset filter</p>
@@ -1360,6 +1457,53 @@ export default function InteractiveSlaDashboard({
                                 </span>
                               ) : (
                                 <span className="text-[#747775] italic">SLA Standar 14h</span>
+                              )}
+                            </td>
+                          )}
+
+                          {/* Shipping Date */}
+                          {visibleItemColumns.shipping_date !== false && (
+                            <td className="py-3 px-3.5 whitespace-nowrap">
+                              {it.shipping_date ? (
+                                <div>
+                                  <div className="font-semibold text-emerald-700 dark:text-emerald-400">
+                                    {formatDateSlash(it.shipping_date)}
+                                  </div>
+                                  {it.surat_jalan_number && (
+                                    <div className="text-[10px] text-[#747775] font-mono">
+                                      {it.surat_jalan_number}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-slate-400 italic">Belum Kirim</span>
+                              )}
+                            </td>
+                          )}
+
+                          {/* Received Date */}
+                          {visibleItemColumns.received_date !== false && (
+                            <td className="py-3 px-3.5 whitespace-nowrap">
+                              {it.received_date ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-semibold text-[11px] border border-emerald-200 dark:border-emerald-800">
+                                  <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
+                                  <span>{formatDateSlash(it.received_date)}</span>
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 italic">Menunggu Tiba</span>
+                              )}
+                            </td>
+                          )}
+
+                          {/* SLA Lead Time */}
+                          {visibleItemColumns.sla_lead_time !== false && (
+                            <td className="py-3 px-3.5 whitespace-nowrap text-center">
+                              {it.slaLeadTimeDays !== null && it.slaLeadTimeDays !== undefined ? (
+                                <span className="font-bold font-mono text-[#0b57d0] dark:text-[#a8c7fa] bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-md border border-blue-200 dark:border-blue-900">
+                                  {it.slaLeadTimeDays} Hari
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">-</span>
                               )}
                             </td>
                           )}

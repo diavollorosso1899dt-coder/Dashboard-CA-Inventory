@@ -22,7 +22,8 @@ import {
   LogOut,
   ChevronRight,
   Trash2,
-  History
+  History,
+  ClipboardCheck
 } from 'lucide-react';
 
 import { useNavigation } from './NavigationContext';
@@ -56,6 +57,7 @@ export function Sidebar() {
       color: 'text-indigo-600 dark:text-indigo-400',
       items: [
         { name: 'Ringkasan Eksekutif', href: '/', icon: LayoutDashboard },
+        { name: 'Stock Opname Harian', href: '/stock-opname', icon: ClipboardCheck },
         { name: 'Pelacak & Status Aset', href: '/monitoring/assets', icon: Layers },
         { name: 'Input Aset Baru', href: '/monitoring/input', icon: PlusCircle },
       ],
