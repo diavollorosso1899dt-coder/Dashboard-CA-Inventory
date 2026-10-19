@@ -161,6 +161,32 @@ export type UserRole =
   | 'User Outlet Manager'
   | 'Manajemen Sampah & Log';
 
+export interface AppFeature {
+  id: string;
+  name: string;
+  href: string;
+  group: 'Utama' | 'Pengadaan' | 'Distribusi & Logistik' | 'Master & Pengaturan';
+  description?: string;
+}
+
+export const APP_FEATURES: AppFeature[] = [
+  { id: 'dashboard', name: 'Ringkasan Eksekutif', href: '/', group: 'Utama', description: 'Metrik KPI utama, permohonan aset, dan status cabang' },
+  { id: 'so_harian', name: 'Stock Opname Harian', href: '/stock-opname', group: 'Utama', description: 'Stock opname harian, mutasi masuk dan keluar gudang' },
+  { id: 'assets_tracking', name: 'Pelacak & Status Aset', href: '/monitoring/assets', group: 'Utama', description: 'Daftar semua inventaris aset & riwayat status' },
+  { id: 'assets_input', name: 'Input Aset Baru', href: '/monitoring/input', group: 'Utama', description: 'Formulir input permohonan aset baru ke sistem' },
+  { id: 'kelola_ro', name: 'Kelola RO', href: '/distribution/ro', group: 'Pengadaan', description: 'Kelola alur release order 9 tahap' },
+  { id: 'purchase_pr', name: 'Purchase Requirement (PR)', href: '/distribution/pr', group: 'Pengadaan', description: 'Pemantauan pengadaan ke vendor' },
+  { id: 'surat_jalan', name: 'Surat Jalan', href: '/distribution/surat-jalan', group: 'Distribusi & Logistik', description: 'Penerbitan dan cetak surat jalan armada' },
+  { id: 'monitoring_transfer', name: 'Pemantauan Distribusi', href: '/monitoring/transfer', group: 'Distribusi & Logistik', description: 'Pengiriman antar outlet dan penerimaan aset' },
+  { id: 'monitoring_sla', name: 'Monitoring SLA', href: '/distribution/sla', group: 'Distribusi & Logistik', description: 'Monitoring ketepatan waktu pengiriman vs permohonan' },
+  { id: 'master_items', name: 'Kelola Item & Spek', href: '/items', group: 'Master & Pengaturan', description: 'Katalog master item & spesifikasi teknis' },
+  { id: 'master_outlets', name: 'Kelola Outlet', href: '/outlets', group: 'Master & Pengaturan', description: 'Master cabang, target opening, dan PIC outlet' },
+  { id: 'user_management', name: 'Hak Akses Pengguna', href: '/users', group: 'Master & Pengaturan', description: 'Pengaturan otorisasi dan hak akses fitur' },
+  { id: 'trash_audit', name: 'Tempat Sampah & Log', href: '/trash', group: 'Master & Pengaturan', description: 'Audit trail log dan pemulihan data terhapus' },
+];
+
+export const ALL_FEATURE_IDS = APP_FEATURES.map((f) => f.id);
+
 export interface UserProfile {
   id: string;
   username?: string;
@@ -172,6 +198,7 @@ export interface UserProfile {
   outlet_assigned?: string;
   phone?: string;
   is_active?: boolean;
+  allowed_features?: string[];
   created_at: string;
 }
 

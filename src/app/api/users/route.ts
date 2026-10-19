@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getUserProfiles, saveUserProfile } from '@/lib/supabase/server';
+import { getUserProfiles, saveUserProfile, deleteUserProfile } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +30,8 @@ export async function POST(req: Request) {
       phone: password || undefined,
       full_name,
       role,
-      outlet_assigned: outlet_assigned || null
+      outlet_assigned: outlet_assigned || null,
+      allowed_features: Array.isArray(body.allowed_features) ? body.allowed_features : undefined,
     });
 
     return NextResponse.json({ success: true, data: saved });
@@ -38,3 +39,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: false, error: 'Gagal menyimpan profil user' }, { status: 500 });
   }
 }
+
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    let id = searchParams.get('id');
+    let username = searchParams.get('username') || searchParams.get('email');
+
+    if (!id && !username) {
+      try {
+        const body = await req.json();
+        id = body.id;
+        username = body.username || body.email;
+      } catch (e) {}
+    }
+
+    const target = id || username;
+    if (!target) {
+      return NextResponse.json({ success: false, error: 'ID atau Username pengguna wajib disertakan.' }, { status: 400 });
+    }
+
+    await deleteUserProfile(target);
+    return NextResponse.json({ success: true, message: 'Pengguna berhasil dihapus' });
+  } catch (error) {
+    return NextResponse.json({ success: false, error: 'Gagal menghapus profil user' }, { status: 500 });
+  }
+}
+

@@ -2,12 +2,14 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { UserProfile, UserRole } from '@/lib/supabase/types';
+import { UserProfile, UserRole, APP_FEATURES, ALL_FEATURE_IDS } from '@/lib/supabase/types';
 
 interface AuthContextType {
   user: UserProfile | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  isSuperUser: boolean;
+  canAccessFeature: (featureIdOrHref: string) => boolean;
   login: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   quickLogin: (role: 'super_user' | 'user' | 'outlet_manager') => Promise<void>;
@@ -21,6 +23,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
+
+  const isSuperUser = Boolean(
+    user && (user.role === 'Super User' || user.role === 'super_user')
+  );
+
+  const canAccessFeature = (featureIdOrHref: string): boolean => {
+    if (!user) return true;
+    if (isSuperUser) return true;
+
+    // Strict: only super user can access user management
+    if (featureIdOrHref === 'user_management' || featureIdOrHref === '/users') {
+      return false;
+    }
+
+    const feat = APP_FEATURES.find(
+      (f) =>
+        f.id === featureIdOrHref ||
+        f.href === featureIdOrHref ||
+        (featureIdOrHref !== '/' && f.href !== '/' && featureIdOrHref.startsWith(f.href))
+    );
+    const featureId = feat ? feat.id : featureIdOrHref;
+
+    // If super user explicitly set allowed_features for this user
+    if (Array.isArray(user.allowed_features)) {
+      return user.allowed_features.includes(featureId) || (feat ? user.allowed_features.includes(feat.href) : false);
+    }
+
+    // Role-based defaults if not yet customized
+    const role = (user.role || '').toLowerCase();
+    if (role.includes('outlet')) {
+      return ['dashboard', 'assets_tracking', 'kelola_ro'].includes(featureId);
+    }
+    if (role.includes('sampah') || role.includes('trash')) {
+      return ['dashboard', 'trash_audit'].includes(featureId);
+    }
+    return [
+      'dashboard',
+      'so_harian',
+      'assets_tracking',
+      'assets_input',
+      'kelola_ro',
+      'purchase_pr',
+      'surat_jalan',
+      'monitoring_transfer',
+      'monitoring_sla',
+    ].includes(featureId);
+  };
 
   // Restore session from localStorage on initial load
   useEffect(() => {
@@ -93,6 +142,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         isLoading,
         isAuthenticated: Boolean(user),
+        isSuperUser,
+        canAccessFeature,
         login,
         logout,
         quickLogin,

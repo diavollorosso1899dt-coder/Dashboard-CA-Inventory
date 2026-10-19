@@ -1,12 +1,10 @@
-'use client';
-
 import React, { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from './AuthContext';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ShieldAlert, ArrowLeft } from 'lucide-react';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, isAuthenticated } = useAuth();
+  const { user, isLoading, isAuthenticated, canAccessFeature } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
 
@@ -48,6 +46,32 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Authenticated user
+  // Check if current user is permitted to access this feature/route
+  const hasAccess = canAccessFeature(pathname);
+  if (!hasAccess) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[65vh] p-6 text-center animate-fade-in">
+        <div className="p-4 bg-rose-100/80 dark:bg-rose-950/40 rounded-2xl text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 mb-4 shadow-sm">
+          <ShieldAlert className="w-12 h-12" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">
+          Akses Fitur Dibatasi oleh Super User
+        </h2>
+        <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mb-6 leading-relaxed">
+          Fitur ini belum dibuka oleh <strong>Super User</strong> untuk akun Anda ({user?.full_name || 'User'}).
+          Silakan gunakan menu fitur yang aktif di Sidebar atau hubungi Super User/Administrator untuk membuka akses fitur ini.
+        </p>
+        <button
+          onClick={() => router.push('/')}
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl text-xs font-bold hover:opacity-90 transition shadow-md"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Kembali ke Halaman Utama</span>
+        </button>
+      </div>
+    );
+  }
+
+  // Authenticated and authorized
   return <>{children}</>;
 }

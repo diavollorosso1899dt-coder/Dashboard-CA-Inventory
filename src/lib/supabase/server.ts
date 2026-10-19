@@ -10,7 +10,8 @@ import {
   AssetTransfer,
   RequestOrder,
   SuratJalan,
-  DispositionRequest
+  DispositionRequest,
+  ALL_FEATURE_IDS
 } from './types';
 import { fetchAllSheetsData } from '../sync/sheet-fetcher';
 import { getDaysRemaining } from '../utils/date-formatter';
@@ -1370,11 +1371,26 @@ export async function getUserProfiles(): Promise<UserProfile[]> {
     try {
       const { data, error } = await admin.from('user_profiles').select('*').order('full_name');
       if (!error && data && data.length > 0) {
-        return data.map((u: any) => ({
-          ...u,
-          username: u.username || u.email,
-          password: u.password || u.phone || '',
-        })) as UserProfile[];
+        return data.map((u: any) => {
+          const cachedUser = cache.users?.find((cu) => cu.email && cu.email.toLowerCase() === (u.email || '').toLowerCase());
+          const isSuper = u.role === 'Super User' || u.role === 'super_user';
+          let allowed = u.allowed_features;
+          if (typeof allowed === 'string') {
+            try { allowed = JSON.parse(allowed); } catch (e) { allowed = allowed.split(','); }
+          }
+          if (!Array.isArray(allowed) && cachedUser?.allowed_features) {
+            allowed = cachedUser.allowed_features;
+          }
+          if (!Array.isArray(allowed) && isSuper) {
+            allowed = ALL_FEATURE_IDS;
+          }
+          return {
+            ...u,
+            username: u.username || u.email,
+            password: u.password || u.phone || '',
+            allowed_features: allowed || undefined,
+          };
+        }) as UserProfile[];
       }
       if (error) console.error('[Supabase getUserProfiles error]:', error.message);
     } catch (err: any) {
@@ -1385,6 +1401,7 @@ export async function getUserProfiles(): Promise<UserProfile[]> {
     ...u,
     username: u.username || u.email,
     password: u.password || u.phone || '',
+    allowed_features: u.allowed_features || (u.role === 'Super User' || u.role === 'super_user' ? ALL_FEATURE_IDS : undefined),
   }));
 }
 
@@ -1394,6 +1411,12 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
   const branch = userData.branch_name || userData.outlet_assigned || null;
   const username = (userData.username || userData.email || '').trim().toLowerCase();
   const password = userData.password || userData.phone || '';
+  const isSuper = userData.role === 'Super User' || userData.role === 'super_user';
+  const allowedFeatures = isSuper
+    ? ALL_FEATURE_IDS
+    : Array.isArray(userData.allowed_features)
+    ? userData.allowed_features
+    : undefined;
 
   const user: UserProfile = {
     id: userId,
@@ -1406,12 +1429,13 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
     outlet_assigned: branch || undefined,
     phone: password || userData.phone || undefined,
     is_active: userData.is_active ?? true,
+    allowed_features: allowedFeatures,
     created_at: userData.created_at || new Date().toISOString(),
   };
 
   if (admin) {
     try {
-      const dbPayload = {
+      const dbPayload: any = {
         id: user.id,
         email: user.email,
         full_name: user.full_name,
@@ -1419,32 +1443,78 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
         branch_name: branch,
         phone: user.phone || null,
         is_active: user.is_active,
+        allowed_features: user.allowed_features || null,
         created_at: user.created_at,
         updated_at: new Date().toISOString(),
       };
-      const { data, error } = await admin.from('user_profiles').upsert(dbPayload, { onConflict: 'email' }).select().single();
-      if (error) {
-        console.error('[Supabase saveUserProfile error]:', error.message);
-      } else if (data) {
-        return {
-          ...data,
-          username: (data as any).username || data.email,
-          password: (data as any).password || (data as any).phone || password,
+      
+      let res = await admin.from('user_profiles').upsert(dbPayload, { onConflict: 'email' }).select().single();
+      
+      // If allowed_features column doesn't exist yet in Supabase schema, retry without it
+      if (res.error && res.error.message?.includes('allowed_features')) {
+        delete dbPayload.allowed_features;
+        res = await admin.from('user_profiles').upsert(dbPayload, { onConflict: 'email' }).select().single();
+      }
+
+      if (res.error) {
+        console.error('[Supabase saveUserProfile error]:', res.error.message);
+      } else if (res.data) {
+        const result = {
+          ...res.data,
+          username: (res.data as any).username || res.data.email,
+          password: (res.data as any).password || (res.data as any).phone || password,
+          allowed_features: (res.data as any).allowed_features || user.allowed_features,
         } as UserProfile;
+        
+        // Sync to cache
+        syncUserToCache(result);
+        return result;
       }
     } catch (err: any) {
       console.error('[Supabase saveUserProfile exception]:', err.message);
     }
   }
 
+  syncUserToCache(user);
+  return user;
+}
+
+function syncUserToCache(user: UserProfile) {
+  if (!cache.users) cache.users = [];
   const idx = cache.users.findIndex((u) => u.id === user.id || (u.email && u.email.toLowerCase() === user.email.toLowerCase()));
   if (idx !== -1) {
-    cache.users[idx] = user;
+    cache.users[idx] = { ...cache.users[idx], ...user };
   } else {
     cache.users.push(user);
   }
-  return user;
 }
+
+export async function deleteUserProfile(userIdOrEmail: string): Promise<boolean> {
+  const admin = getAdminClient();
+  const target = (userIdOrEmail || '').trim().toLowerCase();
+  if (!target) return false;
+
+  if (admin) {
+    try {
+      if (isUuid(userIdOrEmail)) {
+        await admin.from('user_profiles').delete().eq('id', userIdOrEmail);
+      } else {
+        await admin.from('user_profiles').delete().eq('email', target);
+      }
+    } catch (err: any) {
+      console.error('[Supabase deleteUserProfile exception]:', err.message);
+    }
+  }
+
+  // Remove from in-memory cache
+  if (cache.users) {
+    cache.users = cache.users.filter(
+      (u) => u.id !== userIdOrEmail && u.email?.toLowerCase() !== target && u.username?.toLowerCase() !== target
+    );
+  }
+  return true;
+}
+
 
 // ==============================================================================
 // 2. MONITORING: TRANSFER ASET & INPUT ASET

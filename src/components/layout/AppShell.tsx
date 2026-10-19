@@ -1,14 +1,31 @@
 'use client';
 
-import React, { Suspense } from 'react';
+import React, { Suspense, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { Navbar } from './Navbar';
 import { Sidebar } from './Sidebar';
 import { AuthGuard } from '@/components/auth/AuthGuard';
+import { useNavigation } from './NavigationContext';
+import { useAuth } from '@/components/auth/AuthContext';
+import { FirstTimeTutorialModal } from '@/components/tutorial/FirstTimeTutorialModal';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isLoginPage = pathname === '/login';
+  const { user } = useAuth();
+  const { isTutorialOpen, openTutorial, closeTutorial } = useNavigation();
+
+  // Auto-trigger tutorial on first-time login
+  useEffect(() => {
+    if (user && user.email) {
+      try {
+        const seen = localStorage.getItem(`ca_tutorial_seen_${user.email}`);
+        if (!seen) {
+          openTutorial();
+        }
+      } catch (e) {}
+    }
+  }, [user?.email, openTutorial]);
 
   if (isLoginPage) {
     return <AuthGuard>{children}</AuthGuard>;
@@ -29,6 +46,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </main>
       </div>
+
+      {/* Onboarding & Feature Tutorial Modal */}
+      <FirstTimeTutorialModal
+        isOpen={isTutorialOpen}
+        onClose={closeTutorial}
+        onComplete={closeTutorial}
+      />
     </AuthGuard>
   );
 }
+

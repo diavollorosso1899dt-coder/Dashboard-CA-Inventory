@@ -47,7 +47,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { isMobileOpen, closeMobile } = useNavigation();
-  const { user, logout } = useAuth();
+  const { user, logout, isSuperUser, canAccessFeature } = useAuth();
   const regionQuery = searchParams.get('region') ? `?region=${searchParams.get('region')}` : '';
 
   const menuGroups: MenuGroup[] = [
@@ -94,6 +94,14 @@ export function Sidebar() {
     },
   ];
 
+  // Filter menu items to only show features opened/granted by Super User
+  const visibleMenuGroups = menuGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => canAccessFeature(item.href)),
+    }))
+    .filter((group) => group.items.length > 0);
+
   // Auto expand groups that contain the active route
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
     'Utama': true,
@@ -103,7 +111,7 @@ export function Sidebar() {
   });
 
   useEffect(() => {
-    menuGroups.forEach((group) => {
+    visibleMenuGroups.forEach((group) => {
       if (group.items.some((it) => (it.href === '/' ? pathname === '/' : pathname === it.href || pathname.startsWith(it.href)))) {
         setOpenGroups((prev) => ({ ...prev, [group.title]: true }));
       }
@@ -133,7 +141,7 @@ export function Sidebar() {
       >
         <nav className="flex-1 space-y-3 overflow-y-auto pr-1">
           {/* Navigation Groups */}
-          {menuGroups.map((group) => {
+          {visibleMenuGroups.map((group) => {
             const isOpen = openGroups[group.title] ?? true;
             const GroupIcon = group.icon;
             const hasActiveChild = group.items.some((it) =>
@@ -204,21 +212,23 @@ export function Sidebar() {
             );
           })}
 
-          {/* 3. Sistem & Integrasi */}
-          <div className="pt-2 border-t border-[#e0e2ec] dark:border-[#444746]">
-            <Link
-              href={`/sync${regionQuery}`}
-              onClick={closeMobile}
-              className={`flex items-center gap-3 rounded-full px-3.5 py-2 text-xs font-semibold transition-all ${
-                pathname === '/sync'
-                  ? 'bg-[#c2e7ff] text-[#001d35] dark:bg-[#004a77] dark:text-[#c2e7ff] shadow-sm'
-                  : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white'
-              }`}
-            >
-              <RefreshCw className="h-3.5 w-3.5 text-[#747775] dark:text-[#8e918f]" />
-              <span>Sinkronisasi Google Sheets</span>
-            </Link>
-          </div>
+          {/* 3. Sistem & Integrasi - Super User only */}
+          {isSuperUser && (
+            <div className="pt-2 border-t border-[#e0e2ec] dark:border-[#444746]">
+              <Link
+                href={`/sync${regionQuery}`}
+                onClick={closeMobile}
+                className={`flex items-center gap-3 rounded-full px-3.5 py-2 text-xs font-semibold transition-all ${
+                  pathname === '/sync'
+                    ? 'bg-[#c2e7ff] text-[#001d35] dark:bg-[#004a77] dark:text-[#c2e7ff] shadow-sm'
+                    : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] hover:text-[#1f1f1f] dark:hover:text-white'
+                }`}
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-[#747775] dark:text-[#8e918f]" />
+                <span>Sinkronisasi Google Sheets</span>
+              </Link>
+            </div>
+          )}
 
           {/* 4. Active User Card & Logout */}
           {user && (

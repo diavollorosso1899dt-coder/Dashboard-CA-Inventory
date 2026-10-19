@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { UserProfile, UserRole } from '@/lib/supabase/types';
+import { UserProfile, UserRole, APP_FEATURES, ALL_FEATURE_IDS, AppFeature } from '@/lib/supabase/types';
 import { 
   Users, 
   ShieldCheck, 
@@ -19,21 +19,36 @@ import {
   Eye,
   EyeOff,
   AtSign,
-  Trash2
+  Trash2,
+  CheckSquare,
+  Square,
+  Sparkles,
+  Layers
 } from 'lucide-react';
 
 import { useSearchParams } from 'next/navigation';
+import { useAuth } from '@/components/auth/AuthContext';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
+
+export const DEFAULT_SUPERUSER_FEATURES = ALL_FEATURE_IDS;
+export const DEFAULT_LOGISTICS_FEATURES = [
+  'dashboard', 'so_harian', 'assets_tracking', 'assets_input',
+  'kelola_ro', 'purchase_pr', 'surat_jalan', 'monitoring_transfer', 'monitoring_sla'
+];
+export const DEFAULT_OUTLET_FEATURES = ['dashboard', 'assets_tracking', 'kelola_ro'];
+export const DEFAULT_TRASH_FEATURES = ['dashboard', 'trash_audit'];
 
 const USER_COLUMNS: ColumnItem[] = [
   { id: 'user_info', label: 'Nama Lengkap & Username', defaultVisible: true, alwaysVisible: true },
   { id: 'role', label: 'Peran (Role)', defaultVisible: true },
+  { id: 'features', label: 'Hak Akses Fitur', defaultVisible: true },
   { id: 'outlet', label: 'Penugasan Outlet', defaultVisible: true },
   { id: 'status', label: 'Status Akun', defaultVisible: true },
   { id: 'actions', label: 'Aksi', defaultVisible: true, alwaysVisible: true },
 ];
 
 export default function UserManagerView() {
+  const { user: currentUser } = useAuth();
   const searchParams = useSearchParams();
   const initialRole = searchParams.get('role') || 'ALL';
 
@@ -67,14 +82,70 @@ export default function UserManagerView() {
     full_name: string;
     role: UserRole;
     outlet_assigned: string;
+    allowed_features: string[];
   }>({
     username: '',
     email: '',
     password: '',
     full_name: '',
     role: 'User',
-    outlet_assigned: ''
+    outlet_assigned: '',
+    allowed_features: DEFAULT_LOGISTICS_FEATURES,
   });
+
+  const toggleFeature = (id: string) => {
+    if (id === 'user_management' && formData.role !== 'Super User') {
+      alert('Fitur Hak Akses Pengguna hanya dapat dibuka untuk akun dengan peran Super User.');
+      return;
+    }
+    setFormData((prev) => {
+      const exists = prev.allowed_features.includes(id);
+      return {
+        ...prev,
+        allowed_features: exists
+          ? prev.allowed_features.filter((f) => f !== id)
+          : [...prev.allowed_features, id],
+      };
+    });
+  };
+
+  const applyFeaturePreset = (type: 'all' | 'logistics' | 'outlet' | 'trash' | 'clear') => {
+    switch (type) {
+      case 'all':
+        setFormData((prev) => ({ ...prev, allowed_features: DEFAULT_SUPERUSER_FEATURES }));
+        break;
+      case 'logistics':
+        setFormData((prev) => ({ ...prev, allowed_features: DEFAULT_LOGISTICS_FEATURES }));
+        break;
+      case 'outlet':
+        setFormData((prev) => ({ ...prev, allowed_features: DEFAULT_OUTLET_FEATURES }));
+        break;
+      case 'trash':
+        setFormData((prev) => ({ ...prev, allowed_features: DEFAULT_TRASH_FEATURES }));
+        break;
+      case 'clear':
+        setFormData((prev) => ({ ...prev, allowed_features: [] }));
+        break;
+    }
+  };
+
+  const handleRoleChange = (newRole: UserRole) => {
+    let newFeatures = formData.allowed_features;
+    if (newRole === 'Super User') {
+      newFeatures = DEFAULT_SUPERUSER_FEATURES;
+    } else if (newRole === 'User Outlet Manager') {
+      newFeatures = DEFAULT_OUTLET_FEATURES;
+    } else if (newRole === 'Manajemen Sampah & Log') {
+      newFeatures = DEFAULT_TRASH_FEATURES;
+    } else if (newRole === 'User') {
+      newFeatures = DEFAULT_LOGISTICS_FEATURES;
+    }
+    setFormData((prev) => ({
+      ...prev,
+      role: newRole,
+      allowed_features: newFeatures,
+    }));
+  };
 
   const fetchUsers = async () => {
     try {
@@ -130,6 +201,45 @@ export default function UserManagerView() {
       setSubmitting(false);
     }
   };
+
+  const handleDeleteUser = async () => {
+    if (!formData.id && !formData.username) return;
+
+    const targetIdentifier = (formData.username || formData.email || '').trim().toLowerCase();
+    
+    // Prevent deleting currently logged in user
+    if (
+      currentUser?.email && 
+      (currentUser.email.toLowerCase() === targetIdentifier || currentUser.id === formData.id)
+    ) {
+      alert('Anda tidak dapat menghapus akun Anda sendiri yang sedang aktif login.');
+      return;
+    }
+
+    const confirmDelete = window.confirm(
+      `Apakah Anda yakin ingin menghapus akun "${formData.full_name}" (@${targetIdentifier})?\n\nData akun dan seluruh izin akses pengguna ini akan dihapus.`
+    );
+    if (!confirmDelete) return;
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/users?id=${encodeURIComponent(formData.id || '')}&username=${encodeURIComponent(targetIdentifier)}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (json.success) {
+        setIsModalOpen(false);
+        fetchUsers();
+      } else {
+        alert(json.error || 'Gagal menghapus pengguna.');
+      }
+    } catch (err) {
+      alert('Terjadi kesalahan jaringan saat menghapus pengguna.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
 
   const filteredUsers = users.filter(u => {
     if (roleFilter !== 'ALL' && u.role !== roleFilter) return false;
@@ -199,7 +309,15 @@ export default function UserManagerView() {
           </button>
           <button
             onClick={() => {
-              setFormData({ username: '', email: '', password: '', full_name: '', role: 'User', outlet_assigned: '' });
+              setFormData({
+                username: '',
+                email: '',
+                password: '',
+                full_name: '',
+                role: 'User',
+                outlet_assigned: '',
+                allowed_features: DEFAULT_LOGISTICS_FEATURES,
+              });
               setIsModalOpen(true);
             }}
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-sm transition-all"
@@ -336,6 +454,39 @@ export default function UserManagerView() {
                         </td>
                       )}
 
+                      {isVisible('features') && (
+                        <td className="py-3.5 px-4">
+                          {u.role === 'Super User' || u.role === 'super_user' ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                              <ShieldCheck className="w-3.5 h-3.5 text-purple-600" />
+                              <span>Akses Semua (13 Fitur)</span>
+                            </span>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 w-fit">
+                                <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
+                                <span>{(u.allowed_features?.length || 0)}/13 Fitur Dibuka</span>
+                              </span>
+                              <div className="flex flex-wrap gap-1 max-w-xs">
+                                {(u.allowed_features || []).slice(0, 3).map((fId) => {
+                                  const feat = APP_FEATURES.find((f) => f.id === fId);
+                                  return (
+                                    <span key={fId} className="text-[10px] px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-slate-600 dark:text-slate-400">
+                                      {feat?.name || fId}
+                                    </span>
+                                  );
+                                })}
+                                {(u.allowed_features?.length || 0) > 3 && (
+                                  <span className="text-[10px] px-1.5 py-0.5 bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 font-semibold rounded">
+                                    +{(u.allowed_features?.length || 0) - 3} lainnya
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                      )}
+
                       {isVisible('outlet') && (
                         <td className="py-3.5 px-4">
                           {u.outlet_assigned ? (
@@ -361,6 +512,9 @@ export default function UserManagerView() {
                         <td className="py-3.5 px-4 text-center">
                           <button
                             onClick={() => {
+                              const uFeatures = Array.isArray(u.allowed_features) && u.allowed_features.length > 0
+                                ? u.allowed_features
+                                : (u.role === 'Super User' || u.role === 'super_user' ? ALL_FEATURE_IDS : DEFAULT_LOGISTICS_FEATURES);
                               setFormData({
                                 id: u.id,
                                 username: u.username || u.email,
@@ -368,7 +522,8 @@ export default function UserManagerView() {
                                 password: '',
                                 full_name: u.full_name,
                                 role: u.role,
-                                outlet_assigned: u.outlet_assigned || ''
+                                outlet_assigned: u.outlet_assigned || '',
+                                allowed_features: uFeatures,
                               });
                               setIsModalOpen(true);
                             }}
@@ -391,91 +546,99 @@ export default function UserManagerView() {
       {/* Modal Tambah / Edit Pengguna */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-lg w-full p-6 md:p-8 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                {formData.id ? 'Edit Data Pengguna' : 'Tambah Pengguna Baru'}
-              </h3>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-2xl w-full p-6 md:p-8 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                  {formData.id ? 'Edit Data & Hak Akses Pengguna' : 'Tambah Pengguna & Atur Hak Akses'}
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Super User dapat memilih fitur mana saja yang diizinkan untuk dibuka oleh pengguna ini.
+                </p>
+              </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white text-lg p-1"
               >
                 ✕
               </button>
             </div>
 
             <form onSubmit={handleSaveUser} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                  Nama Lengkap <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: Budi Santoso"
-                  value={formData.full_name}
-                  onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                  className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                  Username Akun <span className="text-rose-500">*</span>
-                </label>
-                <div className="relative">
-                  <AtSign className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+                    Nama Lengkap <span className="text-rose-500">*</span>
+                  </label>
                   <input
                     type="text"
                     required
-                    placeholder="Contoh: nurul_admin atau budi123"
-                    value={formData.username}
-                    onChange={(e) => setFormData({ ...formData, username: e.target.value.replace(/\s+/g, '') })}
-                    className="w-full pl-10 pr-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 font-mono"
+                    placeholder="Contoh: Budi Santoso"
+                    value={formData.full_name}
+                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                    className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                   />
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1">Username dipakai untuk login ke sistem (tanpa spasi).</p>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+                    Username Akun <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <AtSign className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      required
+                      placeholder="Contoh: budi_logistik"
+                      value={formData.username}
+                      onChange={(e) => setFormData({ ...formData, username: e.target.value.replace(/\s+/g, '') })}
+                      className="w-full pl-10 pr-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 font-mono"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                  Kata Sandi (Password) {!formData.id && <span className="text-rose-500">*</span>}
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required={!formData.id}
-                    placeholder={formData.id ? 'Kosongkan jika tidak ingin mengubah password' : 'Masukkan password (min. 4 karakter)'}
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="w-full pl-10 pr-10 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+                    Kata Sandi (Password) {!formData.id && <span className="text-rose-500">*</span>}
+                  </label>
+                  <div className="relative">
+                    <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required={!formData.id}
+                      placeholder={formData.id ? 'Kosongkan jika tidak diubah' : 'Min. 4 karakter'}
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      className="w-full pl-10 pr-10 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+                    Tingkat Otorisasi (Peran) <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    required
+                    value={formData.role}
+                    onChange={(e) => handleRoleChange(e.target.value as UserRole)}
+                    className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
+                    <option value="Super User">Super User (Akses Penuh Seluruh Sistem)</option>
+                    <option value="User">User (Staff Gudang &amp; Logistik Pusat)</option>
+                    <option value="User Outlet Manager">User Outlet Manager (Khusus Cabang)</option>
+                    <option value="Manajemen Sampah & Log">Manajemen Sampah &amp; Log (Audit &amp; Pemulihan)</option>
+                  </select>
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                  Tingkat Otorisasi (Peran) <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  required
-                  value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
-                  className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
-                >
-                  <option value="Super User">Super User (Akses Penuh Seluruh Sistem)</option>
-                  <option value="Manajemen Sampah & Log">Manajemen Sampah &amp; Log (Kelola Audit &amp; Pemulihan Data)</option>
-                  <option value="User">User (Staff Gudang &amp; Logistik Pusat)</option>
-                  <option value="User Outlet Manager">User Outlet Manager (Khusus Cabang)</option>
-                </select>
               </div>
 
               {formData.role === 'User Outlet Manager' && (
@@ -499,21 +662,132 @@ export default function UserManagerView() {
                 </div>
               )}
 
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-medium transition"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold shadow-md shadow-purple-600/20 transition disabled:opacity-50"
-                >
-                  {submitting ? 'Menyimpan...' : 'Simpan Pengguna'}
-                </button>
+              {/* Pembatasan Fitur / Modul - Diatur oleh Super User */}
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-900 dark:text-white uppercase flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                      <span>Pembatasan Fitur (Hanya Tampilkan Menu yang Dicentang)</span>
+                    </label>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Sidebar pengguna hanya akan menampilkan menu yang dibuka/dicentang oleh Super User.
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 w-fit">
+                    {formData.allowed_features.length}/{APP_FEATURES.length} Fitur Terpilih
+                  </span>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="flex flex-wrap items-center gap-1.5 p-2 bg-slate-100/70 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60 text-[11px]">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 px-1">Pilih Cepat:</span>
+                  <button
+                    type="button"
+                    onClick={() => applyFeaturePreset('all')}
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 font-semibold hover:border-purple-500 text-slate-700 dark:text-slate-200 active:scale-95 transition"
+                  >
+                    ⭐ Semua ({ALL_FEATURE_IDS.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyFeaturePreset('logistics')}
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 font-semibold hover:border-purple-500 text-slate-700 dark:text-slate-200 active:scale-95 transition"
+                  >
+                    📦 Staff Logistik ({DEFAULT_LOGISTICS_FEATURES.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyFeaturePreset('outlet')}
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 font-semibold hover:border-purple-500 text-slate-700 dark:text-slate-200 active:scale-95 transition"
+                  >
+                    🏪 Outlet Manager ({DEFAULT_OUTLET_FEATURES.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyFeaturePreset('clear')}
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 font-semibold hover:border-rose-500 text-rose-600 dark:text-rose-400 active:scale-95 transition"
+                  >
+                    ❌ Kosongkan
+                  </button>
+                </div>
+
+                {/* Checklist Categories */}
+                <div className="max-h-72 overflow-y-auto space-y-3.5 pr-1 border border-slate-200 dark:border-slate-700/70 rounded-xl p-3 bg-slate-50/50 dark:bg-slate-900/40">
+                  {(['Utama', 'Pengadaan', 'Distribusi & Logistik', 'Master & Pengaturan'] as const).map((groupName) => {
+                    const groupFeatures = APP_FEATURES.filter((f) => f.group === groupName);
+                    return (
+                      <div key={groupName} className="space-y-1.5">
+                        <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5 px-1">
+                          <Layers className="w-3 h-3 text-purple-500" />
+                          <span>{groupName}</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                          {groupFeatures.map((feat) => {
+                            const isChecked = formData.allowed_features.includes(feat.id);
+                            const isUserMgmt = feat.id === 'user_management';
+                            return (
+                              <label
+                                key={feat.id}
+                                className={`flex items-start gap-2 p-2 rounded-xl border text-xs cursor-pointer transition select-none ${
+                                  isChecked
+                                    ? 'bg-purple-50/80 dark:bg-purple-950/40 border-purple-300 dark:border-purple-800/80 text-purple-950 dark:text-purple-200 shadow-xs'
+                                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-100/60'
+                                } ${isUserMgmt && formData.role !== 'Super User' ? 'opacity-40 cursor-not-allowed' : ''}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  disabled={isUserMgmt && formData.role !== 'Super User'}
+                                  onChange={() => toggleFeature(feat.id)}
+                                  className="mt-0.5 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                                />
+                                <div className="min-w-0">
+                                  <div className="font-bold truncate">{feat.name}</div>
+                                  <div className="text-[10px] text-slate-400 truncate">{feat.description}</div>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2.5">
+                <div>
+                  {formData.id && (
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={handleDeleteUser}
+                      className="px-3.5 py-2 border border-rose-200 dark:border-rose-900/60 bg-rose-50/80 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition active:scale-95 disabled:opacity-50"
+                      title="Hapus akun pengguna ini secara permanen"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{submitting ? 'Menghapus...' : 'Hapus Akun'}</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-medium transition"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold shadow-md shadow-purple-600/20 transition disabled:opacity-50"
+                  >
+                    {submitting ? 'Menyimpan...' : 'Simpan Hak Akses'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

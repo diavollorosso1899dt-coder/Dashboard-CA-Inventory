@@ -16,7 +16,8 @@ import {
   Store,
   Package,
   ChevronDown,
-  RefreshCw
+  RefreshCw,
+  HelpCircle
 } from 'lucide-react';
 import { useTheme } from '@/components/theme/ThemeContext';
 import { useNavigation } from './NavigationContext';
@@ -29,7 +30,7 @@ export function Navbar() {
   const searchParams = useSearchParams();
   const currentRegion = searchParams.get('region') || 'ALL';
   const { theme, toggleTheme } = useTheme();
-  const { isMobileOpen, toggleMobile } = useNavigation();
+  const { isMobileOpen, toggleMobile, openTutorial } = useNavigation();
   const { user, logout } = useAuth();
 
   const [currentTime, setCurrentTime] = useState<string>('');
@@ -215,6 +216,16 @@ export function Navbar() {
           )}
         </button>
 
+        {/* Tombol Panduan Fitur */}
+        <button
+          onClick={openTutorial}
+          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60 border border-purple-200/60 dark:border-purple-800/60 transition-all hover:scale-105 active:scale-95 shadow-xs"
+          title="Buka panduan & pengenalan fitur"
+        >
+          <HelpCircle className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+          <span className="hidden sm:inline">Panduan</span>
+        </button>
+
         {/* Google User Avatar Circle & Profile Dropdown */}
         <div className="relative" ref={profileRef}>
           <button
@@ -260,7 +271,20 @@ export function Navbar() {
                 </div>
               )}
 
-              <div className="pt-1">
+              {/* Buka Panduan dari Profil */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileOpen(false);
+                  openTutorial();
+                }}
+                className="w-full flex items-center gap-2.5 p-2 rounded-xl hover:bg-purple-50 dark:hover:bg-purple-950/40 text-purple-700 dark:text-purple-300 text-xs font-semibold transition"
+              >
+                <HelpCircle className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                <span>Buka Panduan & Tur Fitur</span>
+              </button>
+
+              <div className="pt-1 border-t border-slate-100 dark:border-slate-800">
                 <button
                   onClick={() => {
                     setIsProfileOpen(false);
