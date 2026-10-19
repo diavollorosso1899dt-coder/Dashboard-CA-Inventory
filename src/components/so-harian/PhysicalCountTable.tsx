@@ -363,18 +363,31 @@ export default function PhysicalCountTable({ items = [], onUpdateItems }: Physic
     [onUpdateItems]
   );
 
-  // Barcode Scanner: automatically resolves item, calculates page, jumps to it, and focuses input
+  // Barcode Scanner: automatically resolves item, calculates page, jumps to it, increments by +1, and focuses input
   const handleScanSuccess = (scannedSku: string) => {
     const cleanQuery = scannedSku.toLowerCase().trim();
-    const targetItem = items.find(
-      (i) => i.kode_barang.toLowerCase() === cleanQuery || i.nama_barang.toLowerCase() === cleanQuery
+    if (!cleanQuery) return;
+
+    // 1. Try exact match on code, name, or id
+    let targetItem = items.find(
+      (i) => i.kode_barang.toLowerCase() === cleanQuery || i.nama_barang.toLowerCase() === cleanQuery || i.id === cleanQuery
     );
+
+    // 2. Fallback to partial match
+    if (!targetItem) {
+      targetItem = items.find(
+        (i) => i.kode_barang.toLowerCase().includes(cleanQuery) || i.nama_barang.toLowerCase().includes(cleanQuery)
+      );
+    }
 
     if (targetItem) {
       setHighlightedId(targetItem.id);
       setSearchTerm('');
       setSelectedCategory('ALL');
       setActiveFilter('ALL');
+
+      // Auto-step physical count +1
+      handleStep(targetItem.id, 1);
 
       // Calculate target page
       const targetIndex = items.findIndex((i) => i.id === targetItem.id);
@@ -390,9 +403,10 @@ export default function PhysicalCountTable({ items = [], onUpdateItems }: Physic
         }
       }, 150);
     } else {
-      alert(`Kode barang "${scannedSku}" tidak ditemukan dalam daftar SO.`);
+      alert(`Kode barang / Barcode "${scannedSku}" tidak ditemukan dalam daftar Stock Opname.`);
     }
   };
+
 
   const handleMatchAllRemaining = () => {
     if (!window.confirm('Tandai semua item yang belum dicek sebagai COCOK (Fisik = Stok Sistem)?')) return;

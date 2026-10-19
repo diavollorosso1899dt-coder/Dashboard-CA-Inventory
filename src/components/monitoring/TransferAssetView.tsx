@@ -28,7 +28,8 @@ import {
   List,
   Table as TableIcon,
   CheckCheck,
-  Clock
+  Clock,
+  ArrowRight
 } from 'lucide-react';
 import Link from 'next/link';
 import { AssetTransfer, Outlet, AssetRequest, TransferStatus, TransferItem, RequestOrder } from '@/lib/supabase/types';
@@ -1050,36 +1051,17 @@ export function TransferAssetView({
             />
           </div>
 
-          <div className="flex items-center gap-1 bg-[#f0f4f9] dark:bg-[#1e1f20] p-1 rounded-full border border-[#e0e2ec] dark:border-[#444746] text-xs">
-            {[
-              { id: 'ACTIVE', label: 'Dalam Perjalanan (Aktif)' },
-              { id: 'RECEIVED', label: 'Diterima Outlet (SLA)' },
-              { id: 'ALL', label: 'Semua' },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setStatusFilter(tab.id as any)}
-                className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all ${
-                  statusFilter === tab.id
-                    ? 'bg-[#0b57d0] text-white shadow-xs'
-                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div className="flex items-center gap-2 self-end md:self-auto flex-wrap">
-          <button
-            onClick={() => setIsResetConfirmOpen(true)}
-            className="flex items-center gap-1.5 rounded-full border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 px-3.5 py-2 text-xs font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/60 transition-colors shadow-xs"
-            title="Bersihkan riwayat dokumen pendistribusian"
+          <Link
+            href="/distribution/surat-jalan"
+            className="flex items-center gap-1.5 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#1e1f20] px-3.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-xs"
+            title="Buka menu Dokumen & Surat Jalan"
           >
-            <RotateCcw className="h-3.5 w-3.5" />
-            <span>Bersihkan Riwayat</span>
-          </button>
+            <FileText className="h-3.5 w-3.5 text-indigo-500" />
+            <span>Dokumen Surat Jalan</span>
+          </Link>
 
           <button
             onClick={() => {
@@ -1806,289 +1788,31 @@ export function TransferAssetView({
         )}
       </div>
 
-      {/* 4. Main Distribution Table */}
-      <div className="panel-card overflow-hidden">
-        <div className="p-3 px-4 border-b border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#1e1f20] flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-bold text-[#444746] dark:text-[#c4c7c5]">
-              Daftar Dokumen Distribusi {statusFilter === 'ACTIVE' ? 'Aktif' : statusFilter === 'RECEIVED' ? 'Diterima di Outlet (SLA)' : ''} ({filteredTransfers.length})
-            </span>
-            {statusFilter === 'ACTIVE' && (
-              <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800">
-                Item diterima otomatis keluar &amp; masuk ke SLA
+      {/* Informational Callout: Dokumen Surat Jalan kini dipusatkan di menu Surat Jalan */}
+      <div className="panel-card p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-blue-50/70 via-slate-50 to-indigo-50/70 dark:from-blue-950/20 dark:via-slate-900/40 dark:to-indigo-950/20 border border-blue-200/70 dark:border-blue-900/40 rounded-2xl shadow-xs">
+        <div className="flex items-center gap-3.5">
+          <div className="p-3 rounded-2xl bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 shadow-2xs">
+            <FileText className="w-6 h-6" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <span>Dokumen Surat Jalan Pendistribusian</span>
+              <span className="text-[10px] bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 font-semibold px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-800">
+                Menu Utama Surat Jalan
               </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Link
-              href="/distribution/sla"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-xs font-semibold transition-colors shadow-2xs"
-              title="Buka Monitoring SLA untuk melihat ketepatan waktu pengiriman vs permintaan"
-            >
-              <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-              <span>Monitoring SLA</span>
-            </Link>
-            {filteredTransfers.length > 0 && (
-              <button
-                onClick={() => copyToClipboard(formatAllTransfersText(), 'Semua Dokumen Distribusi', 'all-docs')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#1e1f20] hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors shadow-xs cursor-pointer group"
-                title="Salin semua rekap dokumen surat jalan"
-              >
-                {copiedId === 'all-docs' ? (
-                  <>
-                    <CheckCheck className="h-3.5 w-3.5 text-emerald-600" />
-                    <span className="text-emerald-700 dark:text-emerald-300 font-bold">Tersalin!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-3.5 w-3.5 group-hover:scale-110 transition-transform" />
-                    <span>Salin Dokumen</span>
-                  </>
-                )}
-              </button>
-            )}
-            <ColumnVisibilityPicker
-              columns={TRANSFER_COLUMNS}
-              visibleColumns={visibleColumns}
-              onChange={setVisibleColumns}
-              storageKey="ca_transfer_columns"
-            />
+            </h4>
+            <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+              Tabel pencatatan resmi dokumen surat jalan, pelacakan armada kurir, cetak surat jalan, dan konfirmasi penerimaan fisik telah dipusatkan di menu <strong>Surat Jalan</strong>.
+            </p>
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
-            <thead className="bg-[#f0f4f9] dark:bg-[#1e1f20] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#444746]">
-              <tr>
-                {isVisible('doc_number') && <th className="py-3.5 px-3">No. Dokumen &amp; Surat Jalan</th>}
-                {isVisible('route') && <th className="py-3.5 px-3">Rute Distribusi (Asal &rarr; Tujuan)</th>}
-                {isVisible('dates_courier') && <th className="py-3.5 px-3">Tanggal &amp; Kurir</th>}
-                {isVisible('pics') && <th className="py-3.5 px-3">PIC Pengirim / Penerima</th>}
-                {isVisible('items') && <th className="py-3.5 px-3 text-center">Item</th>}
-                {isVisible('status') && <th className="py-3.5 px-3 text-center">Status</th>}
-                {isVisible('actions') && <th className="py-3.5 px-3 text-right">Aksi</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]">
-              {filteredTransfers.length === 0 ? (
-                <tr>
-                  <td colSpan={visibleColCount} className="text-center py-12 text-[#747775] dark:text-[#8e918f]">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Truck className="h-8 w-8 text-[#c4c7c5] dark:text-[#5e6062]" />
-                      <div className="font-semibold text-sm">Belum Ada Dokumen Pendistribusian Aset</div>
-                      <p className="text-xs max-w-md text-[#747775] dark:text-[#8e918f]">
-                        Klik tombol <strong>&quot;Buat Surat Jalan Distribusi&quot;</strong> atau proses item dari antrean <strong>Ready Antar</strong> di atas untuk menerbitkan Surat Jalan Distribusi resmi.
-                      </p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filteredTransfers.map((t) => {
-                  const isInTransit = t.status === 'IN_TRANSIT';
-                  const isReceived = t.status === 'RECEIVED' || t.status === 'COMPLETED';
-
-                  return (
-                    <tr key={t.id} className="hover:bg-[#f8fafd] dark:hover:bg-[#282a2c]/60 transition-colors">
-                      {/* Document & Surat Jalan */}
-                      {isVisible('doc_number') && (
-                        <td className="py-3 px-3">
-                          <div className="font-mono font-bold text-xs text-[#0b57d0] dark:text-[#a8c7fa]">
-                            {t.transfer_number}
-                          </div>
-                          {t.surat_jalan_number && (
-                            <button
-                              onClick={() => {
-                                setSelectedTransfer(t);
-                                setIsPrintModalOpen(true);
-                              }}
-                              className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline mt-0.5"
-                              title="Klik untuk cetak Surat Jalan Distribusi"
-                            >
-                              <Printer className="h-3 w-3" />
-                              <span>{t.surat_jalan_number}</span>
-                            </button>
-                          )}
-                        </td>
-                      )}
-
-                      {/* Route */}
-                      {isVisible('route') && (
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-1.5 font-semibold text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
-                            <span className="text-[#444746] dark:text-[#c4c7c5]">{t.from_location}</span>
-                            <span className="text-[#0b57d0] dark:text-[#a8c7fa]">&rarr;</span>
-                            <span className="text-[#0b57d0] dark:text-[#a8c7fa]">{t.to_location}</span>
-                          </div>
-                          <div className="text-[10px] text-[#747775] dark:text-[#8e918f] mt-0.5">
-                            {t.source_type === 'GUDANG_PUSAT' ? 'Gudang Pusat' : 'Outlet'} &rarr; {t.destination_type === 'GUDANG_PUSAT' ? 'Gudang Pusat' : 'Outlet Cabang'}
-                          </div>
-                        </td>
-                      )}
-
-                      {/* Dates & Logistics */}
-                      {isVisible('dates_courier') && (
-                        <td className="py-3 px-3">
-                          <div className="text-xs font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">
-                            Kirim: {formatDateOnly(t.transfer_date)}
-                          </div>
-                          {t.received_date && (
-                            <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                              Tiba: {formatDateOnly(t.received_date)}
-                            </div>
-                          )}
-                          <div className="text-[11px] text-[#747775] dark:text-[#8e918f] mt-0.5">
-                            {t.expedition_courier || 'Armada Internal'} {t.tracking_number ? `(${t.tracking_number})` : ''}
-                          </div>
-                        </td>
-                      )}
-
-                      {/* PICs */}
-                      {isVisible('pics') && (
-                        <td className="py-3 px-3">
-                          <div className="text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
-                            <span className="text-[#747775] dark:text-[#8e918f]">Pengirim:</span> {t.sender_pic}
-                          </div>
-                          <div className="text-xs text-[#1f1f1f] dark:text-[#e3e3e3] mt-0.5">
-                            <span className="text-[#747775] dark:text-[#8e918f]">Penerima:</span>{' '}
-                            {t.receiver_pic ? (
-                              <strong className="text-emerald-700 dark:text-emerald-300">{t.receiver_pic}</strong>
-                            ) : (
-                              <span className="italic text-[#747775]">Menunggu konfirmasi outlet</span>
-                            )}
-                          </div>
-                        </td>
-                      )}
-
-                      {/* Items Column with Item List & Superuser Delete Button */}
-                      {isVisible('items') && (
-                        <td className="py-3 px-3">
-                          <div className="space-y-1.5 min-w-[220px] max-w-[320px]">
-                            {t.items && t.items.length > 0 ? (
-                              t.items.map((it) => (
-                                <div
-                                  key={it.id}
-                                  className="flex items-center justify-between gap-1.5 p-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 text-xs shadow-2xs hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
-                                >
-                                  <div className="min-w-0 flex-1">
-                                    <div className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
-                                      {it.item_name}
-                                    </div>
-                                    <div className="text-[10px] text-[#747775] dark:text-[#8e918f] flex items-center gap-1.5">
-                                      <span className="font-bold text-[#0b57d0] dark:text-[#a8c7fa] font-mono">
-                                        {it.quantity} unit
-                                      </span>
-                                      {it.condition && <span>• {it.condition}</span>}
-                                    </div>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      promptDeleteItem(t, it);
-                                    }}
-                                    className="p-1.5 rounded-lg text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-transparent hover:border-rose-200 transition-colors shrink-0 cursor-pointer"
-                                    title="Hapus item ini dari dokumen distribusi (Superuser)"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              ))
-                            ) : (
-                              <button
-                                onClick={() => {
-                                  setSelectedTransfer(t);
-                                  setIsDetailModalOpen(true);
-                                }}
-                                className="rounded-full bg-[#f0f4f9] dark:bg-[#282a2c] hover:bg-[#e0e2ec] px-2.5 py-1 text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] transition-colors"
-                              >
-                                0 Unit
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      )}
-
-                      {/* Status */}
-                      {isVisible('status') && (
-                        <td className="py-3 px-3 text-center">
-                          {isInTransit && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 px-2.5 py-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-                              <Truck className="h-3 w-3" />
-                              Dalam Perjalanan
-                            </span>
-                          )}
-                          {isReceived && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                              <CheckCircle2 className="h-3 w-3" />
-                              Diterima di Outlet
-                            </span>
-                          )}
-                          {t.status === 'DRAFT' && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                              <FileText className="h-3 w-3" />
-                              Draft
-                            </span>
-                          )}
-                        </td>
-                      )}
-
-                      {/* Actions */}
-                      {isVisible('actions') && (
-                        <td className="py-3 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {isInTransit && (
-                              <button
-                                onClick={() => handleOpenReceiveModal(t)}
-                                className="flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 text-xs font-semibold transition-colors shadow-xs"
-                                title="Konfirmasi Kedatangan Barang di Outlet Tujuan"
-                              >
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                <span>Konfirmasi Tiba</span>
-                              </button>
-                            )}
-
-                            <button
-                              onClick={() => copyToClipboard(formatTransferDocText(t), `Surat Jalan ${t.transfer_number}`, `doc-${t.id}`)}
-                              className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors cursor-pointer"
-                              title="Salin ringkasan surat jalan ini"
-                            >
-                              {copiedId === `doc-${t.id}` ? (
-                                <CheckCheck className="h-3.5 w-3.5 text-emerald-600" />
-                              ) : (
-                                <Copy className="h-3.5 w-3.5" />
-                              )}
-                            </button>
-
-                            <button
-                              onClick={() => {
-                                setSelectedTransfer(t);
-                                setIsPrintModalOpen(true);
-                              }}
-                              className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors"
-                              title="Cetak Surat Jalan Distribusi"
-                            >
-                              <Printer className="h-3.5 w-3.5" />
-                            </button>
-
-                            <button
-                              onClick={() => {
-                                setSelectedTransfer(t);
-                                setIsDetailModalOpen(true);
-                              }}
-                              className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors"
-                              title="Lihat Detail Distribusi"
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+        <Link
+          href="/distribution/surat-jalan"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#0b57d0] hover:bg-[#0842a0] text-white transition-all shadow-sm shrink-0 active:scale-95"
+        >
+          <span>Buka Tampilan Surat Jalan</span>
+          <ArrowRight className="w-4 h-4" />
+        </Link>
       </div>
 
       {/* MODAL 1: BUAT SURAT JALAN DISTRIBUSI */}

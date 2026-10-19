@@ -396,6 +396,10 @@ export interface SuratJalan {
   penerima_nama?: string;
   status: SJStatus;
   received_at?: string | null;
+  tanda_tangan_url?: string | null;
+  foto_bukti_url?: string | null;
+  catatan_penerimaan?: string | null;
+  waktu_diterima?: string | null;
   items: SJItem[];
   notes?: string;
   catatan?: string;

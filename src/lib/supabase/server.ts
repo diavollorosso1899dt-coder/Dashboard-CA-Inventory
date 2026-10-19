@@ -2685,16 +2685,76 @@ export async function cleanDuplicateRequestOrders(): Promise<{ cleanedCount: num
 
 export async function getSuratJalanList(): Promise<SuratJalan[]> {
   const admin = getAdminClient();
+  let sjFromDb: SuratJalan[] = [];
   if (admin) {
     try {
       const { data, error } = await admin.from('surat_jalan').select('*').order('delivery_date', { ascending: false });
-      if (!error && data && data.length > 0) return data as SuratJalan[];
+      if (!error && data && data.length > 0) sjFromDb = data as SuratJalan[];
       if (error) console.error('[Supabase getSuratJalanList error]:', error.message);
     } catch (err: any) {
       console.error('[Supabase getSuratJalanList exception]:', err.message);
     }
   }
-  return cache.suratJalan || [];
+
+  const list: SuratJalan[] = [...(sjFromDb.length > 0 ? sjFromDb : (cache.suratJalan || []))];
+
+  // Also include asset_transfers mapped to SuratJalan format
+  try {
+    const transfers = await getAssetTransfers();
+    const existingSjNumbers = new Set(list.map((s) => (s.sj_number || s.nomor_sj || '').toLowerCase()));
+    const existingIds = new Set(list.map((s) => s.id));
+
+    for (const tr of transfers) {
+      const sjNo = tr.surat_jalan_number || tr.transfer_number;
+      if (existingIds.has(tr.id) || (sjNo && existingSjNumbers.has(sjNo.toLowerCase()))) {
+        continue;
+      }
+      list.push({
+        id: tr.id,
+        sj_number: sjNo,
+        nomor_sj: sjNo,
+        ro_number: tr.transfer_number,
+        ro_nomor: tr.transfer_number,
+        branch_name: tr.to_location,
+        tujuan_outlet_nama: tr.to_location,
+        region: (tr as any).region || (tr.to_location.toLowerCase().includes('kalbar') ? 'KALBAR' : 'JABODETABEK'),
+        delivery_date: tr.transfer_date,
+        tanggal_kirim: tr.transfer_date,
+        driver_name: tr.expedition_courier || 'Armada Internal SCGA',
+        driver_nama: tr.expedition_courier || 'Armada Internal SCGA',
+        vehicle_number: tr.tracking_number,
+        kendaraan_plat: tr.tracking_number,
+        expedition: tr.expedition_courier || 'Armada Internal SCGA',
+        ekspedisi: tr.expedition_courier || 'Armada Internal SCGA',
+        sender_name: tr.sender_pic || 'Staff Gudang SCGA',
+        pengirim_nama: tr.sender_pic || 'Staff Gudang SCGA',
+        receiver_name: tr.receiver_pic || '',
+        penerima_nama: tr.receiver_pic || '',
+        status: (tr.status === 'RECEIVED' || tr.status === 'COMPLETED') ? 'DELIVERED' : tr.status === 'IN_TRANSIT' ? 'SHIPPED' : 'PROCESSED',
+        received_at: tr.received_date,
+        waktu_diterima: tr.received_date,
+        catatan_penerimaan: tr.received_notes,
+        items: (tr.items || []).map((it) => ({
+          id: it.id,
+          item_name: it.item_name,
+          nama_barang: it.item_name,
+          quantity: it.quantity,
+          qty: it.quantity,
+          specification: it.specification,
+          notes: it.notes,
+        })),
+        notes: tr.notes,
+        catatan: tr.notes,
+        created_at: tr.created_at || new Date().toISOString(),
+      } as SuratJalan);
+    }
+  } catch (err: any) {
+    console.error('[getSuratJalanList merge transfers error]:', err?.message);
+  }
+
+  // Sort newest first
+  list.sort((a, b) => new Date(b.delivery_date || b.created_at).getTime() - new Date(a.delivery_date || a.created_at).getTime());
+  return list;
 }
 
 export async function getSuratJalanById(id: string): Promise<SuratJalan | null> {
@@ -2787,11 +2847,45 @@ export async function createSuratJalan(payload: Partial<SuratJalan>): Promise<Su
   return sj;
 }
 
-export async function updateSuratJalanStatus(id: string, status: 'SHIPPED' | 'DELIVERED', receiverName?: string): Promise<boolean> {
+export interface SuratJalanProofOptions {
+  receiverName?: string;
+  signatureUrl?: string;
+  photoUrl?: string;
+  notes?: string;
+}
+
+export async function updateSuratJalanStatus(
+  id: string, 
+  status: 'SHIPPED' | 'DELIVERED', 
+  proof?: string | SuratJalanProofOptions
+): Promise<boolean> {
   const admin = getAdminClient();
-  const updateData: any = { status, updated_at: new Date().toISOString() };
-  if (receiverName) updateData.receiver_name = receiverName;
-  if (status === 'DELIVERED') updateData.received_at = new Date().toISOString();
+  const options: SuratJalanProofOptions = typeof proof === 'string' ? { receiverName: proof } : (proof || {});
+  
+  const updateData: any = { 
+    status, 
+    updated_at: new Date().toISOString() 
+  };
+  
+  if (options.receiverName) {
+    updateData.receiver_name = options.receiverName;
+    updateData.penerima_nama = options.receiverName;
+  }
+  if (options.signatureUrl) {
+    updateData.tanda_tangan_url = options.signatureUrl;
+  }
+  if (options.photoUrl) {
+    updateData.foto_bukti_url = options.photoUrl;
+  }
+  if (options.notes) {
+    updateData.catatan_penerimaan = options.notes;
+  }
+
+  if (status === 'DELIVERED') {
+    const nowIso = new Date().toISOString();
+    updateData.received_at = nowIso;
+    updateData.waktu_diterima = nowIso;
+  }
 
   if (admin) {
     try {
@@ -2810,13 +2904,79 @@ export async function updateSuratJalanStatus(id: string, status: 'SHIPPED' | 'DE
 
   const idx = cache.suratJalan.findIndex((sj) => sj.id === id || sj.sj_number === id);
   if (idx !== -1) {
-    cache.suratJalan[idx].status = status;
-    if (receiverName) cache.suratJalan[idx].receiver_name = receiverName;
-    if (status === 'DELIVERED') cache.suratJalan[idx].received_at = new Date().toISOString();
+    cache.suratJalan[idx] = {
+      ...cache.suratJalan[idx],
+      ...updateData,
+      status,
+    };
     return true;
   }
   return true;
 }
+
+export async function deleteSuratJalan(id: string): Promise<boolean> {
+  const admin = getAdminClient();
+  if (admin) {
+    try {
+      if (isUuid(id)) {
+        await admin.from('surat_jalan').delete().eq('id', id);
+        await admin.from('asset_transfers').delete().eq('id', id);
+      } else {
+        await admin.from('surat_jalan').delete().eq('sj_number', id);
+        await admin.from('asset_transfers').delete().or(`surat_jalan_number.eq.${id},transfer_number.eq.${id}`);
+      }
+    } catch (e: any) {
+      console.error('[Supabase deleteSuratJalan error]:', e?.message);
+    }
+  }
+
+  if (cache.suratJalan) {
+    cache.suratJalan = cache.suratJalan.filter((s) => s.id !== id && s.sj_number !== id);
+  }
+  if (cache.transfers) {
+    cache.transfers = cache.transfers.filter((t) => t.id !== id && t.surat_jalan_number !== id && t.transfer_number !== id);
+  }
+  return true;
+}
+
+export async function clearAllSuratJalan(): Promise<{ count: number }> {
+  const admin = getAdminClient();
+  let count = 0;
+
+  if (cache.suratJalan) {
+    count += cache.suratJalan.length;
+    cache.suratJalan = [];
+  }
+  if (cache.transfers) {
+    count += cache.transfers.length;
+    cache.transfers = [];
+  }
+
+  if (admin) {
+    try {
+      const [sjRes, trRes] = await Promise.all([
+        admin.from('surat_jalan').select('id'),
+        admin.from('asset_transfers').select('id')
+      ]);
+      if (sjRes.data && sjRes.data.length > 0) {
+        count = Math.max(count, sjRes.data.length);
+        const { error } = await admin.from('surat_jalan').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        if (error) console.error('[Supabase clearAllSuratJalan error]:', error.message);
+      }
+      if (trRes.data && trRes.data.length > 0) {
+        count += trRes.data.length;
+        const { error: trErr } = await admin.from('asset_transfers').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        if (trErr) console.error('[Supabase clearAllSuratJalan transfers error]:', trErr.message);
+      }
+    } catch (err: any) {
+      console.error('[Supabase clearAllSuratJalan exception]:', err?.message);
+    }
+  }
+
+  return { count };
+}
+
+
 
 // ==============================================================================
 // 4. DISPOSISI: PENGEMBALIAN ASET
