@@ -156,7 +156,9 @@ export type UserRole =
   | 'user' 
   | 'outlet_manager' 
   | 'trash_audit_manager'
+  | 'admin'
   | 'Super User' 
+  | 'Admin'
   | 'User' 
   | 'User Outlet Manager'
   | 'Manajemen Sampah & Log';

@@ -5,6 +5,7 @@ import { UserProfile, UserRole, APP_FEATURES, ALL_FEATURE_IDS, AppFeature } from
 import { 
   Users, 
   ShieldCheck, 
+  Shield,
   UserCheck, 
   Store, 
   Plus, 
@@ -31,12 +32,17 @@ import { useAuth } from '@/components/auth/AuthContext';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
 
 export const DEFAULT_SUPERUSER_FEATURES = ALL_FEATURE_IDS;
+export const DEFAULT_ADMIN_FEATURES = [
+  'dashboard', 'so_harian', 'assets_tracking', 'assets_input',
+  'kelola_ro', 'purchase_pr', 'surat_jalan', 'monitoring_transfer', 'monitoring_sla',
+  'master_items', 'master_outlets', 'trash_audit'
+];
 export const DEFAULT_LOGISTICS_FEATURES = [
   'dashboard', 'so_harian', 'assets_tracking', 'assets_input',
   'kelola_ro', 'purchase_pr', 'surat_jalan', 'monitoring_transfer', 'monitoring_sla'
 ];
 export const DEFAULT_OUTLET_FEATURES = ['dashboard', 'assets_tracking', 'kelola_ro'];
-export const DEFAULT_TRASH_FEATURES = ['dashboard', 'trash_audit'];
+export const DEFAULT_TRASH_FEATURES = DEFAULT_ADMIN_FEATURES;
 
 const USER_COLUMNS: ColumnItem[] = [
   { id: 'user_info', label: 'Nama Lengkap & Username', defaultVisible: true, alwaysVisible: true },
@@ -109,19 +115,20 @@ export default function UserManagerView() {
     });
   };
 
-  const applyFeaturePreset = (type: 'all' | 'logistics' | 'outlet' | 'trash' | 'clear') => {
+  const applyFeaturePreset = (type: 'all' | 'admin' | 'logistics' | 'outlet' | 'trash' | 'clear') => {
     switch (type) {
       case 'all':
         setFormData((prev) => ({ ...prev, allowed_features: DEFAULT_SUPERUSER_FEATURES }));
+        break;
+      case 'admin':
+      case 'trash':
+        setFormData((prev) => ({ ...prev, allowed_features: DEFAULT_ADMIN_FEATURES }));
         break;
       case 'logistics':
         setFormData((prev) => ({ ...prev, allowed_features: DEFAULT_LOGISTICS_FEATURES }));
         break;
       case 'outlet':
         setFormData((prev) => ({ ...prev, allowed_features: DEFAULT_OUTLET_FEATURES }));
-        break;
-      case 'trash':
-        setFormData((prev) => ({ ...prev, allowed_features: DEFAULT_TRASH_FEATURES }));
         break;
       case 'clear':
         setFormData((prev) => ({ ...prev, allowed_features: [] }));
@@ -133,10 +140,10 @@ export default function UserManagerView() {
     let newFeatures = formData.allowed_features;
     if (newRole === 'Super User') {
       newFeatures = DEFAULT_SUPERUSER_FEATURES;
+    } else if (newRole === 'Admin' || (newRole as any) === 'admin' || newRole === 'Manajemen Sampah & Log') {
+      newFeatures = DEFAULT_ADMIN_FEATURES;
     } else if (newRole === 'User Outlet Manager') {
       newFeatures = DEFAULT_OUTLET_FEATURES;
-    } else if (newRole === 'Manajemen Sampah & Log') {
-      newFeatures = DEFAULT_TRASH_FEATURES;
     } else if (newRole === 'User') {
       newFeatures = DEFAULT_LOGISTICS_FEATURES;
     }
@@ -242,7 +249,16 @@ export default function UserManagerView() {
 
 
   const filteredUsers = users.filter(u => {
-    if (roleFilter !== 'ALL' && u.role !== roleFilter) return false;
+    if (roleFilter !== 'ALL') {
+      if (roleFilter === 'Admin') {
+        const rLower = (u.role || '').toLowerCase();
+        if (u.role !== 'Admin' && !rLower.includes('admin') && !rLower.includes('sampah') && !rLower.includes('trash')) {
+          return false;
+        }
+      } else if (u.role !== roleFilter) {
+        return false;
+      }
+    }
     const q = search.toLowerCase();
     const uName = (u.username || u.email || '').toLowerCase();
     return (
@@ -260,11 +276,13 @@ export default function UserManagerView() {
             <ShieldCheck className="w-3.5 h-3.5" /> Super User (Administrator)
           </span>
         );
+      case 'Admin':
+      case 'admin':
       case 'Manajemen Sampah & Log':
       case 'trash_audit_manager':
         return (
-          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
-            <Trash2 className="w-3.5 h-3.5" /> Manajemen Sampah &amp; Log
+          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
+            <Shield className="w-3.5 h-3.5" /> Admin (Operasional &amp; Log)
           </span>
         );
       case 'User Outlet Manager':
@@ -293,7 +311,7 @@ export default function UserManagerView() {
           <div>
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Kelola Hak Akses Pengguna (Users)</h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Otorisasi hak akses berbasis peran: Super User, Staff Pusat/Logistik, dan User Outlet Manager
+              Otorisasi hak akses berbasis peran: Super User, Admin, Staff Pusat/Logistik, dan User Outlet Manager
             </p>
           </div>
         </div>
@@ -314,9 +332,9 @@ export default function UserManagerView() {
                 email: '',
                 password: '',
                 full_name: '',
-                role: 'User',
+                role: 'Admin',
                 outlet_assigned: '',
-                allowed_features: DEFAULT_LOGISTICS_FEATURES,
+                allowed_features: DEFAULT_ADMIN_FEATURES,
               });
               setIsModalOpen(true);
             }}
@@ -335,16 +353,16 @@ export default function UserManagerView() {
             <ShieldCheck className="w-4 h-4" /> Super User
           </div>
           <p className="text-xs text-slate-600 dark:text-slate-400">
-            Akses total seluruh modul: persetujuan RO, disposisi scrap, mutasi aset, cetak SJ, dan penambahan outlet.
+            Akses total seluruh modul: persetujuan RO, disposisi scrap, mutasi aset, cetak SJ, kelola otorisasi akun pengguna, dan penambahan outlet.
           </p>
         </div>
 
-        <div className="bg-rose-50/50 dark:bg-rose-950/20 p-4 rounded-xl border border-rose-100 dark:border-rose-900/40">
-          <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300 font-bold text-sm mb-1">
-            <Trash2 className="w-4 h-4" /> Manajemen Sampah &amp; Log
+        <div className="bg-indigo-50/50 dark:bg-indigo-950/20 p-4 rounded-xl border border-indigo-100 dark:border-indigo-900/40">
+          <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300 font-bold text-sm mb-1">
+            <Shield className="w-4 h-4" /> Admin
           </div>
           <p className="text-xs text-slate-600 dark:text-slate-400">
-            Otorisasi audit trail &amp; pemulihan: mengelola Tempat Sampah, pulihkan data terhapus, hapus permanen, dan cek log user.
+            Akses operasional dan data: kelola aset, logistik, pengadaan, master data, serta Tempat Sampah &amp; audit log pemulihan.
           </p>
         </div>
 
@@ -388,7 +406,7 @@ export default function UserManagerView() {
             storageKey="ca_user_columns"
           />
           <SlidersHorizontal className="w-4 h-4 text-slate-400 shrink-0" />
-          {['ALL', 'Super User', 'Manajemen Sampah & Log', 'User', 'User Outlet Manager'].map((rf) => (
+          {['ALL', 'Super User', 'Admin', 'User', 'User Outlet Manager'].map((rf) => (
             <button
               key={rf}
               onClick={() => setRoleFilter(rf)}
@@ -634,9 +652,9 @@ export default function UserManagerView() {
                     className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                   >
                     <option value="Super User">Super User (Akses Penuh Seluruh Sistem)</option>
+                    <option value="Admin">Admin (Operasional, Master &amp; Audit Log)</option>
                     <option value="User">User (Staff Gudang &amp; Logistik Pusat)</option>
                     <option value="User Outlet Manager">User Outlet Manager (Khusus Cabang)</option>
-                    <option value="Manajemen Sampah & Log">Manajemen Sampah &amp; Log (Audit &amp; Pemulihan)</option>
                   </select>
                 </div>
               </div>
@@ -688,6 +706,13 @@ export default function UserManagerView() {
                     className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 font-semibold hover:border-purple-500 text-slate-700 dark:text-slate-200 active:scale-95 transition"
                   >
                     ⭐ Semua ({ALL_FEATURE_IDS.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyFeaturePreset('admin')}
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 font-semibold hover:border-indigo-500 text-indigo-700 dark:text-indigo-300 active:scale-95 transition"
+                  >
+                    🛡️ Admin ({DEFAULT_ADMIN_FEATURES.length})
                   </button>
                   <button
                     type="button"

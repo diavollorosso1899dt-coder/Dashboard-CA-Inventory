@@ -44,7 +44,7 @@ export function AssetDetailModal({
   const [selectedModalPhoto, setSelectedModalPhoto] = useState<string | null>(null);
 
   const handleDeleteToTrash = async () => {
-    if (!confirm(`Pindahkan aset "${item.item_name}" ke Tempat Sampah?\n\nData ini dapat dipulihkan kapan saja oleh Administrator / Manajemen Sampah & Log.`)) {
+    if (!confirm(`Pindahkan aset "${item.item_name}" ke Tempat Sampah?\n\nData ini dapat dipulihkan kapan saja oleh Super User / Admin.`)) {
       return;
     }
     try {

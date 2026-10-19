@@ -532,7 +532,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   // Bulk Delete to Trash Handler
   const handleBulkDeleteToTrash = async () => {
     if (selectedIds.length === 0) return;
-    if (!window.confirm(`Pindahkan ${selectedIds.length} item aset terpilih ke Tempat Sampah?\n\nData masih dapat dipulihkan kapan saja oleh Manajemen Sampah & Log.`)) {
+    if (!window.confirm(`Pindahkan ${selectedIds.length} item aset terpilih ke Tempat Sampah?\n\nData masih dapat dipulihkan kapan saja oleh Super User / Admin.`)) {
       return;
     }
 

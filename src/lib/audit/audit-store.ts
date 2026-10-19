@@ -39,8 +39,8 @@ const initialSeedLogs: AuditLogEntry[] = [
   {
     id: 'log-seed-3',
     timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
-    actor_name: 'Admin Audit',
-    actor_role: 'Manajemen Sampah & Log',
+    actor_name: 'Admin Operasional',
+    actor_role: 'Admin',
     action_type: 'UPDATE',
     entity_type: 'SYSTEM',
     entity_title: 'Rebranding Sistem',

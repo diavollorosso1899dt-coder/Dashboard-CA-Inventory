@@ -52,11 +52,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Role-based defaults if not yet customized
     const role = (user.role || '').toLowerCase();
+    if (role === 'admin' || role.includes('admin') || role.includes('sampah') || role.includes('trash')) {
+      return [
+        'dashboard',
+        'so_harian',
+        'assets_tracking',
+        'assets_input',
+        'kelola_ro',
+        'purchase_pr',
+        'surat_jalan',
+        'monitoring_transfer',
+        'monitoring_sla',
+        'master_items',
+        'master_outlets',
+        'trash_audit',
+      ].includes(featureId);
+    }
     if (role.includes('outlet')) {
       return ['dashboard', 'assets_tracking', 'kelola_ro'].includes(featureId);
-    }
-    if (role.includes('sampah') || role.includes('trash')) {
-      return ['dashboard', 'trash_audit'].includes(featureId);
     }
     return [
       'dashboard',
