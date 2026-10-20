@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { SuratJalan } from '@/lib/supabase/types';
+import { SuratJalan, SJItem } from '@/lib/supabase/types';
 import AreaFilterPills from '@/components/ui/AreaFilterPills';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
 import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
@@ -30,7 +30,8 @@ import {
   LayoutGrid,
   Table as TableIcon,
   PlusCircle,
-  ArrowRight
+  ArrowRight,
+  Layers
 } from 'lucide-react';
 
 import { Toast, ToastMessage } from '@/components/ui/Toast';
@@ -46,7 +47,7 @@ const SJ_COLUMNS: ColumnItem[] = [
   { id: 'route', label: 'Rute Distribusi (Asal → Tujuan)', defaultVisible: true },
   { id: 'dates_courier', label: 'Tanggal & Kurir', defaultVisible: true },
   { id: 'pics', label: 'PIC Pengirim / Penerima', defaultVisible: true },
-  { id: 'items', label: 'Item', defaultVisible: true },
+  { id: 'items', label: 'Item & Rincian', defaultVisible: true },
   { id: 'status', label: 'Status', defaultVisible: true },
   { id: 'actions', label: 'Aksi', defaultVisible: true, alwaysVisible: true },
 ];
@@ -57,6 +58,17 @@ export function normalizeSjStatus(status?: string): 'PROCESSED' | 'SHIPPED' | 'D
   if (s === 'DALAM PENGIRIMAN' || s === 'SHIPPED' || s === 'IN_TRANSIT') return 'SHIPPED';
   if (s === 'DIBATALKAN' || s === 'CANCELLED') return 'CANCELLED';
   return 'PROCESSED';
+}
+
+export interface GroupedSuratJalanRow {
+  key: string;
+  outletName: string;
+  docs: SuratJalan[];
+  items: any[];
+  primarySj: SuratJalan;
+  sjNumbers: string[];
+  roNumbers: string[];
+  totalUnits: number;
 }
 
 export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalanListViewProps) {
@@ -73,7 +85,8 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
-  const [detailModalSj, setDetailModalSj] = useState<SuratJalan | null>(null);
+  const [groupByOutlet, setGroupByOutlet] = useState<boolean>(true);
+  const [detailModalGroup, setDetailModalGroup] = useState<GroupedSuratJalanRow | null>(null);
   const [deliveryProofTargetSj, setDeliveryProofTargetSj] = useState<SuratJalan | null>(null);
 
   // Column visibility
@@ -119,40 +132,42 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
     }
   };
 
-  const formatSjDocText = (sj: SuratJalan) => {
-    const sjNo = sj.nomor_sj || sj.sj_number || sj.id;
-    const dest = sj.tujuan_outlet_nama || sj.branch_name || 'Outlet Cabang';
-    const itemsStr = (sj.items || [])
+  const formatSjDocText = (group: GroupedSuratJalanRow) => {
+    const sjNo = group.sjNumbers.join(', ');
+    const dest = group.outletName;
+    const itemsStr = (group.items || [])
       .map((it: any, idx: number) => `  ${idx + 1}. ${it.item_name || it.nama_barang} (${it.quantity ?? it.qty ?? 1} ${it.unit || it.satuan || 'Unit'})`)
       .join('\n');
 
     return [
       `📄 *SURAT JALAN DISTRIBUSI: ${sjNo}*`,
-      `• Tanggal: ${formatDateOnly(sj.delivery_date || sj.tanggal_kirim || sj.created_at)}`,
+      `• Tanggal: ${formatDateOnly(group.primarySj.delivery_date || group.primarySj.tanggal_kirim || group.primarySj.created_at)}`,
       `• Rute: Gudang Pusat SCGA ➔ ${dest}`,
-      `• Kurir / Armada: ${sj.expedition || sj.driver_nama || sj.driver_name || 'Armada Internal'} (${sj.kendaraan_plat || sj.vehicle_number || '-'})`,
-      `• Pengirim: ${sj.sender_name || sj.pengirim_nama || 'Staff Logistik SCGA'}`,
-      `• Penerima: ${sj.receiver_name || sj.penerima_nama || 'Menunggu konfirmasi cabang'}`,
-      `• Status: ${sj.status}`,
+      `• Kurir / Armada: ${group.primarySj.expedition || group.primarySj.driver_nama || group.primarySj.driver_name || 'Armada Internal'} (${group.primarySj.kendaraan_plat || group.primarySj.vehicle_number || '-'})`,
+      `• Pengirim: ${group.primarySj.sender_name || group.primarySj.pengirim_nama || 'Staff Logistik SCGA'}`,
+      `• Penerima: ${group.primarySj.receiver_name || group.primarySj.penerima_nama || 'Menunggu konfirmasi cabang'}`,
+      `• Status: ${group.primarySj.status}`,
+      `• Jumlah Dokumen Terkumpul: ${group.docs.length}`,
+      `• Total Fisik Barang: ${group.totalUnits} Unit (${group.items.length} Baris)`,
       `• Daftar Barang:`,
       itemsStr || '  (Belum ada rincian item)',
-      sj.catatan || sj.notes ? `• Catatan: ${sj.catatan || sj.notes}` : '',
+      group.primarySj.catatan || group.primarySj.notes ? `• Catatan: ${group.primarySj.catatan || group.primarySj.notes}` : '',
     ]
       .filter(Boolean)
       .join('\n');
   };
 
   const formatAllTransfersText = () => {
-    if (filteredList.length === 0) return 'Tidak ada data Surat Jalan.';
+    if (groupedList.length === 0) return 'Tidak ada data Surat Jalan.';
     return [
-      `📋 *DAFTAR DOKUMEN SURAT JALAN DISTRIBUSI (${filteredList.length})*`,
+      `📋 *DAFTAR DOKUMEN SURAT JALAN DISTRIBUSI (${groupedList.length} Outlet)*`,
       `Dicetak/Disalin pada: ${new Date().toLocaleString('id-ID')}`,
       '',
-      ...filteredList.map((sj, i) => {
-        const sjNo = sj.nomor_sj || sj.sj_number || sj.id;
-        const dest = sj.tujuan_outlet_nama || sj.branch_name || 'Cabang';
-        const itemCount = sj.items?.length || 0;
-        return `${i + 1}. ${sjNo} | ${dest} | Status: ${sj.status} | ${itemCount} Item`;
+      ...groupedList.map((g, i) => {
+        const sjNo = g.sjNumbers.join(', ');
+        const dest = g.outletName;
+        const itemCount = g.items?.length || 0;
+        return `${i + 1}. ${dest} | SJ: ${sjNo} | Status: ${g.primarySj.status} | Total ${g.totalUnits} Unit (${itemCount} Item)`;
       }),
     ].join('\n');
   };
@@ -232,24 +247,26 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
     }
   };
 
-  const handleDeleteSingle = async (sj: SuratJalan) => {
-    const sjNo = sj.nomor_sj || sj.sj_number || sj.id;
-    if (!window.confirm(`Hapus dokumen Surat Jalan ${sjNo}? Tindakan ini tidak dapat dibatalkan.`)) {
-      return;
-    }
+  const handleDeleteGroup = async (group: GroupedSuratJalanRow) => {
+    const confirmMsg = group.docs.length > 1
+      ? `Hapus SEMUA (${group.docs.length}) dokumen Surat Jalan untuk outlet ${group.outletName}?\n\nTindakan ini tidak dapat dibatalkan.`
+      : `Hapus dokumen Surat Jalan ${group.sjNumbers[0]}? Tindakan ini tidak dapat dibatalkan.`;
+
+    if (!window.confirm(confirmMsg)) return;
 
     try {
-      setUpdatingId(sj.id);
-      const res = await fetch(`/api/distribution/surat-jalan?id=${encodeURIComponent(sj.id)}`, {
-        method: 'DELETE',
+      setUpdatingId(group.key);
+      const deletePromises = group.docs.map((doc) =>
+        fetch(`/api/distribution/surat-jalan?id=${encodeURIComponent(doc.id)}`, { method: 'DELETE' })
+      );
+      await Promise.all(deletePromises);
+
+      const deletedIds = new Set(group.docs.map((d) => d.id));
+      setSjList((prev) => prev.filter((s) => !deletedIds.has(s.id)));
+      setToast({
+        type: 'success',
+        message: `Dokumen untuk outlet ${group.outletName} berhasil dihapus.`,
       });
-      const data = await res.json();
-      if (data.success) {
-        setSjList((prev) => prev.filter((s) => s.id !== sj.id && s.sj_number !== sj.id));
-        setToast({ type: 'success', message: `Dokumen ${sjNo} berhasil dihapus.` });
-      } else {
-        setToast({ type: 'error', message: data.error || 'Gagal menghapus dokumen' });
-      }
     } catch {
       setToast({ type: 'error', message: 'Terjadi kesalahan jaringan saat menghapus dokumen' });
     } finally {
@@ -284,6 +301,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
     }
   };
 
+  // 1. Raw Filtered List berdasarkan Region, Status, & Search
   const filteredList = useMemo(() => {
     return sjList.filter((sj) => {
       const sjRegion = sj.region || (
@@ -293,7 +311,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
 
       const norm = normalizeSjStatus(sj.status);
 
-      // Status filter logic: Dokumen yang sudah diterima outlet keluar dari daftar aktif
+      // Status filter logic
       if (statusFilter === 'ACTIVE') {
         if (norm === 'DELIVERED' || norm === 'CANCELLED') return false;
       } else if (statusFilter === 'DELIVERED') {
@@ -330,6 +348,64 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
       return true;
     });
   }, [sjList, regionFilter, statusFilter, search]);
+
+  // 2. KELOMPOKKAN JIKA ADA NAMA OUTLET YANG SAMA DALAM 1 DAFTAR CETAK
+  const groupedList = useMemo<GroupedSuratJalanRow[]>(() => {
+    if (!groupByOutlet) {
+      return filteredList.map((sj) => {
+        const outName = sj.tujuan_outlet_nama || sj.branch_name || 'Outlet Cabang';
+        const units = (sj.items || []).reduce(
+          (acc: number, it: any) => acc + Number(it.quantity ?? it.qty ?? 1),
+          0
+        );
+        return {
+          key: sj.id,
+          outletName: outName,
+          docs: [sj],
+          items: sj.items || [],
+          primarySj: sj,
+          sjNumbers: [sj.nomor_sj || sj.sj_number || sj.id],
+          roNumbers: (sj.ro_nomor || sj.ro_number ? [sj.ro_nomor || sj.ro_number] : []).filter(Boolean) as string[],
+          totalUnits: units,
+        };
+      });
+    }
+
+    const map = new Map<string, GroupedSuratJalanRow>();
+
+    filteredList.forEach((sj) => {
+      const outName = (sj.tujuan_outlet_nama || sj.branch_name || 'Outlet Cabang').trim();
+      const cleanKey = outName.toLowerCase();
+      const sjNo = sj.nomor_sj || sj.sj_number || sj.id;
+      const roNo = sj.ro_nomor || sj.ro_number;
+      const sjUnits = (sj.items || []).reduce(
+        (acc: number, it: any) => acc + Number(it.quantity ?? it.qty ?? 1),
+        0
+      );
+
+      if (!map.has(cleanKey)) {
+        map.set(cleanKey, {
+          key: cleanKey,
+          outletName: outName,
+          docs: [sj],
+          items: [...(sj.items || [])],
+          primarySj: sj,
+          sjNumbers: sjNo ? [sjNo] : [],
+          roNumbers: (roNo ? [roNo] : []) as string[],
+          totalUnits: sjUnits,
+        });
+      } else {
+        const existing = map.get(cleanKey)!;
+        existing.docs.push(sj);
+        existing.items.push(...(sj.items || []));
+        if (sjNo && !existing.sjNumbers.includes(sjNo)) existing.sjNumbers.push(sjNo);
+        if (roNo && !existing.roNumbers.includes(roNo)) existing.roNumbers.push(roNo);
+        existing.totalUnits += sjUnits;
+      }
+    });
+
+    return Array.from(map.values());
+  }, [filteredList, groupByOutlet]);
 
   const getStatusBadge = (status: string) => {
     const norm = normalizeSjStatus(status);
@@ -431,7 +507,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
             syncUrl={true}
           />
 
-          <div className="relative flex-1 min-w-[220px]">
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#747775] dark:text-[#8e918f]" />
             <input
               type="text"
@@ -463,8 +539,23 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
           </div>
         </div>
 
-        {/* View Mode Toggle: Tabel (Utama) vs Kartu */}
-        <div className="flex items-center gap-1.5 self-end md:self-auto">
+        {/* View Mode & Grouping Toggles */}
+        <div className="flex items-center gap-2 self-end md:self-auto flex-wrap">
+          {/* Tombol Pengelompokan Outlet */}
+          <button
+            onClick={() => setGroupByOutlet(!groupByOutlet)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+              groupByOutlet
+                ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700 shadow-2xs'
+                : 'bg-white dark:bg-[#1e1f20] text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700'
+            }`}
+            title="Kumpulkan dan gabungkan seluruh dokumen pengiriman dengan nama outlet yang sama"
+          >
+            <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            <span>Gabung per Outlet ({groupedList.length})</span>
+          </button>
+
+          {/* View Mode Toggle: Tabel (Utama) vs Kartu */}
           <div className="flex items-center gap-0.5 bg-[#f0f4f9] dark:bg-[#1e1f20] p-1 rounded-full border border-[#e0e2ec] dark:border-[#444746]">
             <button
               onClick={() => setViewMode('table')}
@@ -494,14 +585,14 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
         </div>
       </div>
 
-      {/* TAMPILAN UTAMA: TABLE DOKUMEN DISTRIBUSI (PERSIS SESUAI SPESIFIKASI USER) */}
+      {/* TAMPILAN UTAMA: TABLE DOKUMEN DISTRIBUSI (TERKUMPUL PER OUTLET) */}
       {viewMode === 'table' ? (
         <div className="panel-card overflow-hidden border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] rounded-2xl shadow-xs">
           {/* Table Header Bar */}
           <div className="p-3 px-4 border-b border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#1e1f20] flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-bold text-[#444746] dark:text-[#c4c7c5]">
-                Daftar Dokumen Distribusi {statusFilter === 'ACTIVE' ? 'Aktif' : statusFilter === 'DELIVERED' ? 'Diterima di Outlet (SLA)' : ''} ({filteredList.length})
+                Daftar Dokumen Distribusi {statusFilter === 'ACTIVE' ? 'Aktif' : statusFilter === 'DELIVERED' ? 'Diterima di Outlet (SLA)' : ''} ({groupedList.length} Outlet{groupByOutlet ? ', Tergabung' : ''})
               </span>
               {statusFilter === 'ACTIVE' && (
                 <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800">
@@ -518,7 +609,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                 <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                 <span>Monitoring SLA</span>
               </Link>
-              {filteredList.length > 0 && (
+              {groupedList.length > 0 && (
                 <button
                   onClick={() => copyToClipboard(formatAllTransfersText(), 'Semua Dokumen Distribusi', 'all-docs')}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#1e1f20] hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors shadow-xs cursor-pointer group"
@@ -554,7 +645,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                   {isVisible('route') && <th className="py-3.5 px-3">Rute Distribusi (Asal &rarr; Tujuan)</th>}
                   {isVisible('dates_courier') && <th className="py-3.5 px-3">Tanggal &amp; Kurir</th>}
                   {isVisible('pics') && <th className="py-3.5 px-3">PIC Pengirim / Penerima</th>}
-                  {isVisible('items') && <th className="py-3.5 px-3 text-center">Item</th>}
+                  {isVisible('items') && <th className="py-3.5 px-3 text-center">Item &amp; Rincian</th>}
                   {isVisible('status') && <th className="py-3.5 px-3 text-center">Status</th>}
                   {isVisible('actions') && <th className="py-3.5 px-3 text-right">Aksi</th>}
                 </tr>
@@ -569,7 +660,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                       </div>
                     </td>
                   </tr>
-                ) : filteredList.length === 0 ? (
+                ) : groupedList.length === 0 ? (
                   <tr>
                     <td colSpan={visibleColCount} className="text-center py-12 text-[#747775] dark:text-[#8e918f]">
                       <div className="flex flex-col items-center justify-center gap-2">
@@ -591,36 +682,39 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                     </td>
                   </tr>
                 ) : (
-                  filteredList.map((sj) => {
-                    const norm = normalizeSjStatus(sj.status);
+                  groupedList.map((group) => {
+                    const norm = normalizeSjStatus(group.primarySj.status);
                     const isInTransit = norm === 'SHIPPED' || norm === 'PROCESSED';
                     const isReceived = norm === 'DELIVERED';
-                    const sjNo = sj.nomor_sj || sj.sj_number || sj.id;
-                    const roNo = sj.ro_nomor || sj.ro_number;
-                    const dest = sj.tujuan_outlet_nama || sj.branch_name || 'Outlet Cabang';
-                    const driver = sj.driver_nama || sj.driver_name || sj.expedition || 'Armada Internal SCGA';
-                    const plate = sj.kendaraan_plat || sj.vehicle_number;
+                    const driver = group.primarySj.driver_nama || group.primarySj.driver_name || group.primarySj.expedition || 'Armada Internal SCGA';
+                    const plate = group.primarySj.kendaraan_plat || group.primarySj.vehicle_number;
+                    const printUrl = `/distribution/surat-jalan/print/${encodeURIComponent(group.primarySj.id)}?outlet=${encodeURIComponent(group.outletName)}`;
 
                     return (
-                      <tr key={sj.id} className="hover:bg-[#f8fafd] dark:hover:bg-[#282a2c]/60 transition-colors">
+                      <tr key={group.key} className="hover:bg-[#f8fafd] dark:hover:bg-[#282a2c]/60 transition-colors">
                         {/* No. Dokumen & Surat Jalan */}
                         {isVisible('doc_number') && (
                           <td className="py-3 px-3">
-                            <div className="font-mono font-bold text-xs text-[#0b57d0] dark:text-[#a8c7fa]">
-                              {sjNo}
+                            <div className="font-mono font-bold text-xs text-[#0b57d0] dark:text-[#a8c7fa] flex items-center gap-1.5 flex-wrap">
+                              <span>{group.sjNumbers[0]}</span>
+                              {group.docs.length > 1 && (
+                                <span className="text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 px-1.5 py-0.2 rounded font-sans font-semibold">
+                                  +{group.docs.length - 1} Dokumen
+                                </span>
+                              )}
                             </div>
-                            {roNo && (
-                              <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                                Ref: {roNo}
+                            {group.roNumbers.length > 0 && (
+                              <div className="text-[10px] text-slate-500 font-mono mt-0.5 truncate max-w-[200px]">
+                                Ref: {group.roNumbers.join(', ')}
                               </div>
                             )}
                             <Link
-                              href={`/distribution/surat-jalan/print/${sj.id}`}
+                              href={printUrl}
                               className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline mt-0.5"
-                              title="Klik untuk cetak Surat Jalan Distribusi"
+                              title="Klik untuk cetak seluruh item Surat Jalan outlet ini"
                             >
                               <Printer className="h-3 w-3" />
-                              <span>Cetak SJ</span>
+                              <span>Cetak SJ ({group.items.length} Item)</span>
                             </Link>
                           </td>
                         )}
@@ -628,13 +722,18 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         {/* Route */}
                         {isVisible('route') && (
                           <td className="py-3 px-3">
-                            <div className="flex items-center gap-1.5 font-semibold text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
+                            <div className="flex items-center gap-1.5 font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
                               <span className="text-[#444746] dark:text-[#c4c7c5]">Gudang Pusat SCGA</span>
                               <span className="text-[#0b57d0] dark:text-[#a8c7fa]">&rarr;</span>
-                              <span className="text-[#0b57d0] dark:text-[#a8c7fa]">{dest}</span>
+                              <span className="text-[#0b57d0] dark:text-[#a8c7fa]">{group.outletName}</span>
                             </div>
-                            <div className="text-[10px] text-[#747775] dark:text-[#8e918f] mt-0.5">
-                              Gudang Pusat &rarr; Outlet Cabang
+                            <div className="text-[10px] text-[#747775] dark:text-[#8e918f] mt-0.5 flex items-center gap-1.5">
+                              <span>Gudang Pusat &rarr; Outlet Cabang</span>
+                              {group.docs.length > 1 && (
+                                <span className="bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.2 rounded font-semibold text-[9px] border border-emerald-200 dark:border-emerald-800">
+                                  {group.docs.length} Dokumen Digabung
+                                </span>
+                              )}
                             </div>
                           </td>
                         )}
@@ -643,11 +742,11 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         {isVisible('dates_courier') && (
                           <td className="py-3 px-3">
                             <div className="text-xs font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">
-                              Kirim: {formatDateOnly(sj.delivery_date || sj.tanggal_kirim || sj.created_at)}
+                              Kirim: {formatDateOnly(group.primarySj.delivery_date || group.primarySj.tanggal_kirim || group.primarySj.created_at)}
                             </div>
-                            {sj.received_at && (
+                            {group.primarySj.received_at && (
                               <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                                Tiba: {formatDateOnly(sj.received_at)}
+                                Tiba: {formatDateOnly(group.primarySj.received_at)}
                               </div>
                             )}
                             <div className="text-[11px] text-[#747775] dark:text-[#8e918f] mt-0.5">
@@ -661,13 +760,13 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                           <td className="py-3 px-3">
                             <div className="text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
                               <span className="text-[#747775] dark:text-[#8e918f]">Pengirim:</span>{' '}
-                              {sj.sender_name || sj.pengirim_nama || 'Staff Logistik SCGA'}
+                              {group.primarySj.sender_name || group.primarySj.pengirim_nama || 'Staff Logistik SCGA'}
                             </div>
                             <div className="text-xs text-[#1f1f1f] dark:text-[#e3e3e3] mt-0.5">
                               <span className="text-[#747775] dark:text-[#8e918f]">Penerima:</span>{' '}
-                              {sj.receiver_name || sj.penerima_nama ? (
+                              {group.primarySj.receiver_name || group.primarySj.penerima_nama ? (
                                 <strong className="text-emerald-700 dark:text-emerald-300">
-                                  {sj.receiver_name || sj.penerima_nama}
+                                  {group.primarySj.receiver_name || group.primarySj.penerima_nama}
                                 </strong>
                               ) : (
                                 <span className="italic text-[#747775]">Menunggu konfirmasi outlet</span>
@@ -676,41 +775,48 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                           </td>
                         )}
 
-                        {/* Items */}
+                        {/* Items (Seluruh Item Outlet Terkumpul) */}
                         {isVisible('items') && (
                           <td className="py-3 px-3">
-                            <div className="space-y-1.5 min-w-[200px] max-w-[300px]">
-                              {sj.items && sj.items.length > 0 ? (
-                                sj.items.slice(0, 3).map((it: any, idx: number) => {
-                                  const itName = it.item_name || it.nama_barang || 'Barang';
-                                  const qty = it.quantity ?? it.qty ?? 1;
-                                  const unit = it.unit || it.satuan || 'Unit';
-                                  return (
-                                    <div
-                                      key={it.id || idx}
-                                      className="flex items-center justify-between gap-1.5 p-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 text-xs shadow-2xs"
-                                    >
-                                      <span className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
-                                        {itName}
-                                      </span>
-                                      <span className="font-bold text-[#0b57d0] dark:text-[#a8c7fa] font-mono shrink-0">
-                                        {qty} {unit}
-                                      </span>
-                                    </div>
-                                  );
-                                })
+                            <div className="space-y-1.5 min-w-[210px] max-w-[320px]">
+                              {group.items && group.items.length > 0 ? (
+                                <>
+                                  {group.items.slice(0, 3).map((it: any, idx: number) => {
+                                    const itName = it.item_name || it.nama_barang || 'Barang';
+                                    const qty = it.quantity ?? it.qty ?? 1;
+                                    const unit = it.unit || it.satuan || 'Unit';
+                                    return (
+                                      <div
+                                        key={it.id || idx}
+                                        className="flex items-center justify-between gap-1.5 p-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 text-xs shadow-2xs"
+                                      >
+                                        <span className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
+                                          {itName}
+                                        </span>
+                                        <span className="font-bold text-[#0b57d0] dark:text-[#a8c7fa] font-mono shrink-0">
+                                          {qty} {unit}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+
+                                  <div className="flex items-center justify-between pt-0.5">
+                                    <span className="text-[10px] font-bold text-slate-500">
+                                      Total: {group.totalUnits} Unit ({group.items.length} Item)
+                                    </span>
+                                    {group.items.length > 3 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setDetailModalGroup(group)}
+                                        className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <span>+{group.items.length - 3} item lainnya...</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                </>
                               ) : (
                                 <span className="text-xs text-[#747775] italic">0 Unit</span>
-                              )}
-
-                              {sj.items && sj.items.length > 3 && (
-                                <button
-                                  type="button"
-                                  onClick={() => setDetailModalSj(sj)}
-                                  className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
-                                >
-                                  <span>+ {sj.items.length - 3} item lainnya...</span>
-                                </button>
                               )}
                             </div>
                           </td>
@@ -719,7 +825,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         {/* Status */}
                         {isVisible('status') && (
                           <td className="py-3 px-3 text-center">
-                            {getStatusBadge(sj.status)}
+                            {getStatusBadge(group.primarySj.status)}
                           </td>
                         )}
 
@@ -729,7 +835,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                             <div className="flex items-center justify-end gap-1.5">
                               {isInTransit && (
                                 <button
-                                  onClick={() => setDeliveryProofTargetSj(sj)}
+                                  onClick={() => setDeliveryProofTargetSj(group.primarySj)}
                                   className="flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 text-xs font-semibold transition-colors shadow-xs cursor-pointer"
                                   title="Konfirmasi Kedatangan Barang & Tanda Tangan Digital"
                                 >
@@ -739,11 +845,11 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                               )}
 
                               <button
-                                onClick={() => copyToClipboard(formatSjDocText(sj), `Surat Jalan ${sjNo}`, `doc-${sj.id}`)}
+                                onClick={() => copyToClipboard(formatSjDocText(group), `Surat Jalan ${group.outletName}`, `doc-${group.key}`)}
                                 className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors cursor-pointer"
-                                title="Salin ringkasan surat jalan ini"
+                                title="Salin ringkasan surat jalan outlet ini"
                               >
-                                {copiedId === `doc-${sj.id}` ? (
+                                {copiedId === `doc-${group.key}` ? (
                                   <CheckCheck className="h-3.5 w-3.5 text-emerald-600" />
                                 ) : (
                                   <Copy className="h-3.5 w-3.5" />
@@ -751,24 +857,24 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                               </button>
 
                               <Link
-                                href={`/distribution/surat-jalan/print/${sj.id}`}
+                                href={printUrl}
                                 className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors cursor-pointer"
-                                title="Cetak Surat Jalan Distribusi"
+                                title="Cetak Surat Jalan Terpadu Outlet Ini"
                               >
                                 <Printer className="h-3.5 w-3.5" />
                               </Link>
 
                               <button
-                                onClick={() => setDetailModalSj(sj)}
+                                onClick={() => setDetailModalGroup(group)}
                                 className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors cursor-pointer"
-                                title="Lihat Detail Distribusi"
+                                title="Lihat Detail Rincian Barang"
                               >
                                 <Eye className="h-3.5 w-3.5" />
                               </button>
 
                               <button
-                                onClick={() => handleDeleteSingle(sj)}
-                                disabled={updatingId === sj.id}
+                                onClick={() => handleDeleteGroup(group)}
+                                disabled={updatingId === group.key}
                                 className="p-1.5 rounded-full border border-rose-200 dark:border-rose-900/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 transition-colors cursor-pointer"
                                 title="Hapus dokumen surat jalan ini"
                               >
@@ -793,7 +899,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
               <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-3 text-indigo-500" />
               Memuat daftar Surat Jalan...
             </div>
-          ) : filteredList.length === 0 ? (
+          ) : groupedList.length === 0 ? (
             <div className="col-span-full bg-white dark:bg-slate-900 p-12 text-center rounded-2xl border border-slate-200 dark:border-slate-800">
               <FileText className="w-12 h-12 mx-auto text-slate-400 mb-3 opacity-60" />
               <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">Belum ada Surat Jalan</h3>
@@ -802,14 +908,15 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
               </p>
             </div>
           ) : (
-            filteredList.map((sj) => {
-              const sjNo = sj.nomor_sj || sj.sj_number || 'SJ-CA-DRAFT';
-              const norm = normalizeSjStatus(sj.status);
+            groupedList.map((group) => {
+              const sjNo = group.sjNumbers.join(' / ');
+              const norm = normalizeSjStatus(group.primarySj.status);
               const isInTransit = norm === 'SHIPPED' || norm === 'PROCESSED';
+              const printUrl = `/distribution/surat-jalan/print/${encodeURIComponent(group.primarySj.id)}?outlet=${encodeURIComponent(group.outletName)}`;
 
               return (
                 <div
-                  key={sj.id}
+                  key={group.key}
                   className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
                 >
                   <div>
@@ -820,39 +927,44 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         </span>
                         <div className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
                           <Calendar className="w-3.5 h-3.5" />
-                          {formatDateOnly(sj.delivery_date || sj.tanggal_kirim || sj.created_at)}
+                          {formatDateOnly(group.primarySj.delivery_date || group.primarySj.tanggal_kirim || group.primarySj.created_at)}
                         </div>
                       </div>
-                      {getStatusBadge(sj.status)}
+                      {getStatusBadge(group.primarySj.status)}
                     </div>
 
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 space-y-2 text-sm">
                       <div>
                         <div className="text-xs text-slate-400">Outlet Tujuan:</div>
-                        <div className="font-semibold text-slate-800 dark:text-slate-200">
-                          {sj.tujuan_outlet_nama || sj.branch_name || 'Outlet Tujuan'}
+                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                          <span>{group.outletName}</span>
+                          {group.docs.length > 1 && (
+                            <span className="text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-semibold px-2 py-0.2 rounded-full">
+                              {group.docs.length} Dokumen
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
                         <span>
-                          Ref RO: <strong className="font-mono text-slate-700 dark:text-slate-300">{sj.ro_nomor || sj.ro_number || '-'}</strong>
+                          Ref RO: <strong className="font-mono text-slate-700 dark:text-slate-300">{group.roNumbers.join(', ') || '-'}</strong>
                         </span>
                         <button
                           type="button"
-                          onClick={() => setDetailModalSj(sj)}
+                          onClick={() => setDetailModalGroup(group)}
                           className="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
                         >
                           <Boxes className="w-3.5 h-3.5" />
-                          <span>{sj.items?.length || 0} Jenis Item</span>
+                          <span>{group.items?.length || 0} Jenis Item ({group.totalUnits} Unit)</span>
                         </button>
                       </div>
                       <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-xs">
                         <div className="flex items-center gap-2">
                           <User className="w-3.5 h-3.5 text-slate-400" />
-                          <span className="text-slate-700 dark:text-slate-300">{sj.driver_nama || sj.driver_name || 'Driver Pengantar'}</span>
+                          <span className="text-slate-700 dark:text-slate-300">{group.primarySj.driver_nama || group.primarySj.driver_name || 'Driver Pengantar'}</span>
                         </div>
                         <span className="font-mono bg-white dark:bg-slate-900 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 font-semibold text-slate-800 dark:text-slate-200">
-                          {sj.kendaraan_plat || sj.vehicle_number || '-'}
+                          {group.primarySj.kendaraan_plat || group.primarySj.vehicle_number || '-'}
                         </span>
                       </div>
 
@@ -861,11 +973,11 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         <div className="flex items-center justify-between text-xs mb-1.5">
                           <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                             <Package className="w-3.5 h-3.5 text-indigo-500" />
-                            <span>Daftar Item:</span>
+                            <span>Daftar Item ({group.totalUnits} Unit):</span>
                           </span>
                           <button
                             type="button"
-                            onClick={() => setDetailModalSj(sj)}
+                            onClick={() => setDetailModalGroup(group)}
                             className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
                           >
                             <Eye className="w-3 h-3" />
@@ -873,9 +985,9 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                           </button>
                         </div>
 
-                        {sj.items && sj.items.length > 0 ? (
+                        {group.items && group.items.length > 0 ? (
                           <div className="space-y-1.5 bg-slate-50/80 dark:bg-slate-800/40 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800 text-xs">
-                            {sj.items.slice(0, 3).map((it: any, idx: number) => {
+                            {group.items.slice(0, 3).map((it: any, idx: number) => {
                               const itemName = it.item_name || it.nama_barang || it.name || 'Nama Item';
                               const qty = it.quantity ?? it.qty ?? 1;
                               const unit = it.unit || it.satuan || 'UNIT';
@@ -903,26 +1015,26 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => copyToClipboard(formatSjDocText(sj), `Surat Jalan ${sjNo}`, `grid-${sj.id}`)}
+                        onClick={() => copyToClipboard(formatSjDocText(group), `Surat Jalan ${group.outletName}`, `grid-${group.key}`)}
                         className="p-2 text-slate-500 hover:text-slate-700 bg-slate-100 dark:bg-slate-800 rounded-lg transition-colors cursor-pointer"
                         title="Salin ringkasan surat jalan"
                       >
-                        {copiedId === `grid-${sj.id}` ? (
+                        {copiedId === `grid-${group.key}` ? (
                           <CheckCheck className="w-4 h-4 text-emerald-600" />
                         ) : (
                           <Copy className="w-4 h-4" />
                         )}
                       </button>
                       <Link
-                        href={`/distribution/surat-jalan/print/${sj.id}`}
+                        href={printUrl}
                         className="p-2 text-slate-500 hover:text-slate-700 bg-slate-100 dark:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                        title="Cetak Surat Jalan"
+                        title="Cetak Surat Jalan Outlet Ini"
                       >
                         <Printer className="w-4 h-4" />
                       </Link>
                       <button
                         type="button"
-                        onClick={() => handleDeleteSingle(sj)}
+                        onClick={() => handleDeleteGroup(group)}
                         className="p-2 text-rose-500 hover:text-rose-700 bg-rose-50 dark:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
                         title="Hapus Surat Jalan"
                       >
@@ -933,7 +1045,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                     {isInTransit && (
                       <button
                         type="button"
-                        onClick={() => setDeliveryProofTargetSj(sj)}
+                        onClick={() => setDeliveryProofTargetSj(group.primarySj)}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950 hover:bg-emerald-100 dark:hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer shadow-2xs"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
@@ -949,7 +1061,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
       )}
 
       {/* MODAL DETAIL RINCIAN ITEM SURAT JALAN */}
-      {detailModalSj && (
+      {detailModalGroup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="spring-pop panel-card w-full max-w-xl max-h-[85vh] flex flex-col p-6 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl overflow-hidden">
             {/* Header */}
@@ -961,20 +1073,17 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="font-bold text-base text-slate-900 dark:text-white">
-                      Rincian Item Surat Jalan
+                      Rincian Item Surat Jalan: {detailModalGroup.outletName}
                     </h3>
-                    <span className="font-mono text-xs font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded">
-                      {detailModalSj.nomor_sj || detailModalSj.sj_number}
-                    </span>
                   </div>
-                  <p className="text-xs text-slate-500">
-                    Tujuan: <strong>{detailModalSj.tujuan_outlet_nama || detailModalSj.branch_name}</strong> • Ref RO: <strong>{detailModalSj.ro_nomor || detailModalSj.ro_number}</strong>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    SJ: <strong>{detailModalGroup.sjNumbers.join(', ')}</strong> • Ref RO: <strong>{detailModalGroup.roNumbers.join(', ') || '-'}</strong>
                   </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setDetailModalSj(null)}
+                onClick={() => setDetailModalGroup(null)}
                 className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 <X className="h-5 w-5" />
@@ -986,11 +1095,11 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
               <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700/60 mb-3 grid grid-cols-2 gap-2 text-xs">
                 <div>
                   <span className="text-slate-400 block text-[11px]">Pengemudi (Driver):</span>
-                  <strong className="text-slate-800 dark:text-slate-200">{detailModalSj.driver_nama || detailModalSj.driver_name || '-'}</strong>
+                  <strong className="text-slate-800 dark:text-slate-200">{detailModalGroup.primarySj.driver_nama || detailModalGroup.primarySj.driver_name || '-'}</strong>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px]">Plat Nomor:</span>
-                  <strong className="font-mono text-slate-800 dark:text-slate-200">{detailModalSj.kendaraan_plat || detailModalSj.vehicle_number || '-'}</strong>
+                  <strong className="font-mono text-slate-800 dark:text-slate-200">{detailModalGroup.primarySj.kendaraan_plat || detailModalGroup.primarySj.vehicle_number || '-'}</strong>
                 </div>
               </div>
 
@@ -1005,8 +1114,8 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {detailModalSj.items && detailModalSj.items.length > 0 ? (
-                      detailModalSj.items.map((it: any, idx: number) => {
+                    {detailModalGroup.items && detailModalGroup.items.length > 0 ? (
+                      detailModalGroup.items.map((it: any, idx: number) => {
                         const itemName = it.item_name || it.nama_barang || it.name || 'Barang';
                         const qty = it.quantity ?? it.qty ?? it.jumlah ?? 1;
                         const unit = it.unit || it.satuan || 'UNIT';
@@ -1020,7 +1129,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                               {qty} {unit}
                             </td>
                             <td className="py-2.5 px-3 text-slate-500 text-[11px] italic">
-                              {it.notes || '-'}
+                              {it.notes || it.specification || '-'}
                             </td>
                           </tr>
                         );
@@ -1033,11 +1142,20 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                       </tr>
                     )}
                   </tbody>
+                  {detailModalGroup.items && detailModalGroup.items.length > 0 && (
+                    <tfoot>
+                      <tr className="bg-slate-100 dark:bg-slate-800/80 font-bold border-t border-slate-200 dark:border-slate-700">
+                        <td colSpan={2} className="py-2 px-3 text-right">Total Fisik:</td>
+                        <td className="py-2 px-3 text-center font-mono text-indigo-600 dark:text-indigo-400">{detailModalGroup.totalUnits} UNIT</td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
 
               {/* Bukti Serah Terima & TTD Cabang */}
-              {(detailModalSj.tanda_tangan_url || detailModalSj.foto_bukti_url || detailModalSj.catatan_penerimaan) && (
+              {(detailModalGroup.primarySj.tanda_tangan_url || detailModalGroup.primarySj.foto_bukti_url || detailModalGroup.primarySj.catatan_penerimaan) && (
                 <div className="p-4 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 space-y-3 mt-3">
                   <div className="flex items-center gap-2 text-xs font-bold text-emerald-800 dark:text-emerald-300">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
@@ -1045,28 +1163,28 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                    {detailModalSj.tanda_tangan_url && (
+                    {detailModalGroup.primarySj.tanda_tangan_url && (
                       <div className="bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
                         <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
-                          Tanda Tangan ({detailModalSj.receiver_name || detailModalSj.penerima_nama || 'PIC Penerima'})
+                          Tanda Tangan ({detailModalGroup.primarySj.receiver_name || detailModalGroup.primarySj.penerima_nama || 'PIC Penerima'})
                         </span>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img 
-                          src={detailModalSj.tanda_tangan_url} 
+                          src={detailModalGroup.primarySj.tanda_tangan_url} 
                           alt="Tanda Tangan Penerima" 
                           className="h-20 max-w-full object-contain mx-auto"
                         />
                       </div>
                     )}
 
-                    {detailModalSj.foto_bukti_url && (
+                    {detailModalGroup.primarySj.foto_bukti_url && (
                       <div className="bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
                         <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
                           Foto Fisik Barang Tiba
                         </span>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img 
-                          src={detailModalSj.foto_bukti_url} 
+                          src={detailModalGroup.primarySj.foto_bukti_url} 
                           alt="Foto Bukti Barang" 
                           className="h-20 w-full object-cover rounded-lg"
                         />
@@ -1074,9 +1192,9 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                     )}
                   </div>
 
-                  {detailModalSj.catatan_penerimaan && (
+                  {detailModalGroup.primarySj.catatan_penerimaan && (
                     <div className="text-[11px] text-emerald-900 dark:text-emerald-200 bg-white/70 dark:bg-slate-900/60 p-2 rounded-lg border border-emerald-100 dark:border-emerald-900/40">
-                      <strong>Catatan Penerima:</strong> {detailModalSj.catatan_penerimaan}
+                      <strong>Catatan Penerima:</strong> {detailModalGroup.primarySj.catatan_penerimaan}
                     </div>
                   )}
                 </div>
@@ -1086,22 +1204,22 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
             {/* Footer Actions */}
             <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
               <span className="text-xs text-slate-500">
-                Total: <strong>{detailModalSj.items?.length || 0} Jenis Barang</strong>
+                Total: <strong>{detailModalGroup.items?.length || 0} Jenis Barang ({detailModalGroup.totalUnits} Unit)</strong>
               </span>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setDetailModalSj(null)}
+                  onClick={() => setDetailModalGroup(null)}
                   className="px-3.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
                 >
                   Tutup
                 </button>
                 <Link
-                  href={`/distribution/surat-jalan/print/${detailModalSj.id}`}
+                  href={`/distribution/surat-jalan/print/${encodeURIComponent(detailModalGroup.primarySj.id)}?outlet=${encodeURIComponent(detailModalGroup.outletName)}`}
                   className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Cetak Surat Jalan</span>
+                  <span>Cetak Surat Jalan ({detailModalGroup.items?.length || 0} Item)</span>
                 </Link>
               </div>
             </div>

@@ -1,15 +1,25 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import React, { useEffect, useState, useMemo } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { SuratJalan, SJItem } from '@/lib/supabase/types';
-import { Printer, ArrowLeft, Building2, Truck, ShieldCheck, CheckCircle } from 'lucide-react';
+import { Printer, ArrowLeft, Building2, Truck, ShieldCheck, CheckCircle, Layers, FileText } from 'lucide-react';
+
+interface MergedSJItem extends SJItem {
+  source_ro?: string;
+  source_sj?: string;
+}
 
 export default function PrintSuratJalanPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const id = params?.id as string;
+  const outletParam = searchParams ? searchParams.get('outlet') : null;
+
   const [sj, setSj] = useState<SuratJalan | null>(null);
+  const [siblingDocs, setSiblingDocs] = useState<SuratJalan[]>([]);
+  const [isConsolidated, setIsConsolidated] = useState<boolean>(true);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -19,16 +29,19 @@ export default function PrintSuratJalanPage() {
         // 1. Coba cari di API Surat Jalan Distribusi
         const res = await fetch('/api/distribution/surat-jalan');
         const json = await res.json();
-        let found: any = null;
+        const allDocs: SuratJalan[] = Array.isArray(json.data) ? json.data : [];
 
-        if (json.data && Array.isArray(json.data)) {
-          found = (json.data as SuratJalan[]).find(
+        let found: SuratJalan | null = null;
+
+        // Cari berdasarkan ID atau nomor SJ
+        if (allDocs.length > 0) {
+          found = allDocs.find(
             (item: any) =>
               item.id === id ||
               item.sj_number === id ||
               item.nomor_sj === id ||
               item.surat_jalan_number === id
-          );
+          ) || null;
         }
 
         // 2. Jika belum ditemukan, fallback periksa data Pemantauan Transfer Distribusi
@@ -65,9 +78,27 @@ export default function PrintSuratJalanPage() {
                 items: tr.items || [],
                 notes: tr.notes,
                 created_at: tr.created_at || new Date().toISOString(),
-              };
+              } as SuratJalan;
             }
           }
+        }
+
+        // Tentukan nama outlet target (dari found atau parameter URL)
+        const targetOutlet = outletParam || (found?.tujuan_outlet_nama || found?.branch_name);
+
+        if (targetOutlet && allDocs.length > 0) {
+          const cleanTarget = targetOutlet.toLowerCase().trim();
+          const siblings = allDocs.filter((doc) => {
+            const docOutlet = (doc.tujuan_outlet_nama || doc.branch_name || '').toLowerCase().trim();
+            return docOutlet === cleanTarget;
+          });
+
+          setSiblingDocs(siblings);
+          if (!found && siblings.length > 0) {
+            found = siblings[0];
+          }
+        } else if (found) {
+          setSiblingDocs([found]);
         }
 
         setSj(found || null);
@@ -77,18 +108,63 @@ export default function PrintSuratJalanPage() {
         setLoading(false);
       }
     }
-    if (id) loadSJ();
-  }, [id]);
+    if (id || outletParam) loadSJ();
+  }, [id, outletParam]);
+
+  // Kumpulkan & gabungkan semua item jika ada nama outlet yang sama
+  const consolidatedData = useMemo(() => {
+    if (!sj) return null;
+
+    // Jika konsolidasi aktif dan ada dokumen dengan outlet sama lebih dari 1
+    const docsToMerge = isConsolidated && siblingDocs.length > 0 ? siblingDocs : [sj];
+
+    // Gabungkan seluruh item
+    const mergedItems: MergedSJItem[] = [];
+    const sjNumbersSet = new Set<string>();
+    const roNumbersSet = new Set<string>();
+
+    docsToMerge.forEach((doc) => {
+      const docSj = doc.nomor_sj || doc.sj_number;
+      if (docSj) sjNumbersSet.add(docSj);
+
+      const docRo = doc.ro_nomor || doc.ro_number;
+      if (docRo) roNumbersSet.add(docRo);
+
+      (doc.items || []).forEach((it: any) => {
+        mergedItems.push({
+          ...it,
+          source_ro: docRo,
+          source_sj: docSj,
+        });
+      });
+    });
+
+    const totalQty = mergedItems.reduce((acc, it) => {
+      const q = Number(it.qty ?? it.quantity ?? (it as any).quantity_ordered ?? (it as any).quantity_needed ?? 1);
+      return acc + (isNaN(q) ? 1 : q);
+    }, 0);
+
+    return {
+      docsCount: docsToMerge.length,
+      sjNumbers: Array.from(sjNumbersSet),
+      roNumbers: Array.from(roNumbersSet),
+      items: mergedItems,
+      totalQty,
+    };
+  }, [sj, siblingDocs, isConsolidated]);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-slate-500 font-medium animate-pulse">Menyiapkan Dokumen Surat Jalan...</div>
+        <div className="text-slate-500 font-medium animate-pulse flex items-center gap-2">
+          <Truck className="w-5 h-5 animate-bounce text-indigo-600" />
+          <span>Menyiapkan Dokumen Surat Jalan...</span>
+        </div>
       </div>
     );
   }
 
-  if (!sj) {
+  if (!sj || !consolidatedData) {
     return (
       <div className="p-8 text-center max-w-md mx-auto">
         <h2 className="text-xl font-bold text-slate-800">Surat Jalan Tidak Ditemukan</h2>
@@ -103,14 +179,22 @@ export default function PrintSuratJalanPage() {
     );
   }
 
-  // Normalisasi Field Dokumen (Kompatibel dengan semua format penamaan kolom)
-  const nomorSj = sj.nomor_sj || sj.sj_number || (sj as any).surat_jalan_number || '-';
+  // Normalisasi Field Dokumen
+  const displaySjNumber = consolidatedData.sjNumbers.length > 0 
+    ? consolidatedData.sjNumbers.join(' / ') 
+    : (sj.nomor_sj || sj.sj_number || (sj as any).surat_jalan_number || '-');
+
   const tujuanOutlet = sj.tujuan_outlet_nama || sj.branch_name || (sj as any).to_location || 'Outlet Tujuan';
-  const roNomor = sj.ro_nomor || sj.ro_number || (sj as any).transfer_number || (sj as any).external_id || '-';
+
+  const displayRoNumber = consolidatedData.roNumbers.length > 0
+    ? consolidatedData.roNumbers.join(', ')
+    : (sj.ro_nomor || sj.ro_number || (sj as any).transfer_number || '-');
+
   const driverNama = sj.driver_nama || sj.driver_name || (sj as any).expedition_courier || 'Petugas Ekspedisi Logistik';
   const kendaraanPlat = sj.kendaraan_plat || sj.vehicle_number || (sj as any).tracking_number || 'B 9188 CA';
   const pengirimNama = sj.pengirim_nama || sj.sender_name || (sj as any).from_location || 'Gudang Logistik Pusat CA';
-  const penerimaNama = sj.penerima_nama || sj.receiver_name || (sj as any).receiver_pic || 'Store / Outlet Manager';
+  const penerimaNama = sj.penerima_nama || sj.receiver_name || (sj as any).receiver_pic || `Store Manager ${tujuanOutlet}`;
+  
   const rawDate = sj.delivery_date || sj.tanggal_kirim || sj.created_at;
   const tglDokumen = rawDate
     ? new Date(rawDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
@@ -118,27 +202,61 @@ export default function PrintSuratJalanPage() {
 
   return (
     <div className="max-w-4xl mx-auto py-4 px-4 sm:px-6">
-      {/* Action Buttons (Hidden on Print) */}
-      <div className="print:hidden flex items-center justify-between mb-6 bg-slate-900 text-white p-4 rounded-xl shadow-md">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.back()}
-            className="flex items-center gap-1.5 text-sm font-medium text-slate-300 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition"
-          >
-            <ArrowLeft className="w-4 h-4" /> Kembali
-          </button>
-          <span className="text-slate-500">|</span>
-          <span className="text-sm font-semibold text-emerald-400 flex items-center gap-1.5">
-            <CheckCircle className="w-4 h-4" /> Dokumen Siap Cetak
-          </span>
+      {/* Top Banner & Action Controls (Hidden on Print) */}
+      <div className="print:hidden space-y-3 mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900 text-white p-4 rounded-2xl shadow-md">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={() => router.back()}
+              className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition"
+            >
+              <ArrowLeft className="w-4 h-4" /> Kembali
+            </button>
+            <span className="text-slate-600">|</span>
+            <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+              <CheckCircle className="w-4 h-4" /> Dokumen Siap Cetak
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => window.print()}
+              className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-lg hover:shadow-indigo-500/25 transition cursor-pointer active:scale-95"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Cetak Lembar Surat Jalan (Print / PDF)</span>
+            </button>
+          </div>
         </div>
 
-        <button
-          onClick={() => window.print()}
-          className="flex items-center gap-2 px-5 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold rounded-lg shadow-lg hover:shadow-indigo-500/25 transition cursor-pointer"
-        >
-          <Printer className="w-4 h-4" /> Cetak Lembar SJ (Print / PDF)
-        </button>
+        {/* Notifikasi Penggabungan Dokumen Outlet yang Sama */}
+        {siblingDocs.length > 1 && (
+          <div className="p-3.5 px-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5 text-blue-900 dark:text-blue-200">
+              <div className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">
+                <Layers className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="font-bold">
+                  {siblingDocs.length} Dokumen Pengiriman Terkumpul untuk Outlet {tujuanOutlet}
+                </span>
+                <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-0.5">
+                  Seluruh aset dengan nama outlet yang sama otomatis dirangkum dalam <strong>1 daftar cetak Surat Jalan resmi</strong>.
+                </p>
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer font-semibold text-blue-900 dark:text-blue-200 shrink-0">
+              <input
+                type="checkbox"
+                checked={isConsolidated}
+                onChange={(e) => setIsConsolidated(e.target.checked)}
+                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <span>Gabung Semua Item Outlet Ini</span>
+            </label>
+          </div>
+        )}
       </div>
 
       {/* Official Document Paper */}
@@ -167,10 +285,10 @@ export default function PrintSuratJalanPage() {
               <div className="text-2xl font-black tracking-wider text-indigo-700 uppercase">
                 SURAT JALAN
               </div>
-              <div className="text-xs font-mono font-bold text-slate-700 mt-1">
-                NOMOR: <span className="text-slate-900 font-bold">{nomorSj}</span>
+              <div className="text-xs font-mono font-bold text-slate-700 mt-1 max-w-[280px] break-words">
+                NOMOR: <span className="text-slate-900 font-bold">{displaySjNumber}</span>
               </div>
-              <div className="text-xs text-slate-500">
+              <div className="text-xs text-slate-500 mt-0.5">
                 Tanggal: {tglDokumen}
               </div>
             </div>
@@ -189,13 +307,20 @@ export default function PrintSuratJalanPage() {
           <div className="p-3.5 bg-indigo-50/50 rounded-xl border border-indigo-100">
             <span className="font-bold text-indigo-800 block mb-1 uppercase tracking-wider text-[11px]">Tujuan Pengiriman:</span>
             <div className="font-bold text-slate-900 text-sm">{tujuanOutlet}</div>
-            <div className="text-slate-600 mt-1">Ref. Request Order: <strong className="font-mono text-indigo-700">{roNomor}</strong></div>
+            <div className="text-slate-600 mt-1">
+              Ref. Request Order: <strong className="font-mono text-indigo-700">{displayRoNumber}</strong>
+            </div>
+            {consolidatedData.docsCount > 1 && (
+              <div className="text-[11px] text-emerald-700 font-semibold mt-0.5">
+                • Menggabungkan {consolidatedData.docsCount} Dokumen Distribusi Outlet
+              </div>
+            )}
             <div className="text-slate-500">Status: {sj.status || 'SHIPPED'}</div>
           </div>
         </div>
 
         {/* Armada & Driver Details */}
-        <div className="flex items-center justify-between text-xs bg-slate-100 p-3 rounded-lg mb-6 border border-slate-200">
+        <div className="flex items-center justify-between text-xs bg-slate-100 p-3 rounded-lg mb-6 border border-slate-200 flex-wrap gap-2">
           <div>
             <span className="text-slate-500">Nama Pengemudi (Driver):</span>{' '}
             <strong className="text-slate-800">{driverNama}</strong>
@@ -210,7 +335,7 @@ export default function PrintSuratJalanPage() {
           </div>
         </div>
 
-        {/* Items Table */}
+        {/* Items Table (Seluruh Item Outlet Terkumpul dalam 1 Daftar) */}
         <div className="mb-6 overflow-hidden rounded-xl border border-slate-300">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
@@ -223,12 +348,13 @@ export default function PrintSuratJalanPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {sj.items && sj.items.length > 0 ? (
-                sj.items.map((item: any, index: number) => {
+              {consolidatedData.items && consolidatedData.items.length > 0 ? (
+                consolidatedData.items.map((item: any, index: number) => {
                   const namaBarang = item.nama_barang || item.item_name || item.name || item.system_item_name || 'Barang Aset';
                   const jumlah = item.qty ?? item.quantity ?? item.quantity_ordered ?? item.quantity_needed ?? 1;
                   const satuan = item.satuan || item.unit || 'Unit';
                   const spesifikasi = item.specification || item.classification || '';
+                  const sourceRo = item.source_ro ? `[Ref: ${item.source_ro}] ` : '';
                   const catatan = item.catatan || item.notes || (spesifikasi ? spesifikasi : 'Kondisi Baik & Tersegel');
 
                   return (
@@ -236,8 +362,10 @@ export default function PrintSuratJalanPage() {
                       <td className="py-3 px-3 text-center font-medium text-slate-600">{index + 1}</td>
                       <td className="py-3 px-3 font-semibold text-slate-900">
                         <div>{namaBarang}</div>
-                        {spesifikasi && (
-                          <div className="text-[10px] text-slate-500 font-normal mt-0.5">{spesifikasi}</div>
+                        {(spesifikasi || item.source_ro) && (
+                          <div className="text-[10px] text-slate-500 font-normal mt-0.5">
+                            {sourceRo}{spesifikasi}
+                          </div>
                         )}
                       </td>
                       <td className="py-3 px-3 text-center font-bold text-slate-900">{jumlah}</td>
@@ -254,6 +382,22 @@ export default function PrintSuratJalanPage() {
                 </tr>
               )}
             </tbody>
+            {consolidatedData.items && consolidatedData.items.length > 0 && (
+              <tfoot>
+                <tr className="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-300">
+                  <td colSpan={2} className="py-2.5 px-3 text-right uppercase tracking-wider text-[11px]">
+                    Total Keseluruhan Barang ({consolidatedData.items.length} Baris):
+                  </td>
+                  <td className="py-2.5 px-3 text-center font-mono text-sm text-indigo-700">
+                    {consolidatedData.totalQty}
+                  </td>
+                  <td className="py-2.5 px-3 text-center text-slate-600">UNIT</td>
+                  <td className="py-2.5 px-3 text-slate-500 font-normal italic text-[11px]">
+                    Lengkap &amp; Siap Kirim
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
 
