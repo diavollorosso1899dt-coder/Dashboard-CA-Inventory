@@ -3129,7 +3129,7 @@ export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): P
         ? 'selesai'
         : ro.pr_po_number
         ? 'po'
-        : 'proses';
+        : 'belum';
 
       const assetReq: AssetRequest = {
         id: itemId,

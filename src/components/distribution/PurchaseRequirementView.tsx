@@ -109,7 +109,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
     setEditOrderDate(item.order_datetime ? item.order_datetime.split('T')[0] : '');
     setEditReceivedDate(item.received_date ? item.received_date.split('T')[0] : new Date().toISOString().split('T')[0]);
     setEditPrDate(item.pr_datetime ? item.pr_datetime.split('T')[0] : '');
-    setEditStatus(forceReadyStock ? 'selesai' : (item.procurement_status || 'proses'));
+    setEditStatus(forceReadyStock ? 'selesai' : (item.procurement_status && item.procurement_status !== 'belum' ? item.procurement_status : 'proses'));
     setEditNotes(item.item_notes || (item.notes && !item.notes.startsWith('Sumber dari Request Order') && !item.notes.startsWith('No. RO:') ? item.notes : ''));
   };
 
@@ -574,17 +574,27 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                       )}
                       {isVisible('status') && (
                         <td className="py-3.5 px-4">
-                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                            it.procurement_status === 'selesai'
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-400'
-                              : it.procurement_status === 'po'
-                              ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-400'
-                              : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-400'
-                          }`}>
-                            {it.procurement_status === 'selesai' && <CheckCircle2 className="w-3 h-3" />}
-                            {it.procurement_status === 'proses' && <Clock className="w-3 h-3 animate-pulse" />}
-                            {it.procurement_status || 'proses'}
-                          </span>
+                          {!it.procurement_status || it.procurement_status === 'belum' ? (
+                            <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                              -
+                            </span>
+                          ) : (
+                            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                              it.procurement_status === 'selesai'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-400'
+                                : it.procurement_status === 'po'
+                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-400'
+                                : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-400'
+                            }`}>
+                              {it.procurement_status === 'selesai' && <CheckCircle2 className="w-3 h-3" />}
+                              {it.procurement_status === 'proses' && <Clock className="w-3 h-3 animate-pulse" />}
+                              {it.procurement_status === 'selesai'
+                                ? 'Selesai'
+                                : it.procurement_status === 'po'
+                                ? 'PO'
+                                : 'Proses'}
+                            </span>
+                          )}
                         </td>
                       )}
                       {isVisible('actions') && (
