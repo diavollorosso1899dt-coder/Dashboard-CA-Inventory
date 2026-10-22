@@ -37,6 +37,7 @@ import UploadImageModal from './UploadImageModal';
 import EditSpecModal from './EditSpecModal';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
 import AreaFilterPills from '@/components/ui/AreaFilterPills';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 const ITEM_MASTER_COLUMNS: ColumnItem[] = [
   { id: 'image', label: 'Gambar', defaultVisible: true },
@@ -176,11 +177,34 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
     });
   }, [items, activeTab, classificationFilter, deferredSearch]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const customItemSortFns = useMemo(
+    () => ({
+      item_name: (a: MasterAssetItem, b: MasterAssetItem) =>
+        (a.item_name || '').localeCompare(b.item_name || '', 'id', { sensitivity: 'base' }),
+      unit: (a: MasterAssetItem, b: MasterAssetItem) =>
+        (a.unit || '').localeCompare(b.unit || '', 'id'),
+      classification: (a: MasterAssetItem, b: MasterAssetItem) =>
+        (a.classification || '').localeCompare(b.classification || '', 'id'),
+      specification: (a: MasterAssetItem, b: MasterAssetItem) =>
+        (a.specification || '').localeCompare(b.specification || '', 'id'),
+      status: (a: MasterAssetItem, b: MasterAssetItem) =>
+        Number(b.is_new_item) - Number(a.is_new_item),
+    }),
+    []
+  );
+
+  const {
+    sortField: itemSortField,
+    sortDirection: itemSortDirection,
+    handleSort: handleItemSort,
+    sortedItems: sortedFilteredItems,
+  } = useTableSort<MasterAssetItem>(filteredItems, null, 'asc', customItemSortFns);
+
+  const totalPages = Math.max(1, Math.ceil(sortedFilteredItems.length / pageSize));
   const paginatedItems = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
-    return filteredItems.slice(start, start + pageSize);
-  }, [filteredItems, currentPage, pageSize]);
+    return sortedFilteredItems.slice(start, start + pageSize);
+  }, [sortedFilteredItems, currentPage, pageSize]);
 
   const newItemCount = useMemo(() => items.filter((it) => it.is_new_item).length, [items]);
 
@@ -496,11 +520,61 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
               <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 font-bold uppercase text-[11px] text-slate-500 shadow-xs">
                 <tr>
                   {isVisible('image') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center w-24 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Gambar</th>}
-                  {isVisible('item_name') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Nama Item Aset</th>}
-                  {isVisible('unit') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Satuan</th>}
-                  {isVisible('classification') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Klasifikasi / Akun</th>}
-                  {isVisible('specification') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Spesifikasi Teknis</th>}
-                  {isVisible('status') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Status Item</th>}
+                  {isVisible('item_name') && (
+                    <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="Nama Item Aset"
+                        field="item_name"
+                        currentSortField={itemSortField}
+                        currentSortDirection={itemSortDirection}
+                        onSort={handleItemSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('unit') && (
+                    <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="Satuan"
+                        field="unit"
+                        currentSortField={itemSortField}
+                        currentSortDirection={itemSortDirection}
+                        onSort={handleItemSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('classification') && (
+                    <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="Klasifikasi / Akun"
+                        field="classification"
+                        currentSortField={itemSortField}
+                        currentSortDirection={itemSortDirection}
+                        onSort={handleItemSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('specification') && (
+                    <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="Spesifikasi Teknis"
+                        field="specification"
+                        currentSortField={itemSortField}
+                        currentSortDirection={itemSortDirection}
+                        onSort={handleItemSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('status') && (
+                    <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="Status Item"
+                        field="status"
+                        currentSortField={itemSortField}
+                        currentSortDirection={itemSortDirection}
+                        onSort={handleItemSort}
+                      />
+                    </th>
+                  )}
                   {isVisible('actions') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center w-28 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi</th>}
                 </tr>
               </thead>

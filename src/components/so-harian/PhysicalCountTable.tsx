@@ -22,6 +22,7 @@ import {
 import { calculateVariance, SOItem } from '@/lib/so-harian/inventoryEngine';
 import NotesModal from './NotesModal';
 import BarcodeScannerModal from './BarcodeScannerModal';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 interface PhysicalCountTableProps {
   items: SOItem[];
@@ -451,14 +452,43 @@ export default function PhysicalCountTable({ items = [], onUpdateItems }: Physic
     });
   }, [items, selectedCategory, activeFilter, debouncedSearch]);
 
+  const customSoSortFns = useMemo(
+    () => ({
+      nama_barang: (a: SOItem, b: SOItem) =>
+        (a.nama_barang || '').localeCompare(b.nama_barang || '', 'id', { sensitivity: 'base' }),
+      kode_barang: (a: SOItem, b: SOItem) =>
+        (a.kode_barang || '').localeCompare(b.kode_barang || '', 'id', { numeric: true }),
+      kategori: (a: SOItem, b: SOItem) =>
+        (a.kategori || '').localeCompare(b.kategori || '', 'id'),
+      satuan: (a: SOItem, b: SOItem) =>
+        (a.satuan || '').localeCompare(b.satuan || '', 'id'),
+      stok_awal: (a: SOItem, b: SOItem) => (a.stok_awal || 0) - (b.stok_awal || 0),
+      total_masuk: (a: SOItem, b: SOItem) => (a.qty_penerimaan || 0) - (b.qty_penerimaan || 0),
+      total_keluar: (a: SOItem, b: SOItem) => (a.qty_ro || 0) - (b.qty_ro || 0),
+      stok_sistem: (a: SOItem, b: SOItem) => (a.stok_sistem || 0) - (b.stok_sistem || 0),
+      qty_fisik: (a: SOItem, b: SOItem) => (Number(a.qty_fisik) || 0) - (Number(b.qty_fisik) || 0),
+      selisih: (a: SOItem, b: SOItem) => (a.selisih || 0) - (b.selisih || 0),
+      status_selisih: (a: SOItem, b: SOItem) =>
+        (a.status_selisih || '').localeCompare(b.status_selisih || '', 'id'),
+    }),
+    []
+  );
+
+  const {
+    sortField: soSortField,
+    sortDirection: soSortDirection,
+    handleSort: handleSoSort,
+    sortedItems: sortedFilteredItems,
+  } = useTableSort<SOItem>(filteredItems, null, 'asc', customSoSortFns);
+
   // Paginated items slice (Only renders pageSize rows, avoiding massive DOM lag)
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(sortedFilteredItems.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
 
   const paginatedItems = useMemo(() => {
     const startIndex = (safePage - 1) * pageSize;
-    return filteredItems.slice(startIndex, startIndex + pageSize);
-  }, [filteredItems, safePage, pageSize]);
+    return sortedFilteredItems.slice(startIndex, startIndex + pageSize);
+  }, [sortedFilteredItems, safePage, pageSize]);
 
   const startIndexDisplay = filteredItems.length === 0 ? 0 : (safePage - 1) * pageSize + 1;
   const endIndexDisplay = Math.min(safePage * pageSize, filteredItems.length);
@@ -600,19 +630,115 @@ export default function PhysicalCountTable({ items = [], onUpdateItems }: Physic
             <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
               <tr>
                 <th className="py-3 px-3 w-10 text-center">#</th>
-                <th className="py-3 px-3 min-w-[220px]">Nama Item Barang</th>
-                <th className="py-3 px-2 text-center w-28">Kode / SKU</th>
-                <th className="py-3 px-3 text-center">Kategori</th>
-                <th className="py-3 px-2 text-center">Sat</th>
-                <th className="py-3 px-2 text-right">Awal</th>
-                <th className="py-3 px-2 text-right text-emerald-600">Masuk</th>
-                <th className="py-3 px-2 text-right text-rose-600">RO</th>
-                <th className="py-3 px-3 text-right bg-slate-100/70 dark:bg-slate-900/40 font-black">Stok Sistem</th>
-                <th className="py-3 px-3 text-center bg-sky-50/70 dark:bg-sky-950/30 font-black w-44">
-                  Input Fisik SO
+                <th className="py-3 px-3 min-w-[220px]">
+                  <SortableHeader
+                    label="Nama Item Barang"
+                    field="nama_barang"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                  />
                 </th>
-                <th className="py-3 px-3 text-center">Selisih</th>
-                <th className="py-3 px-3 text-center">Status</th>
+                <th className="py-3 px-2 text-center w-28">
+                  <SortableHeader
+                    label="Kode / SKU"
+                    field="kode_barang"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                    align="center"
+                  />
+                </th>
+                <th className="py-3 px-3 text-center">
+                  <SortableHeader
+                    label="Kategori"
+                    field="kategori"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                    align="center"
+                  />
+                </th>
+                <th className="py-3 px-2 text-center">
+                  <SortableHeader
+                    label="Sat"
+                    field="satuan"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                    align="center"
+                  />
+                </th>
+                <th className="py-3 px-2 text-right">
+                  <SortableHeader
+                    label="Awal"
+                    field="stok_awal"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                    align="right"
+                  />
+                </th>
+                <th className="py-3 px-2 text-right text-emerald-600">
+                  <SortableHeader
+                    label="Masuk"
+                    field="total_masuk"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                    align="right"
+                  />
+                </th>
+                <th className="py-3 px-2 text-right text-rose-600">
+                  <SortableHeader
+                    label="RO"
+                    field="total_keluar"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                    align="right"
+                  />
+                </th>
+                <th className="py-3 px-3 text-right bg-slate-100/70 dark:bg-slate-900/40 font-black">
+                  <SortableHeader
+                    label="Stok Sistem"
+                    field="stok_sistem"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                    align="right"
+                  />
+                </th>
+                <th className="py-3 px-3 text-center bg-sky-50/70 dark:bg-sky-950/30 font-black w-44">
+                  <SortableHeader
+                    label="Input Fisik SO"
+                    field="qty_fisik"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                    align="center"
+                  />
+                </th>
+                <th className="py-3 px-3 text-center">
+                  <SortableHeader
+                    label="Selisih"
+                    field="selisih"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                    align="center"
+                  />
+                </th>
+                <th className="py-3 px-3 text-center">
+                  <SortableHeader
+                    label="Status"
+                    field="status_selisih"
+                    currentSortField={soSortField}
+                    currentSortDirection={soSortDirection}
+                    onSort={handleSoSort}
+                    align="center"
+                  />
+                </th>
                 <th className="py-3 px-3 text-center w-28">Catatan</th>
               </tr>
             </thead>

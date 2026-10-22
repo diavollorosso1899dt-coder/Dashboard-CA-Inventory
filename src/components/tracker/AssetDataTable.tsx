@@ -39,6 +39,7 @@ import { BranchBastModal } from './BranchBastModal';
 import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
 import { getItemSpecification } from '@/lib/assetSpecHelper';
 import UploadImageModal from '@/components/items/UploadImageModal';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 export interface ColumnConfig {
   id: string;
@@ -415,11 +416,48 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
     });
   }, [items, selectedRegion, selectedBranch, selectedStatus, selectedStock, selectedRab, quickFilter, search]);
 
-  const totalPages = Math.ceil(filteredItems.length / pageSize) || 1;
+  const customAssetSortFns = useMemo(
+    () => ({
+      order_datetime: (a: AssetRequest, b: AssetRequest) => {
+        const da = a.order_datetime ? Date.parse(a.order_datetime) : 0;
+        const db = b.order_datetime ? Date.parse(b.order_datetime) : 0;
+        return da - db;
+      },
+      branch_requester: (a: AssetRequest, b: AssetRequest) =>
+        `${a.branch_name} ${a.requester_name}`.localeCompare(`${b.branch_name} ${b.requester_name}`, 'id', { sensitivity: 'base' }),
+      item_classification: (a: AssetRequest, b: AssetRequest) =>
+        `${a.item_name} ${a.classification}`.localeCompare(`${b.item_name} ${b.classification}`, 'id', { sensitivity: 'base' }),
+      quantity: (a: AssetRequest, b: AssetRequest) => (a.quantity_needed || 0) - (b.quantity_needed || 0),
+      rab_number: (a: AssetRequest, b: AssetRequest) =>
+        (a.rab_number || '').localeCompare(b.rab_number || '', 'id', { numeric: true }),
+      opening_date: (a: AssetRequest, b: AssetRequest) => {
+        const da = a.opening_date ? Date.parse(a.opening_date) : 0;
+        const db = b.opening_date ? Date.parse(b.opening_date) : 0;
+        return da - db;
+      },
+      stock_status: (a: AssetRequest, b: AssetRequest) =>
+        (a.stock_status || '').localeCompare(b.stock_status || '', 'id'),
+      item_delivery_status: (a: AssetRequest, b: AssetRequest) =>
+        (a.item_delivery_status || '').localeCompare(b.item_delivery_status || '', 'id'),
+      system_transfer: (a: AssetRequest, b: AssetRequest) =>
+        Number(b.is_system_transfer) - Number(a.is_system_transfer),
+      sla: (a: AssetRequest, b: AssetRequest) => (a.lead_time_days || 0) - (b.lead_time_days || 0),
+    }),
+    []
+  );
+
+  const {
+    sortField: assetSortField,
+    sortDirection: assetSortDirection,
+    handleSort: handleAssetSort,
+    sortedItems: sortedFilteredItems,
+  } = useTableSort<AssetRequest>(filteredItems, null, 'asc', customAssetSortFns);
+
+  const totalPages = Math.ceil(sortedFilteredItems.length / pageSize) || 1;
   const paginatedItems = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
-    return filteredItems.slice(start, start + pageSize);
-  }, [filteredItems, currentPage, pageSize]);
+    return sortedFilteredItems.slice(start, start + pageSize);
+  }, [sortedFilteredItems, currentPage, pageSize]);
 
   // Selection Handlers
   const isAllCurrentPageSelected = useMemo(() => {
@@ -1151,37 +1189,120 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
                   </button>
                 </th>
                 {visibleColumns.order_datetime !== false && (
-                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Waktu Order</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    <SortableHeader
+                      label="Waktu Order"
+                      field="order_datetime"
+                      currentSortField={assetSortField}
+                      currentSortDirection={assetSortDirection}
+                      onSort={handleAssetSort}
+                    />
+                  </th>
                 )}
                 {visibleColumns.branch_requester !== false && (
-                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Cabang &amp; Pengaju</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    <SortableHeader
+                      label="Cabang & Pengaju"
+                      field="branch_requester"
+                      currentSortField={assetSortField}
+                      currentSortDirection={assetSortDirection}
+                      onSort={handleAssetSort}
+                    />
+                  </th>
                 )}
                 {visibleColumns.item_classification !== false && (
-                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Item &amp; Klasifikasi</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    <SortableHeader
+                      label="Item & Klasifikasi"
+                      field="item_classification"
+                      currentSortField={assetSortField}
+                      currentSortDirection={assetSortDirection}
+                      onSort={handleAssetSort}
+                    />
+                  </th>
                 )}
                 {visibleColumns.image !== false && (
                   <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Gambar</th>
                 )}
                 {visibleColumns.quantity !== false && (
-                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Kebutuhan</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    <SortableHeader
+                      label="Kebutuhan"
+                      field="quantity"
+                      currentSortField={assetSortField}
+                      currentSortDirection={assetSortDirection}
+                      onSort={handleAssetSort}
+                      align="center"
+                    />
+                  </th>
                 )}
                 {visibleColumns.rab_number !== false && (
-                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">No. RAB</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    <SortableHeader
+                      label="No. RAB"
+                      field="rab_number"
+                      currentSortField={assetSortField}
+                      currentSortDirection={assetSortDirection}
+                      onSort={handleAssetSort}
+                    />
+                  </th>
                 )}
                 {visibleColumns.opening_date !== false && (
-                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Target Opening</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    <SortableHeader
+                      label="Target Opening"
+                      field="opening_date"
+                      currentSortField={assetSortField}
+                      currentSortDirection={assetSortDirection}
+                      onSort={handleAssetSort}
+                    />
+                  </th>
                 )}
                 {visibleColumns.stock_status !== false && (
-                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Status Stok</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    <SortableHeader
+                      label="Status Stok"
+                      field="stock_status"
+                      currentSortField={assetSortField}
+                      currentSortDirection={assetSortDirection}
+                      onSort={handleAssetSort}
+                    />
+                  </th>
                 )}
                 {visibleColumns.item_delivery_status !== false && (
-                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Status Barang</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    <SortableHeader
+                      label="Status Barang"
+                      field="item_delivery_status"
+                      currentSortField={assetSortField}
+                      currentSortDirection={assetSortDirection}
+                      onSort={handleAssetSort}
+                    />
+                  </th>
                 )}
                 {visibleColumns.system_transfer !== false && (
-                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Transfer Sistem</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    <SortableHeader
+                      label="Transfer Sistem"
+                      field="system_transfer"
+                      currentSortField={assetSortField}
+                      currentSortDirection={assetSortDirection}
+                      onSort={handleAssetSort}
+                      align="center"
+                    />
+                  </th>
                 )}
                 {visibleColumns.sla !== false && (
-                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">SLA</th>
+                  <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-center shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                    <SortableHeader
+                      label="SLA"
+                      field="sla"
+                      currentSortField={assetSortField}
+                      currentSortDirection={assetSortDirection}
+                      onSort={handleAssetSort}
+                      align="center"
+                    />
+                  </th>
                 )}
                 {visibleColumns.actions !== false && (
                   <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#1e1f20] py-3.5 px-3 text-right shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Aksi</th>

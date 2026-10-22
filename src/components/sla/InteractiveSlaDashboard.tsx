@@ -33,6 +33,7 @@ import { StandardRegion, matchesRegion, normalizeRegion } from '@/lib/utils/regi
 import { formatDateSlash, formatLeadTime } from '@/lib/utils/date-formatter';
 import BranchReadinessCards from '@/components/sla/BranchReadinessCards';
 import CriticalH3AlertBanner, { CriticalEntity } from '@/components/sla/CriticalH3AlertBanner';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 interface InteractiveSlaDashboardProps {
   initialRoOrders: RequestOrder[];
@@ -619,10 +620,45 @@ export default function InteractiveSlaDashboard({
     return finalFilteredOrders.slice(start, start + pageSize);
   }, [finalFilteredOrders, currentPage, pageSize]);
 
+  const customSlaItemSortFns = useMemo(
+    () => ({
+      item_name: (a: any, b: any) =>
+        (a.item_name || '').localeCompare(b.item_name || '', 'id', { sensitivity: 'base' }),
+      ro_number: (a: any, b: any) =>
+        (a.parentRo?.ro_number || '').localeCompare(b.parentRo?.ro_number || '', 'id', { numeric: true }),
+      branch_name: (a: any, b: any) =>
+        (a.parentRo?.branch_name || '').localeCompare(b.parentRo?.branch_name || '', 'id', { sensitivity: 'base' }),
+      request_date: (a: any, b: any) => {
+        const da = a.parentRo?.order_date ? Date.parse(a.parentRo.order_date) : 0;
+        const db = b.parentRo?.order_date ? Date.parse(b.parentRo.order_date) : 0;
+        return da - db;
+      },
+      target_delivery_date: (a: any, b: any) => {
+        const da = a.parentRo?.request_date ? Date.parse(a.parentRo.request_date) : 0;
+        const db = b.parentRo?.request_date ? Date.parse(b.parentRo.request_date) : 0;
+        return da - db;
+      },
+      sla_lead_time: (a: any, b: any) => (a.lead_time_days || 0) - (b.lead_time_days || 0),
+      quantity: (a: any, b: any) => (Number(a.quantity) || 0) - (Number(b.quantity) || 0),
+      stock_source: (a: any, b: any) =>
+        (a.stock_source || '').localeCompare(b.stock_source || '', 'id'),
+      stage: (a: any, b: any) =>
+        (a.current_stage || '').localeCompare(b.current_stage || '', 'id'),
+    }),
+    []
+  );
+
+  const {
+    sortField: slaSortField,
+    sortDirection: slaSortDirection,
+    handleSort: handleSlaSort,
+    sortedItems: sortedFinalFilteredItems,
+  } = useTableSort<any>(finalFilteredItems, null, 'asc', customSlaItemSortFns);
+
   const paginatedItems = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
-    return finalFilteredItems.slice(start, start + pageSize);
-  }, [finalFilteredItems, currentPage, pageSize]);
+    return sortedFinalFilteredItems.slice(start, start + pageSize);
+  }, [sortedFinalFilteredItems, currentPage, pageSize]);
 
   // Active filter flag
   const isAnyFilterActive = useMemo(() => {
@@ -1376,18 +1412,139 @@ export default function InteractiveSlaDashboard({
                 <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
                   <thead className="border-b border-[#e0e2ec] dark:border-[#444746] text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] bg-[#f8fafd] dark:bg-[#282a2c]">
                     <tr>
-                      {visibleItemColumns.item_name !== false && <th className="py-3 px-3.5">Nama Item Aset / Perlengkapan</th>}
-                      {visibleItemColumns.ro_number !== false && <th className="py-3 px-3.5">No. RO & Wilayah</th>}
-                      {visibleItemColumns.branch_name !== false && <th className="py-3 px-3.5">Cabang Outlet</th>}
-                      {visibleItemColumns.request_date !== false && <th className="py-3 px-3.5">Tgl Order (RO)</th>}
-                      {visibleItemColumns.target_delivery_date !== false && <th className="py-3 px-3.5">Target Permintaan</th>}
-                      {visibleItemColumns.shipping_date !== false && <th className="py-3 px-3.5">Tgl Pengiriman (SJ)</th>}
-                      {visibleItemColumns.received_date !== false && <th className="py-3 px-3.5">Tgl Diterima Outlet</th>}
-                      {visibleItemColumns.sla_lead_time !== false && <th className="py-3 px-3.5 text-center">Durasi SLA Kirim</th>}
-                      {visibleItemColumns.sla_status !== false && <th className="py-3 px-3.5">Ketepatan SLA</th>}
-                      {visibleItemColumns.quantity !== false && <th className="py-3 px-3.5">Jumlah Qty</th>}
-                      {visibleItemColumns.stock_source !== false && <th className="py-3 px-3.5">Alokasi Stok</th>}
-                      {visibleItemColumns.stage !== false && <th className="py-3 px-3.5">Tahap Alur</th>}
+                      {visibleItemColumns.item_name !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="Nama Item Aset / Perlengkapan"
+                            field="item_name"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.ro_number !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="No. RO & Wilayah"
+                            field="ro_number"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.branch_name !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="Cabang Outlet"
+                            field="branch_name"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.request_date !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="Tgl Order (RO)"
+                            field="request_date"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.target_delivery_date !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="Target Permintaan"
+                            field="target_delivery_date"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.shipping_date !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="Tgl Pengiriman (SJ)"
+                            field="shipping_date"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.received_date !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="Tgl Diterima Outlet"
+                            field="received_date"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.sla_lead_time !== false && (
+                        <th className="py-3 px-3.5 text-center">
+                          <SortableHeader
+                            label="Durasi SLA Kirim"
+                            field="sla_lead_time"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                            align="center"
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.sla_status !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="Ketepatan SLA"
+                            field="sla_status"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.quantity !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="Jumlah Qty"
+                            field="quantity"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.stock_source !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="Alokasi Stok"
+                            field="stock_source"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
+                      {visibleItemColumns.stage !== false && (
+                        <th className="py-3 px-3.5">
+                          <SortableHeader
+                            label="Tahap Alur"
+                            field="stage"
+                            currentSortField={slaSortField}
+                            currentSortDirection={slaSortDirection}
+                            onSort={handleSlaSort}
+                          />
+                        </th>
+                      )}
                       {visibleItemColumns.actions !== false && <th className="py-3 px-3.5 text-center">Aksi</th>}
                     </tr>
                   </thead>

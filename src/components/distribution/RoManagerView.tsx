@@ -53,6 +53,7 @@ import ColumnVisibilityPicker, { ColumnItem } from '@/components/ui/ColumnVisibi
 import { Toast, ToastMessage } from '@/components/ui/Toast';
 import { formatDateSlash } from '@/lib/utils/date-formatter';
 import { sortOrdersNewestFirst } from '@/lib/utils/ro-sorter';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 interface RoManagerViewProps {
   initialOrders?: RequestOrder[];
@@ -569,17 +570,48 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     return sortOrdersNewestFirst(result);
   }, [orders, search, selectedStage, smartFilter, selectedRegion, selectedSource, deduplicationMap]);
 
+  const customRoSortFns = useMemo(
+    () => ({
+      ro_number: (a: RequestOrder, b: RequestOrder) =>
+        (a.ro_number || a.raw_ro_id || '').localeCompare(b.ro_number || b.raw_ro_id || '', 'id', { numeric: true }),
+      order_date: (a: RequestOrder, b: RequestOrder) => {
+        const da = a.request_date ? Date.parse(a.request_date) : 0;
+        const db = b.request_date ? Date.parse(b.request_date) : 0;
+        return da - db;
+      },
+      request_date: (a: RequestOrder, b: RequestOrder) => {
+        const da = a.target_delivery_date || a.request_date ? Date.parse(a.target_delivery_date || a.request_date) : 0;
+        const db = b.target_delivery_date || b.request_date ? Date.parse(b.target_delivery_date || b.request_date) : 0;
+        return da - db;
+      },
+      branch: (a: RequestOrder, b: RequestOrder) =>
+        (a.branch_name || '').localeCompare(b.branch_name || '', 'id', { sensitivity: 'base' }),
+      items: (a: RequestOrder, b: RequestOrder) =>
+        (a.items?.length || 0) - (b.items?.length || 0),
+      stage: (a: RequestOrder, b: RequestOrder) =>
+        (a.current_stage || a.status || '').localeCompare(b.current_stage || b.status || '', 'id'),
+    }),
+    []
+  );
+
+  const {
+    sortField: roSortField,
+    sortDirection: roSortDirection,
+    handleSort: handleRoSort,
+    sortedItems: sortedFilteredOrders,
+  } = useTableSort<RequestOrder>(filteredOrders, null, 'asc', customRoSortFns);
+
   // Reset page to 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
   }, [search, selectedStage, smartFilter, selectedRegion, selectedSource]);
 
-  const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+  const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(sortedFilteredOrders.length / pageSize));
   const paginatedOrders = useMemo(() => {
-    if (pageSize === -1) return filteredOrders;
+    if (pageSize === -1) return sortedFilteredOrders;
     const start = (currentPage - 1) * pageSize;
-    return filteredOrders.slice(start, start + pageSize);
-  }, [filteredOrders, currentPage, pageSize]);
+    return sortedFilteredOrders.slice(start, start + pageSize);
+  }, [sortedFilteredOrders, currentPage, pageSize]);
 
   // Handler: Sync Google Sheet with Smart Deduplication
   const handleSyncSheet = async () => {
@@ -1364,30 +1396,57 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               <tr>
                 {visibleColumns.ro_number !== false && (
                   <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
-                    No. RO / ID
+                    <SortableHeader
+                      label="No. RO / ID"
+                      field="ro_number"
+                      currentSortField={roSortField}
+                      currentSortDirection={roSortDirection}
+                      onSort={handleRoSort}
+                    />
                   </th>
                 )}
                 {visibleColumns.order_date !== false && (
                   <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
-                    <div className="flex items-center gap-1.5">
-                      <span>Tanggal Order</span>
-                      <ArrowDownNarrowWide className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 inline" />
-                    </div>
+                    <SortableHeader
+                      label="Tanggal Order"
+                      field="order_date"
+                      currentSortField={roSortField}
+                      currentSortDirection={roSortDirection}
+                      onSort={handleRoSort}
+                    />
                   </th>
                 )}
                 {visibleColumns.request_date !== false && (
                   <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
-                    Tanggal Permintaan
+                    <SortableHeader
+                      label="Tanggal Permintaan"
+                      field="request_date"
+                      currentSortField={roSortField}
+                      currentSortDirection={roSortDirection}
+                      onSort={handleRoSort}
+                    />
                   </th>
                 )}
                 {visibleColumns.branch !== false && (
                   <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
-                    Cabang Outlet
+                    <SortableHeader
+                      label="Cabang Outlet"
+                      field="branch"
+                      currentSortField={roSortField}
+                      currentSortDirection={roSortDirection}
+                      onSort={handleRoSort}
+                    />
                   </th>
                 )}
                 {visibleColumns.items !== false && (
                   <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
-                    Item &amp; Alokasi
+                    <SortableHeader
+                      label="Item & Alokasi"
+                      field="items"
+                      currentSortField={roSortField}
+                      currentSortDirection={roSortDirection}
+                      onSort={handleRoSort}
+                    />
                   </th>
                 )}
                 {visibleColumns.images !== false && (
@@ -1397,7 +1456,13 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                 )}
                 {visibleColumns.stage !== false && (
                   <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
-                    Tahapan Alur Operasional
+                    <SortableHeader
+                      label="Tahapan Alur Operasional"
+                      field="stage"
+                      currentSortField={roSortField}
+                      currentSortDirection={roSortDirection}
+                      onSort={handleRoSort}
+                    />
                   </th>
                 )}
                 {visibleColumns.actions !== false && (

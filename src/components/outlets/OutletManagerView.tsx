@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 const OUTLET_COLUMNS: ColumnItem[] = [
   { id: 'branch', label: 'Outlet / Cabang', defaultVisible: true, alwaysVisible: true },
@@ -139,6 +140,34 @@ export default function OutletManagerView() {
     );
   });
 
+  const customOutletSortFns = React.useMemo(
+    () => ({
+      branch: (a: Outlet, b: Outlet) =>
+        (a.nama || a.branch_name || '').localeCompare(b.nama || b.branch_name || '', 'id', { sensitivity: 'base' }),
+      region: (a: Outlet, b: Outlet) =>
+        (a.region || '').localeCompare(b.region || '', 'id'),
+      pic: (a: Outlet, b: Outlet) =>
+        (a.pic_nama || a.pic_name || '').localeCompare(b.pic_nama || b.pic_name || '', 'id'),
+      contact: (a: Outlet, b: Outlet) =>
+        (a.telepon || a.pic_phone || '').localeCompare(b.telepon || b.pic_phone || '', 'id'),
+      opening: (a: Outlet, b: Outlet) => {
+        const da = a.target_opening || a.target_opening_date ? Date.parse(a.target_opening || a.target_opening_date || '') : 0;
+        const db = b.target_opening || b.target_opening_date ? Date.parse(b.target_opening || b.target_opening_date || '') : 0;
+        return da - db;
+      },
+      status: (a: Outlet, b: Outlet) =>
+        (a.status || '').localeCompare(b.status || '', 'id'),
+    }),
+    []
+  );
+
+  const {
+    sortField: outletSortField,
+    sortDirection: outletSortDirection,
+    handleSort: handleOutletSort,
+    sortedItems: sortedOutlets,
+  } = useTableSort<Outlet>(filteredOutlets, null, 'asc', customOutletSortFns);
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'Aktif':
@@ -251,17 +280,77 @@ export default function OutletManagerView() {
             <table className="w-full text-left border-collapse text-sm">
               <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 shadow-xs">
                 <tr className="text-xs uppercase font-semibold text-slate-500 dark:text-slate-400 tracking-wider">
-                  {isVisible('branch') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Outlet / Cabang</th>}
-                  {isVisible('region') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Region</th>}
-                  {isVisible('pic') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">PIC / Manager</th>}
-                  {isVisible('contact') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Kontak</th>}
-                  {isVisible('opening') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Target Opening</th>}
-                  {isVisible('status') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Status</th>}
+                  {isVisible('branch') && (
+                    <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="Outlet / Cabang"
+                        field="branch"
+                        currentSortField={outletSortField}
+                        currentSortDirection={outletSortDirection}
+                        onSort={handleOutletSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('region') && (
+                    <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="Region"
+                        field="region"
+                        currentSortField={outletSortField}
+                        currentSortDirection={outletSortDirection}
+                        onSort={handleOutletSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('pic') && (
+                    <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="PIC / Manager"
+                        field="pic"
+                        currentSortField={outletSortField}
+                        currentSortDirection={outletSortDirection}
+                        onSort={handleOutletSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('contact') && (
+                    <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="Kontak"
+                        field="contact"
+                        currentSortField={outletSortField}
+                        currentSortDirection={outletSortDirection}
+                        onSort={handleOutletSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('opening') && (
+                    <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="Target Opening"
+                        field="opening"
+                        currentSortField={outletSortField}
+                        currentSortDirection={outletSortDirection}
+                        onSort={handleOutletSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('status') && (
+                    <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                      <SortableHeader
+                        label="Status"
+                        field="status"
+                        currentSortField={outletSortField}
+                        currentSortDirection={outletSortDirection}
+                        onSort={handleOutletSort}
+                      />
+                    </th>
+                  )}
                   {isVisible('actions') && <th scope="col" className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 font-semibold text-right shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {filteredOutlets.length === 0 ? (
+                {sortedOutlets.length === 0 ? (
                 <tr>
                   <td colSpan={visibleColCount} className="py-16 text-center">
                     <Building2 className="w-12 h-12 mx-auto text-slate-400 mb-3 opacity-60" />
@@ -272,7 +361,7 @@ export default function OutletManagerView() {
                   </td>
                 </tr>
               ) : (
-                filteredOutlets.map((outlet) => {
+                sortedOutlets.map((outlet) => {
                   const outletName = outlet.nama || outlet.branch_name;
                   const outletAddress = outlet.alamat || outlet.address;
                   const picName = outlet.pic_nama || outlet.pic_name;

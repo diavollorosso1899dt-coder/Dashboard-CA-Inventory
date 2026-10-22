@@ -31,12 +31,17 @@ import {
   Table as TableIcon,
   PlusCircle,
   ArrowRight,
-  Layers
+  Layers,
+  History,
+  Download,
+  Filter
 } from 'lucide-react';
 
 import { Toast, ToastMessage } from '@/components/ui/Toast';
 import { useAuth } from '@/components/auth/AuthContext';
 import DeliveryProofModal from './DeliveryProofModal';
+import SuratJalanTrackingModal from './SuratJalanTrackingModal';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 interface SuratJalanListViewProps {
   isHistoryOnly?: boolean;
@@ -81,6 +86,9 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>(isHistoryOnly ? 'DELIVERED' : 'ACTIVE');
+  const [activeTab, setActiveTab] = useState<'active' | 'history'>(isHistoryOnly ? 'history' : 'active');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -88,6 +96,19 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   const [groupByOutlet, setGroupByOutlet] = useState<boolean>(true);
   const [detailModalGroup, setDetailModalGroup] = useState<GroupedSuratJalanRow | null>(null);
   const [deliveryProofTargetSj, setDeliveryProofTargetSj] = useState<SuratJalan | null>(null);
+  const [trackingModalSj, setTrackingModalSj] = useState<SuratJalan | null>(null);
+  const [trackingModalOutlet, setTrackingModalOutlet] = useState<string>('');
+
+  const activeCount = useMemo(() => {
+    return sjList.filter((s) => {
+      const norm = normalizeSjStatus(s.status);
+      return norm !== 'DELIVERED' && norm !== 'CANCELLED';
+    }).length;
+  }, [sjList]);
+
+  const deliveredCount = useMemo(() => {
+    return sjList.filter((s) => normalizeSjStatus(s.status) === 'DELIVERED').length;
+  }, [sjList]);
 
   // Column visibility
   const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
@@ -316,7 +337,14 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
         if (norm === 'DELIVERED' || norm === 'CANCELLED') return false;
       } else if (statusFilter === 'DELIVERED') {
         if (norm !== 'DELIVERED') return false;
+      } else if (statusFilter === 'SHIPPED') {
+        if (norm !== 'SHIPPED') return false;
       }
+
+      // Filter Rentang Tanggal Terbit
+      const sjDate = sj.delivery_date || sj.tanggal_kirim || (sj.created_at ? sj.created_at.split('T')[0] : '');
+      if (startDate && sjDate && sjDate < startDate) return false;
+      if (endDate && sjDate && sjDate > endDate) return false;
 
       if (search.trim()) {
         const query = search.toLowerCase();
@@ -347,7 +375,73 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
 
       return true;
     });
-  }, [sjList, regionFilter, statusFilter, search]);
+  }, [sjList, regionFilter, statusFilter, search, startDate, endDate]);
+
+  const handleExportCsv = () => {
+    if (filteredList.length === 0) {
+      setToast({ type: 'info', message: 'Tidak ada data Surat Jalan untuk diekspor.' });
+      return;
+    }
+    const headers = [
+      'No Surat Jalan',
+      'Ref RO',
+      'Tanggal Kirim',
+      'Outlet Asal',
+      'Outlet Tujuan',
+      'Driver Kurir',
+      'Plat Nomor',
+      'Pengirim',
+      'Penerima',
+      'Status',
+      'Waktu Tiba',
+      'Jumlah Jenis Item',
+      'Total Fisik Unit',
+      'Daftar Barang'
+    ];
+
+    const rows = filteredList.map((sj) => {
+      const sjNo = sj.nomor_sj || sj.sj_number || sj.id;
+      const roNo = sj.ro_nomor || sj.ro_number || '-';
+      const date = sj.delivery_date || sj.tanggal_kirim || sj.created_at || '';
+      const dest = sj.tujuan_outlet_nama || sj.branch_name || '';
+      const driver = sj.driver_nama || sj.driver_name || sj.expedition || '';
+      const plat = sj.kendaraan_plat || sj.vehicle_number || '';
+      const sender = sj.sender_name || sj.pengirim_nama || '';
+      const receiver = sj.receiver_name || sj.penerima_nama || '';
+      const status = sj.status;
+      const arrived = sj.received_at || sj.waktu_diterima || '';
+      const items = sj.items || [];
+      const totalUnits = items.reduce((acc: number, it: any) => acc + Number(it.quantity ?? it.qty ?? 1), 0);
+      const itemListStr = items.map((it: any) => `${it.item_name || it.nama_barang} (${it.quantity ?? it.qty ?? 1} ${it.unit || it.satuan || 'Unit'})`).join('; ');
+
+      return [
+        `"${sjNo}"`,
+        `"${roNo}"`,
+        `"${formatDateOnly(date)}"`,
+        `"Gudang Pusat SCGA"`,
+        `"${dest.replace(/"/g, '""')}"`,
+        `"${driver.replace(/"/g, '""')}"`,
+        `"${plat}"`,
+        `"${sender.replace(/"/g, '""')}"`,
+        `"${receiver.replace(/"/g, '""')}"`,
+        `"${status}"`,
+        `"${arrived ? formatDateOnly(arrived) : '-'}"`,
+        items.length,
+        totalUnits,
+        `"${itemListStr.replace(/"/g, '""')}"`
+      ].join(',');
+    });
+
+    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `Rekap_Riwayat_Surat_Jalan_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setToast({ type: 'success', message: 'Rekap riwayat berhasil diekspor ke file CSV!' });
+  };
 
   // 2. KELOMPOKKAN JIKA ADA NAMA OUTLET YANG SAMA DALAM 1 DAFTAR CETAK
   const groupedList = useMemo<GroupedSuratJalanRow[]>(() => {
@@ -407,6 +501,33 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
     return Array.from(map.values());
   }, [filteredList, groupByOutlet]);
 
+  const customSortFns = useMemo(
+    () => ({
+      doc_number: (a: GroupedSuratJalanRow, b: GroupedSuratJalanRow) =>
+        (a.sjNumbers[0] || '').localeCompare(b.sjNumbers[0] || '', 'id', { numeric: true }),
+      route: (a: GroupedSuratJalanRow, b: GroupedSuratJalanRow) =>
+        a.outletName.localeCompare(b.outletName, 'id', { sensitivity: 'base' }),
+      dates_courier: (a: GroupedSuratJalanRow, b: GroupedSuratJalanRow) => {
+        const dateA = a.primarySj.tanggal_kirim || a.primarySj.created_at || '';
+        const dateB = b.primarySj.tanggal_kirim || b.primarySj.created_at || '';
+        return dateA.localeCompare(dateB);
+      },
+      pics: (a: GroupedSuratJalanRow, b: GroupedSuratJalanRow) =>
+        (a.primarySj.pengirim_nama || '').localeCompare(b.primarySj.pengirim_nama || '', 'id'),
+      items: (a: GroupedSuratJalanRow, b: GroupedSuratJalanRow) => a.totalUnits - b.totalUnits,
+      status: (a: GroupedSuratJalanRow, b: GroupedSuratJalanRow) =>
+        (a.primarySj.status || '').localeCompare(b.primarySj.status || '', 'id'),
+    }),
+    []
+  );
+
+  const {
+    sortField,
+    sortDirection,
+    handleSort,
+    sortedItems: sortedGroupedList,
+  } = useTableSort<GroupedSuratJalanRow>(groupedList, null, 'asc', customSortFns);
+
   const getStatusBadge = (status: string) => {
     const norm = normalizeSjStatus(status);
     switch (norm) {
@@ -439,18 +560,61 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
 
   return (
     <div className="space-y-6">
+      {/* Tab Switcher Terpadu: Aktif vs Riwayat & Tracking */}
+      <div className="flex items-center gap-2 p-1.5 bg-slate-100 dark:bg-[#131314] rounded-2xl border border-slate-200 dark:border-slate-800 w-fit">
+        <button
+          onClick={() => {
+            setActiveTab('active');
+            setStatusFilter('ACTIVE');
+          }}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'active'
+              ? 'bg-white dark:bg-[#1e1f20] text-indigo-600 dark:text-indigo-400 shadow-sm border border-slate-200 dark:border-slate-700'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+          }`}
+        >
+          <Truck className="w-4 h-4" />
+          <span>Surat Jalan Aktif</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono font-bold">
+            {activeCount}
+          </span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('history');
+            setStatusFilter('ALL');
+          }}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'history'
+              ? 'bg-white dark:bg-[#1e1f20] text-indigo-600 dark:text-indigo-400 shadow-sm border border-slate-200 dark:border-slate-700'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+          }`}
+        >
+          <History className="w-4 h-4" />
+          <span>Riwayat &amp; Tracking History</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono font-bold">
+            {sjList.length}
+          </span>
+        </button>
+      </div>
+
       {/* Top Header Card */}
       <div className="panel-card p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] rounded-2xl shadow-xs">
         <div className="flex items-center gap-3.5">
           <div className="p-3 bg-indigo-50 dark:bg-indigo-950/50 rounded-2xl text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900/50 shadow-2xs">
-            <FileText className="w-6 h-6" />
+            {activeTab === 'history' ? <History className="w-6 h-6" /> : <FileText className="w-6 h-6" />}
           </div>
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
-              {isHistoryOnly ? 'Riwayat Dokumen Surat Jalan Selesai' : 'Surat Jalan (SJ) & Ekspedisi Distribusi'}
+              {activeTab === 'history' || isHistoryOnly 
+                ? 'Riwayat Penerbitan & Tracking Surat Jalan' 
+                : 'Surat Jalan (SJ) & Ekspedisi Distribusi'}
             </h1>
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-              Pencatatan resmi dokumen pendistribusian aset ke outlet cabang, cetak surat jalan legal, hingga konfirmasi serah terima fisik.
+              {activeTab === 'history' || isHistoryOnly
+                ? 'Arsip kronologis penerbitan surat jalan armada, timeline tracking 4 tahap pengiriman, dan verifikasi bukti serah terima cabang.'
+                : 'Pencatatan resmi dokumen pendistribusian aset ke outlet cabang, cetak surat jalan legal, hingga konfirmasi serah terima fisik.'}
             </p>
           </div>
         </div>
@@ -500,7 +664,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
 
       {/* Filter and Search Bar */}
       <div className="panel-card p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] rounded-2xl shadow-xs">
-        <div className="flex items-center gap-2 flex-1 max-w-2xl flex-wrap">
+        <div className="flex items-center gap-2 flex-1 max-w-4xl flex-wrap">
           <AreaFilterPills
             value={regionFilter}
             onChange={(r) => setRegionFilter(r)}
@@ -516,6 +680,40 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
               placeholder="Cari No. Distribusi, No. Surat Jalan, Asal, Tujuan, Kurir, Resi..."
               className="w-full rounded-full border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] pl-10 pr-4 py-2 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none transition-all shadow-xs"
             />
+          </div>
+
+          {/* Date Range Filter */}
+          <div className="flex items-center gap-1.5 bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] text-xs">
+            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="text-[10px] text-slate-400 font-semibold">Tgl Terbit:</span>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="bg-transparent text-[11px] text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
+              title="Tanggal awal penerbitan"
+            />
+            <span className="text-[10px] text-slate-400 font-semibold">s/d</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="bg-transparent text-[11px] text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
+              title="Tanggal akhir penerbitan"
+            />
+            {(startDate || endDate) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStartDate('');
+                  setEndDate('');
+                }}
+                className="text-slate-400 hover:text-rose-500 cursor-pointer p-0.5 rounded-full"
+                title="Reset filter tanggal"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-1 bg-[#f0f4f9] dark:bg-[#1e1f20] p-1 rounded-full border border-[#e0e2ec] dark:border-[#444746] text-xs">
@@ -628,6 +826,16 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                   )}
                 </button>
               )}
+              {filteredList.length > 0 && (
+                <button
+                  onClick={handleExportCsv}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                  title="Ekspor seluruh data riwayat penerbitan ke file Excel/CSV"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>Ekspor Rekap CSV</span>
+                </button>
+              )}
               <ColumnVisibilityPicker
                 columns={SJ_COLUMNS}
                 visibleColumns={visibleColumns}
@@ -641,12 +849,74 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
             <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
               <thead className="bg-[#f0f4f9] dark:bg-[#1e1f20] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#444746]">
                 <tr>
-                  {isVisible('doc_number') && <th className="py-3.5 px-3">No. Dokumen &amp; Surat Jalan</th>}
-                  {isVisible('route') && <th className="py-3.5 px-3">Rute Distribusi (Asal &rarr; Tujuan)</th>}
-                  {isVisible('dates_courier') && <th className="py-3.5 px-3">Tanggal &amp; Kurir</th>}
-                  {isVisible('pics') && <th className="py-3.5 px-3">PIC Pengirim / Penerima</th>}
-                  {isVisible('items') && <th className="py-3.5 px-3 text-center">Item &amp; Rincian</th>}
-                  {isVisible('status') && <th className="py-3.5 px-3 text-center">Status</th>}
+                  {isVisible('doc_number') && (
+                    <th className="py-3.5 px-3">
+                      <SortableHeader
+                        label="No. Dokumen & Surat Jalan"
+                        field="doc_number"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                        onSort={handleSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('route') && (
+                    <th className="py-3.5 px-3">
+                      <SortableHeader
+                        label="Rute Distribusi (Asal → Tujuan)"
+                        field="route"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                        onSort={handleSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('dates_courier') && (
+                    <th className="py-3.5 px-3">
+                      <SortableHeader
+                        label="Tanggal & Kurir"
+                        field="dates_courier"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                        onSort={handleSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('pics') && (
+                    <th className="py-3.5 px-3">
+                      <SortableHeader
+                        label="PIC Pengirim / Penerima"
+                        field="pics"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                        onSort={handleSort}
+                      />
+                    </th>
+                  )}
+                  {isVisible('items') && (
+                    <th className="py-3.5 px-3 text-center">
+                      <SortableHeader
+                        label="Item & Rincian"
+                        field="items"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                        onSort={handleSort}
+                        align="center"
+                      />
+                    </th>
+                  )}
+                  {isVisible('status') && (
+                    <th className="py-3.5 px-3 text-center">
+                      <SortableHeader
+                        label="Status"
+                        field="status"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                        onSort={handleSort}
+                        align="center"
+                      />
+                    </th>
+                  )}
                   {isVisible('actions') && <th className="py-3.5 px-3 text-right">Aksi</th>}
                 </tr>
               </thead>
@@ -660,7 +930,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                       </div>
                     </td>
                   </tr>
-                ) : groupedList.length === 0 ? (
+                ) : sortedGroupedList.length === 0 ? (
                   <tr>
                     <td colSpan={visibleColCount} className="text-center py-12 text-[#747775] dark:text-[#8e918f]">
                       <div className="flex flex-col items-center justify-center gap-2">
@@ -682,7 +952,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                     </td>
                   </tr>
                 ) : (
-                  groupedList.map((group) => {
+                  sortedGroupedList.map((group) => {
                     const norm = normalizeSjStatus(group.primarySj.status);
                     const isInTransit = norm === 'SHIPPED' || norm === 'PROCESSED';
                     const isReceived = norm === 'DELIVERED';
@@ -833,6 +1103,19 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         {isVisible('actions') && (
                           <td className="py-3 px-3 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              {/* Tombol Lacak Riwayat & Stepper Tracking */}
+                              <button
+                                onClick={() => {
+                                  setTrackingModalSj(group.primarySj);
+                                  setTrackingModalOutlet(group.outletName);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-full bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                                title="Lacak Riwayat Penerbitan & Timeline Tracking"
+                              >
+                                <History className="h-3.5 w-3.5" />
+                                <span>Lacak SJ</span>
+                              </button>
+
                               {isInTransit && (
                                 <button
                                   onClick={() => setDeliveryProofTargetSj(group.primarySj)}
@@ -1024,6 +1307,17 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         ) : (
                           <Copy className="w-4 h-4" />
                         )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTrackingModalSj(group.primarySj);
+                          setTrackingModalOutlet(group.outletName);
+                        }}
+                        className="p-2 text-indigo-600 hover:text-indigo-800 bg-indigo-50 dark:bg-indigo-950/60 rounded-lg transition-colors cursor-pointer"
+                        title="Lacak Riwayat Penerbitan & Timeline Tracking"
+                      >
+                        <History className="w-4 h-4" />
                       </button>
                       <Link
                         href={printUrl}
@@ -1235,6 +1529,16 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
           suratJalan={deliveryProofTargetSj}
           defaultReceiverName={user?.full_name || ''}
           onConfirm={handleConfirmDeliveryWithProof}
+        />
+      )}
+
+      {/* MODAL RIWAYAT PENERBITAN & TRACKING TIMELINE */}
+      {trackingModalSj && (
+        <SuratJalanTrackingModal
+          isOpen={Boolean(trackingModalSj)}
+          onClose={() => setTrackingModalSj(null)}
+          suratJalan={trackingModalSj}
+          outletName={trackingModalOutlet}
         />
       )}
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Toast, ToastMessage } from '@/components/ui/Toast';
 import { 
@@ -32,6 +32,7 @@ import UploadImageModal from '@/components/items/UploadImageModal';
 import AreaFilterPills from '@/components/ui/AreaFilterPills';
 import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
 import { formatDateSlash } from '@/lib/utils/date-formatter';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 const PR_COLUMNS: ColumnItem[] = [
   { id: 'rab_branch', label: 'No. RAB & Cabang', defaultVisible: true, alwaysVisible: true },
@@ -212,10 +213,47 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
     return matchSearch && matchStatus;
   });
 
-  const totalCount = filteredItems.length;
+  const customPrSortFns = useMemo(
+    () => ({
+      rab_branch: (a: AssetRequest, b: AssetRequest) =>
+        (a.rab_number || a.branch_name || '').localeCompare(b.rab_number || b.branch_name || '', 'id', { numeric: true }),
+      item_name: (a: AssetRequest, b: AssetRequest) =>
+        (a.item_name || '').localeCompare(b.item_name || '', 'id', { sensitivity: 'base' }),
+      notes: (a: AssetRequest, b: AssetRequest) =>
+        (a.notes || a.item_notes || '').localeCompare(b.notes || b.item_notes || '', 'id'),
+      qty: (a: AssetRequest, b: AssetRequest) => (a.quantity_needed || 0) - (b.quantity_needed || 0),
+      req_date: (a: AssetRequest, b: AssetRequest) => {
+        const da = a.order_datetime ? Date.parse(a.order_datetime) : 0;
+        const db = b.order_datetime ? Date.parse(b.order_datetime) : 0;
+        return da - db;
+      },
+      pr_po_date: (a: AssetRequest, b: AssetRequest) => {
+        const da = a.pr_datetime || a.po_date ? Date.parse(a.pr_datetime || a.po_date || '') : 0;
+        const db = b.pr_datetime || b.po_date ? Date.parse(b.pr_datetime || b.po_date || '') : 0;
+        return da - db;
+      },
+      received_date: (a: AssetRequest, b: AssetRequest) => {
+        const da = a.received_date ? Date.parse(a.received_date) : 0;
+        const db = b.received_date ? Date.parse(b.received_date) : 0;
+        return da - db;
+      },
+      status: (a: AssetRequest, b: AssetRequest) =>
+        (a.procurement_status || '').localeCompare(b.procurement_status || '', 'id'),
+    }),
+    []
+  );
+
+  const {
+    sortField: prSortField,
+    sortDirection: prSortDirection,
+    handleSort: handlePrSort,
+    sortedItems: sortedFilteredItems,
+  } = useTableSort<AssetRequest>(filteredItems, null, 'asc', customPrSortFns);
+
+  const totalCount = sortedFilteredItems.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / (pageSize === 0 ? totalCount || 1 : pageSize)));
   const safePage = Math.min(currentPage, totalPages);
-  const paginatedItems = pageSize === 0 ? filteredItems : filteredItems.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const paginatedItems = pageSize === 0 ? sortedFilteredItems : sortedFilteredItems.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   return (
     <div className="space-y-6">
@@ -317,16 +355,104 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
           <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
             <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 font-bold uppercase text-[11px] text-slate-500 shadow-xs">
               <tr>
-                {isVisible('rab_branch') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">No. RAB &amp; Cabang</th>}
-                {isVisible('item_name') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Nama Item Aset</th>}
-                {isVisible('notes') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Catatan</th>}
-                {isVisible('image') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Gambar</th>}
-                {isVisible('qty') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Qty PR</th>}
-                {isVisible('req_date') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Tgl Permintaan</th>}
-                {isVisible('pr_po_date') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Tgl PR</th>}
-                {isVisible('received_date') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Tgl Penerimaan Aset</th>}
-                {isVisible('status') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Status Pengadaan</th>}
-                {isVisible('actions') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-right shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi Tanggal</th>}
+                {isVisible('rab_branch') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="No. RAB & Cabang"
+                      field="rab_branch"
+                      currentSortField={prSortField}
+                      currentSortDirection={prSortDirection}
+                      onSort={handlePrSort}
+                    />
+                  </th>
+                )}
+                {isVisible('item_name') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Nama Item Aset"
+                      field="item_name"
+                      currentSortField={prSortField}
+                      currentSortDirection={prSortDirection}
+                      onSort={handlePrSort}
+                    />
+                  </th>
+                )}
+                {isVisible('notes') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Catatan"
+                      field="notes"
+                      currentSortField={prSortField}
+                      currentSortDirection={prSortDirection}
+                      onSort={handlePrSort}
+                    />
+                  </th>
+                )}
+                {isVisible('image') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    Gambar
+                  </th>
+                )}
+                {isVisible('qty') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Qty PR"
+                      field="qty"
+                      currentSortField={prSortField}
+                      currentSortDirection={prSortDirection}
+                      onSort={handlePrSort}
+                    />
+                  </th>
+                )}
+                {isVisible('req_date') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Tgl Permintaan"
+                      field="req_date"
+                      currentSortField={prSortField}
+                      currentSortDirection={prSortDirection}
+                      onSort={handlePrSort}
+                    />
+                  </th>
+                )}
+                {isVisible('pr_po_date') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Tgl PR"
+                      field="pr_po_date"
+                      currentSortField={prSortField}
+                      currentSortDirection={prSortDirection}
+                      onSort={handlePrSort}
+                    />
+                  </th>
+                )}
+                {isVisible('received_date') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Tgl Penerimaan Aset"
+                      field="received_date"
+                      currentSortField={prSortField}
+                      currentSortDirection={prSortDirection}
+                      onSort={handlePrSort}
+                    />
+                  </th>
+                )}
+                {isVisible('status') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Status Pengadaan"
+                      field="status"
+                      currentSortField={prSortField}
+                      currentSortDirection={prSortDirection}
+                      onSort={handlePrSort}
+                    />
+                  </th>
+                )}
+                {isVisible('actions') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-right shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    Aksi Tanggal
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">

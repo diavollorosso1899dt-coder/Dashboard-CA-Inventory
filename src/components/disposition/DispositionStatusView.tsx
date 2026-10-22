@@ -21,6 +21,7 @@ import {
   User,
   Plus
 } from 'lucide-react';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 export default function DispositionStatusView() {
   const [requests, setRequests] = useState<DispositionRequest[]>([]);
@@ -95,6 +96,32 @@ export default function DispositionStatusView() {
       pic.includes(q)
     );
   });
+
+  const customDspSortFns = React.useMemo(
+    () => ({
+      ticket_date: (a: DispositionRequest, b: DispositionRequest) => {
+        const da = a.created_at ? Date.parse(a.created_at) : 0;
+        const db = b.created_at ? Date.parse(b.created_at) : 0;
+        return da - db;
+      },
+      branch: (a: DispositionRequest, b: DispositionRequest) =>
+        (a.outlet_nama || '').localeCompare(b.outlet_nama || '', 'id', { sensitivity: 'base' }),
+      asset: (a: DispositionRequest, b: DispositionRequest) =>
+        (a.nama_aset || a.kode_aset || '').localeCompare(b.nama_aset || b.kode_aset || '', 'id'),
+      condition: (a: DispositionRequest, b: DispositionRequest) =>
+        (a.kondisi || '').localeCompare(b.kondisi || '', 'id'),
+      status: (a: DispositionRequest, b: DispositionRequest) =>
+        (a.status || '').localeCompare(b.status || '', 'id'),
+    }),
+    []
+  );
+
+  const {
+    sortField: dspSortField,
+    sortDirection: dspSortDirection,
+    handleSort: handleDspSort,
+    sortedItems: sortedRequests,
+  } = useTableSort<DispositionRequest>(filtered, null, 'desc', customDspSortFns);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -209,11 +236,51 @@ export default function DispositionStatusView() {
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold uppercase tracking-wider shadow-xs">
               <tr>
-                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">No. Tiket / Tanggal</th>
-                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Cabang Pengaju</th>
-                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Nama & Kode Aset</th>
-                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Kondisi Aset</th>
-                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Status</th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                  <SortableHeader
+                    label="No. Tiket / Tanggal"
+                    field="ticket_date"
+                    currentSortField={dspSortField}
+                    currentSortDirection={dspSortDirection}
+                    onSort={handleDspSort}
+                  />
+                </th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                  <SortableHeader
+                    label="Cabang Pengaju"
+                    field="branch"
+                    currentSortField={dspSortField}
+                    currentSortDirection={dspSortDirection}
+                    onSort={handleDspSort}
+                  />
+                </th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                  <SortableHeader
+                    label="Nama & Kode Aset"
+                    field="asset"
+                    currentSortField={dspSortField}
+                    currentSortDirection={dspSortDirection}
+                    onSort={handleDspSort}
+                  />
+                </th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                  <SortableHeader
+                    label="Kondisi Aset"
+                    field="condition"
+                    currentSortField={dspSortField}
+                    currentSortDirection={dspSortDirection}
+                    onSort={handleDspSort}
+                  />
+                </th>
+                <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                  <SortableHeader
+                    label="Status"
+                    field="status"
+                    currentSortField={dspSortField}
+                    currentSortDirection={dspSortDirection}
+                    onSort={handleDspSort}
+                  />
+                </th>
                 <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi / Rincian</th>
               </tr>
             </thead>
@@ -225,14 +292,14 @@ export default function DispositionStatusView() {
                     Memuat data tiket disposisi...
                   </td>
                 </tr>
-              ) : filtered.length === 0 ? (
+              ) : sortedRequests.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-12 text-center text-slate-400">
                     Tidak ada data permohonan disposisi yang sesuai kriteria.
                   </td>
                 </tr>
               ) : (
-                filtered.map((item) => (
+                sortedRequests.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
                     <td className="py-3.5 px-4">
                       <div className="font-mono font-semibold text-xs text-indigo-600 dark:text-indigo-400">

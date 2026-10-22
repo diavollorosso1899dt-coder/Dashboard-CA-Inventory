@@ -27,6 +27,7 @@ import {
 import { TrashItem, AuditLogEntry, TrashEntityType, AuditActionType } from '@/lib/supabase/types';
 import { useAuth } from '@/components/auth/AuthContext';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 const TRASH_COLUMNS: ColumnItem[] = [
   { id: 'select', label: 'Pilih', defaultVisible: true, alwaysVisible: true },
@@ -165,6 +166,56 @@ export function TrashAndLogView({
       return matchAction && matchSearch;
     });
   }, [auditLogs, logActionFilter, logSearch]);
+
+  const customTrashSortFns = useMemo(
+    () => ({
+      item_info: (a: TrashItem, b: TrashItem) =>
+        (a.title || '').localeCompare(b.title || '', 'id', { sensitivity: 'base' }),
+      module: (a: TrashItem, b: TrashItem) =>
+        (a.entity_type || '').localeCompare(b.entity_type || '', 'id'),
+      deleted_by: (a: TrashItem, b: TrashItem) =>
+        (a.deleted_by || '').localeCompare(b.deleted_by || '', 'id'),
+      deleted_at: (a: TrashItem, b: TrashItem) => {
+        const da = a.deleted_at ? Date.parse(a.deleted_at) : 0;
+        const db = b.deleted_at ? Date.parse(b.deleted_at) : 0;
+        return da - db;
+      },
+    }),
+    []
+  );
+
+  const {
+    sortField: trashSortField,
+    sortDirection: trashSortDirection,
+    handleSort: handleTrashSort,
+    sortedItems: sortedTrash,
+  } = useTableSort<TrashItem>(filteredTrash, null, 'desc', customTrashSortFns);
+
+  const customLogSortFns = useMemo(
+    () => ({
+      timestamp: (a: AuditLogEntry, b: AuditLogEntry) => {
+        const da = a.timestamp ? Date.parse(a.timestamp) : 0;
+        const db = b.timestamp ? Date.parse(b.timestamp) : 0;
+        return da - db;
+      },
+      actor: (a: AuditLogEntry, b: AuditLogEntry) =>
+        (a.actor_name || '').localeCompare(b.actor_name || '', 'id', { sensitivity: 'base' }),
+      action_type: (a: AuditLogEntry, b: AuditLogEntry) =>
+        (a.action_type || '').localeCompare(b.action_type || '', 'id'),
+      module: (a: AuditLogEntry, b: AuditLogEntry) =>
+        (a.entity_type || '').localeCompare(b.entity_type || '', 'id'),
+      details: (a: AuditLogEntry, b: AuditLogEntry) =>
+        `${a.entity_title} ${a.details}`.localeCompare(`${b.entity_title} ${b.details}`, 'id'),
+    }),
+    []
+  );
+
+  const {
+    sortField: logSortField,
+    sortDirection: logSortDirection,
+    handleSort: handleLogSort,
+    sortedItems: sortedLogs,
+  } = useTableSort<AuditLogEntry>(filteredLogs, null, 'desc', customLogSortFns);
 
   // -------------------------------------------------------------------
   // TRASH ACTIONS
@@ -543,15 +594,55 @@ export function TrashAndLogView({
                         </button>
                       </th>
                     )}
-                    {isTrashColVisible('item_info') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Nama Item &amp; Keterangan</th>}
-                    {isTrashColVisible('module') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Modul</th>}
-                    {isTrashColVisible('deleted_by') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Dihapus Oleh</th>}
-                    {isTrashColVisible('deleted_at') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Waktu Penghapusan</th>}
+                    {isTrashColVisible('item_info') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Nama Item & Keterangan"
+                          field="item_info"
+                          currentSortField={trashSortField}
+                          currentSortDirection={trashSortDirection}
+                          onSort={handleTrashSort}
+                        />
+                      </th>
+                    )}
+                    {isTrashColVisible('module') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Modul"
+                          field="module"
+                          currentSortField={trashSortField}
+                          currentSortDirection={trashSortDirection}
+                          onSort={handleTrashSort}
+                        />
+                      </th>
+                    )}
+                    {isTrashColVisible('deleted_by') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Dihapus Oleh"
+                          field="deleted_by"
+                          currentSortField={trashSortField}
+                          currentSortDirection={trashSortDirection}
+                          onSort={handleTrashSort}
+                        />
+                      </th>
+                    )}
+                    {isTrashColVisible('deleted_at') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Waktu Penghapusan"
+                          field="deleted_at"
+                          currentSortField={trashSortField}
+                          currentSortDirection={trashSortDirection}
+                          onSort={handleTrashSort}
+                        />
+                      </th>
+                    )}
                     {isTrashColVisible('actions') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 text-right shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Opsi Tindakan</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
-                  {filteredTrash.length === 0 ? (
+                  {sortedTrash.length === 0 ? (
                     <tr>
                       <td colSpan={trashColCount} className="py-16 text-center text-slate-400">
                         <Trash2 className="w-10 h-10 mx-auto opacity-30 mb-2 text-rose-500" />
@@ -564,7 +655,7 @@ export function TrashAndLogView({
                       </td>
                     </tr>
                   ) : (
-                    filteredTrash.map((item) => {
+                    sortedTrash.map((item) => {
                       const isSelected = selectedTrashIds.includes(item.id);
                       const isActing = actionLoadingId === item.id;
 
@@ -769,16 +860,66 @@ export function TrashAndLogView({
               <table className="w-full text-left text-xs">
                 <thead className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] shadow-xs">
                   <tr>
-                    {isLogColVisible('timestamp') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Waktu Kejadian</th>}
-                    {isLogColVisible('actor') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Aktor Pengubah</th>}
-                    {isLogColVisible('action_type') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Tipe Aksi</th>}
-                    {isLogColVisible('module') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Modul / Entitas</th>}
-                    {isLogColVisible('details') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Rincian Perubahan</th>}
+                    {isLogColVisible('timestamp') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Waktu Kejadian"
+                          field="timestamp"
+                          currentSortField={logSortField}
+                          currentSortDirection={logSortDirection}
+                          onSort={handleLogSort}
+                        />
+                      </th>
+                    )}
+                    {isLogColVisible('actor') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Aktor Pengubah"
+                          field="actor"
+                          currentSortField={logSortField}
+                          currentSortDirection={logSortDirection}
+                          onSort={handleLogSort}
+                        />
+                      </th>
+                    )}
+                    {isLogColVisible('action_type') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Tipe Aksi"
+                          field="action_type"
+                          currentSortField={logSortField}
+                          currentSortDirection={logSortDirection}
+                          onSort={handleLogSort}
+                        />
+                      </th>
+                    )}
+                    {isLogColVisible('module') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Modul / Entitas"
+                          field="module"
+                          currentSortField={logSortField}
+                          currentSortDirection={logSortDirection}
+                          onSort={handleLogSort}
+                        />
+                      </th>
+                    )}
+                    {isLogColVisible('details') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Rincian Perubahan"
+                          field="details"
+                          currentSortField={logSortField}
+                          currentSortDirection={logSortDirection}
+                          onSort={handleLogSort}
+                        />
+                      </th>
+                    )}
                     {isLogColVisible('actions') && <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 text-right shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">Aksi</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
-                  {filteredLogs.length === 0 ? (
+                  {sortedLogs.length === 0 ? (
                     <tr>
                       <td colSpan={logColCount} className="py-16 text-center text-slate-400">
                         <History className="w-10 h-10 mx-auto opacity-30 mb-2 text-[#0b57d0]" />
@@ -791,7 +932,7 @@ export function TrashAndLogView({
                       </td>
                     </tr>
                   ) : (
-                    filteredLogs.map((log) => (
+                    sortedLogs.map((log) => (
                       <tr key={log.id} className="hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c] transition-colors">
                         {isLogColVisible('timestamp') && (
                           <td className="py-3 px-4 whitespace-nowrap">

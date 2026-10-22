@@ -30,6 +30,7 @@ import {
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/auth/AuthContext';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
+import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
 export const DEFAULT_SUPERUSER_FEATURES = ALL_FEATURE_IDS;
 export const DEFAULT_ADMIN_FEATURES = [
@@ -268,6 +269,27 @@ export default function UserManagerView() {
     );
   });
 
+  const customUserSortFns = React.useMemo(
+    () => ({
+      user_info: (a: UserProfile, b: UserProfile) =>
+        (a.full_name || a.username || '').localeCompare(b.full_name || b.username || '', 'id', { sensitivity: 'base' }),
+      role: (a: UserProfile, b: UserProfile) =>
+        (a.role || '').localeCompare(b.role || '', 'id'),
+      outlet: (a: UserProfile, b: UserProfile) =>
+        (a.outlet_assigned || '').localeCompare(b.outlet_assigned || '', 'id'),
+      status: (a: UserProfile, b: UserProfile) =>
+        (a.is_active === b.is_active ? 0 : a.is_active ? -1 : 1),
+    }),
+    []
+  );
+
+  const {
+    sortField: userSortField,
+    sortDirection: userSortDirection,
+    handleSort: handleUserSort,
+    sortedItems: sortedUsers,
+  } = useTableSort<UserProfile>(filteredUsers, null, 'asc', customUserSortFns);
+
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
       case 'Super User':
@@ -428,10 +450,50 @@ export default function UserManagerView() {
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold uppercase tracking-wider shadow-xs">
               <tr>
-                {isVisible('user_info') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Nama Lengkap &amp; Username</th>}
-                {isVisible('role') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Peran (Role)</th>}
-                {isVisible('outlet') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Penugasan Outlet</th>}
-                {isVisible('status') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Status Akun</th>}
+                {isVisible('user_info') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Nama Lengkap & Username"
+                      field="user_info"
+                      currentSortField={userSortField}
+                      currentSortDirection={userSortDirection}
+                      onSort={handleUserSort}
+                    />
+                  </th>
+                )}
+                {isVisible('role') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Peran (Role)"
+                      field="role"
+                      currentSortField={userSortField}
+                      currentSortDirection={userSortDirection}
+                      onSort={handleUserSort}
+                    />
+                  </th>
+                )}
+                {isVisible('outlet') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Penugasan Outlet"
+                      field="outlet"
+                      currentSortField={userSortField}
+                      currentSortDirection={userSortDirection}
+                      onSort={handleUserSort}
+                    />
+                  </th>
+                )}
+                {isVisible('status') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Status Akun"
+                      field="status"
+                      currentSortField={userSortField}
+                      currentSortDirection={userSortDirection}
+                      onSort={handleUserSort}
+                    />
+                  </th>
+                )}
                 {isVisible('actions') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi</th>}
               </tr>
             </thead>
@@ -443,14 +505,14 @@ export default function UserManagerView() {
                     Memuat daftar pengguna...
                   </td>
                 </tr>
-              ) : filteredUsers.length === 0 ? (
+              ) : sortedUsers.length === 0 ? (
                 <tr>
                   <td colSpan={visibleColCount} className="py-12 text-center text-slate-400">
                     Tidak ditemukan pengguna yang sesuai.
                   </td>
                 </tr>
               ) : (
-                filteredUsers.map((u) => {
+                sortedUsers.map((u) => {
                   const displayUsername = u.username || u.email;
                   return (
                     <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">

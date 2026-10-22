@@ -77,6 +77,7 @@ export function Sidebar() {
       color: 'text-amber-600 dark:text-amber-400',
       items: [
         { name: 'Surat Jalan', href: '/distribution/surat-jalan', icon: Printer },
+        { name: 'Riwayat & Tracking SJ', href: '/distribution/surat-jalan/history', icon: History },
         { name: 'Pemantauan Distribusi', href: '/monitoring/transfer', icon: ArrowRightLeft },
         { name: 'Monitoring SLA', href: '/distribution/sla', icon: Activity },
       ],
