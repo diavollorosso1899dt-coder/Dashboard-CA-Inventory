@@ -789,6 +789,9 @@ export async function updateAssetRequest(
         if (payload.notes || payload.item_notes) {
           matchedItem.notes = payload.item_notes || payload.notes;
         }
+        if (payload.procurement_status) {
+          matchedItem.procurement_status = payload.procurement_status;
+        }
 
         const updateSuccess = await updateRequestOrder(matchedRo.id, {
           items: matchedRo.items,
@@ -3125,11 +3128,15 @@ export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): P
 
       const manualEdit = cache.manualEdits?.get(itemId);
       const isCompleted = ro.current_stage === 'READY_STOCK' || ro.status === 'READY_STOCK' || ro.current_stage === 'SELESAI';
+      const storedProcStatus = (manualEdit?.procurement_status || it.procurement_status) as
+        | 'selesai'
+        | 'proses'
+        | 'belum'
+        | 'po'
+        | undefined;
       const procStatus: 'selesai' | 'proses' | 'belum' | 'po' = isCompleted
         ? 'selesai'
-        : ro.pr_po_number
-        ? 'po'
-        : 'belum';
+        : storedProcStatus || (ro.pr_po_number ? 'po' : 'belum');
 
       const assetReq: AssetRequest = {
         id: itemId,

@@ -297,6 +297,7 @@ export interface ROItem {
   pr_po_number?: string;
   pr_arrival_date?: string | null;
   is_arrived_at_warehouse?: boolean;
+  procurement_status?: 'selesai' | 'proses' | 'belum' | 'po';
 
   // Checklist verification fields
   received_qty?: number;
