@@ -1084,67 +1084,9 @@ export function TransferAssetView({
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] text-xs font-bold text-white dark:text-[#041e49]">
               {readyDistributionAssets.length}
             </span>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-bold text-sm text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-1.5">
-                  <Truck className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
-                  <span>Antrean Aset Siap Distribusi (Ready Stock Kelola RO)</span>
-                </h3>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span>Live Real-Time Sync</span>
-                </span>
-              </div>
-              <p className="text-[11px] text-[#444746] dark:text-[#c4c7c5]">
-                Menampilkan item berstatus <strong>Ready Stock (Gudang SCGA)</strong> dari Kelola RO secara real-time dan siap diterbitkan Surat Jalan Distribusi.
-              </p>
-            </div>
           </div>
 
           <div className="flex items-center gap-2 self-start sm:self-auto relative flex-wrap">
-            {/* View Mode Switcher Langsung di Header Kartu */}
-            <div className="flex items-center gap-0.5 bg-white dark:bg-[#1e1f20] p-1 rounded-full border-2 border-[#0b57d0]/40 dark:border-[#a8c7fa]/40 shadow-xs">
-              <span className="text-[10px] font-bold text-[#747775] dark:text-[#8e918f] pl-2 pr-1 uppercase tracking-wider hidden md:inline">
-                Model:
-              </span>
-              <button
-                onClick={() => handleChangeViewMode('grid')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                  queueViewMode === 'grid'
-                    ? 'bg-[#0b57d0] text-white shadow-xs'
-                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#0b57d0] hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/30'
-                }`}
-                title="Tampilan Model Kolom (Grid)"
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>Kolom</span>
-              </button>
-              <button
-                onClick={() => handleChangeViewMode('detail')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                  queueViewMode === 'detail'
-                    ? 'bg-[#0b57d0] text-white shadow-xs'
-                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#0b57d0] hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/30'
-                }`}
-                title="Tampilan Model Baris Detail Lengkap"
-              >
-                <List className="w-3.5 h-3.5" />
-                <span>Detail</span>
-              </button>
-              <button
-                onClick={() => handleChangeViewMode('table')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                  queueViewMode === 'table'
-                    ? 'bg-[#0b57d0] text-white shadow-xs'
-                    : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#0b57d0] hover:bg-[#e8f0fe] dark:hover:bg-[#004a77]/30'
-                }`}
-                title="Tampilan Model Tabel Kompak"
-              >
-                <TableIcon className="w-3.5 h-3.5" />
-                <span>Tabel</span>
-              </button>
-            </div>
-
             {/* Tombol Copy Semua Antrean di Header */}
             {readyDistributionAssets.length > 0 && (
               <button
