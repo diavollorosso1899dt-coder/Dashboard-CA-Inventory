@@ -54,6 +54,8 @@ import { Toast, ToastMessage } from '@/components/ui/Toast';
 import { formatDateSlash } from '@/lib/utils/date-formatter';
 import { sortOrdersNewestFirst } from '@/lib/utils/ro-sorter';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
+import { getAllSessionsSync, loadSession } from '@/lib/so-harian/storageService';
+import { SOItem } from '@/lib/so-harian/inventoryEngine';
 
 interface RoManagerViewProps {
   initialOrders?: RequestOrder[];
@@ -203,6 +205,89 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [selectedSource, setSelectedSource] = useState<'ALL' | 'KALBAR_SHEET' | 'JABO_SHEET' | 'MANUAL'>('ALL');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  // SO Harian Stock lookup state
+  const [soStockItems, setSoStockItems] = useState<SOItem[]>([]);
+  const [soSessionDate, setSoSessionDate] = useState<string | null>(null);
+
+  const fetchSoStock = async () => {
+    try {
+      const sessions = getAllSessionsSync();
+      if (sessions.length > 0) {
+        const latest = sessions[0];
+        setSoSessionDate(latest.tanggal || null);
+        const { items } = await loadSession(latest.id);
+        if (items && items.length > 0) {
+          setSoStockItems(items);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load SO stock:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchSoStock();
+  }, []);
+
+  const getSoStockForItem = (it: ROItem): { stok_sistem: number; qty_fisik?: number | null; satuan?: string; found: boolean } => {
+    if (!soStockItems || soStockItems.length === 0) {
+      return { stok_sistem: 0, found: false };
+    }
+    const cleanName = (it.item_name || '').toLowerCase().trim();
+    const cleanSku = (it.sku || '').toLowerCase().trim();
+
+    if (cleanSku) {
+      const matchSku = soStockItems.find(s => (s.kode_barang || '').toLowerCase().trim() === cleanSku);
+      if (matchSku) {
+        return {
+          stok_sistem: matchSku.stok_sistem ?? 0,
+          qty_fisik: matchSku.qty_fisik,
+          satuan: matchSku.satuan || it.unit || 'pcs',
+          found: true
+        };
+      }
+    }
+
+    const matchExact = soStockItems.find(s => (s.nama_barang || '').toLowerCase().trim() === cleanName);
+    if (matchExact) {
+      return {
+        stok_sistem: matchExact.stok_sistem ?? 0,
+        qty_fisik: matchExact.qty_fisik,
+        satuan: matchExact.satuan || it.unit || 'pcs',
+        found: true
+      };
+    }
+
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normCleanName = norm(cleanName);
+    if (normCleanName) {
+      const matchNorm = soStockItems.find(s => norm(s.nama_barang || '') === normCleanName);
+      if (matchNorm) {
+        return {
+          stok_sistem: matchNorm.stok_sistem ?? 0,
+          qty_fisik: matchNorm.qty_fisik,
+          satuan: matchNorm.satuan || it.unit || 'pcs',
+          found: true
+        };
+      }
+    }
+
+    const matchPartial = soStockItems.find(s => {
+      const sName = (s.nama_barang || '').toLowerCase().trim();
+      return sName && (cleanName.includes(sName) || sName.includes(cleanName));
+    });
+    if (matchPartial) {
+      return {
+        stok_sistem: matchPartial.stok_sistem ?? 0,
+        qty_fisik: matchPartial.qty_fisik,
+        satuan: matchPartial.satuan || it.unit || 'pcs',
+        found: true
+      };
+    }
+
+    return { stok_sistem: 0, found: false };
+  };
 
   // Sync selectedRegion with URL query param whenever it changes
   useEffect(() => {
@@ -1787,51 +1872,16 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               </div>
 
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="font-bold text-xs">Pilih Status Ketersediaan Tiap Item:</div>
-                  <div className="flex gap-1.5 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const updated = selectedRoForProcess.items.map(it => ({ ...it, stock_source: 'GUDANG_SCGA' as const }));
-                        setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
-                      }}
-                      className="text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 hover:bg-emerald-200"
-                    >
-                      Semua Ready Stock
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const updated = selectedRoForProcess.items.map(it => ({ ...it, stock_source: 'PR_VENDOR' as const }));
-                        setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
-                      }}
-                      className="text-[10px] px-2 py-0.5 rounded font-semibold bg-orange-100 dark:bg-orange-950/60 text-orange-800 dark:text-orange-300 border border-orange-300 hover:bg-orange-200"
-                    >
-                      Semua Belum Tersedia (PR)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const updated = selectedRoForProcess.items.map(it => ({ ...it, stock_source: 'CANCELLED' as const }));
-                        setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
-                      }}
-                      className="text-[10px] px-2 py-0.5 rounded font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 hover:bg-rose-200"
-                    >
-                      Semua Tolak
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const updated = selectedRoForProcess.items.map(it => ({ ...it, stock_source: 'ON_PROSES' as const }));
-                        setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
-                      }}
-                      className="text-[10px] px-2 py-0.5 rounded font-semibold bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-300 hover:bg-blue-200"
-                    >
-                      Reset On Proses
-                    </button>
-                  </div>
+                <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 pb-1 border-b border-slate-100 dark:border-slate-800">
+                  <span className="font-bold text-xs text-slate-700 dark:text-slate-300">
+                    Daftar Permintaan Aset ({selectedRoForProcess.items.length} Item)
+                  </span>
+                  <span className="text-[11px] flex items-center gap-1 text-slate-500">
+                    <Boxes className="w-3 h-3 text-indigo-500" />
+                    <span>Sinkron Stok Sistem SO Harian {soSessionDate ? `(${soSessionDate})` : ''}</span>
+                  </span>
                 </div>
+
                 <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
                   {selectedRoForProcess.items.map((it, idx) => {
                     const imgUrl = getItemImageUrl(it.item_name);
@@ -1858,7 +1908,50 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                               <div className={`font-semibold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] truncate ${it.stock_source === 'CANCELLED' ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
                                 {it.item_name}
                               </div>
-                              <div className="text-[10px] text-[#747775]">Jumlah: {it.quantity_ordered} {it.unit || 'unit'}</div>
+                              <div className="flex items-center gap-2 flex-wrap mt-1">
+                                <span className="text-[11px] text-[#747775]">
+                                  Permintaan: <strong className="text-slate-800 dark:text-slate-200">{it.quantity_ordered} {it.unit || 'unit'}</strong>
+                                </span>
+                                {(() => {
+                                  const soStock = getSoStockForItem(it);
+                                  if (!soStock.found) {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700" title="Item ini belum terdata pada sesi Stock Opname Harian">
+                                        <Boxes className="w-3 h-3 text-slate-400" />
+                                        <span>Stok SO: Belum terdata</span>
+                                      </span>
+                                    );
+                                  }
+
+                                  const isEnough = soStock.stok_sistem >= it.quantity_ordered;
+                                  const isZeroOrNegative = soStock.stok_sistem <= 0;
+
+                                  if (isZeroOrNegative) {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800" title={`Stok sistem gudang kosong atau habis pada SO Harian (${soStock.stok_sistem} ${soStock.satuan})`}>
+                                        <AlertCircle className="w-3 h-3 text-rose-500" />
+                                        <span>Stok SO: 0 {soStock.satuan} (Kosong / Butuh PR)</span>
+                                      </span>
+                                    );
+                                  }
+
+                                  if (isEnough) {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800" title={`Tersedia di gudang! Stok sistem SO: ${soStock.stok_sistem} ${soStock.satuan}`}>
+                                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                        <span>Stok SO: {soStock.stok_sistem} {soStock.satuan} (Tersedia / Cukup)</span>
+                                      </span>
+                                    );
+                                  }
+
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title={`Stok sistem gudang kurang ${it.quantity_ordered - soStock.stok_sistem} ${soStock.satuan} (Total stok: ${soStock.stok_sistem})`}>
+                                      <Clock className="w-3 h-3 text-amber-500" />
+                                      <span>Stok SO: {soStock.stok_sistem} {soStock.satuan} (Kurang {it.quantity_ordered - soStock.stok_sistem})</span>
+                                    </span>
+                                  );
+                                })()}
+                              </div>
                             </div>
                           </div>
                           <select
@@ -1910,23 +2003,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                   })}
                 </div>
 
-                {/* Kolom Catatan Keseluruhan Dokumen RO */}
-                <div className="pt-2 border-t border-[#e0e2ec] dark:border-[#35383a] space-y-1">
-                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                    <span>Catatan Keseluruhan Dokumen RO (Opsional):</span>
-                  </label>
-                  <textarea
-                    rows={2}
-                    placeholder="Tulis keterangan atau instruksi khusus untuk dokumen RO ini..."
-                    value={(selectedRoForProcess.notes || '').replace(/\[PROCESSED_FROM_RO\]/g, '').trim()}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setSelectedRoForProcess({ ...selectedRoForProcess, notes: val });
-                    }}
-                    className="w-full text-xs p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#1a1c1e] text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
-                  />
-                </div>
+
               </div>
             </div>
 
