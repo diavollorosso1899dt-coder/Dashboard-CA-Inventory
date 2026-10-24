@@ -29,6 +29,7 @@ import {
 
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/auth/AuthContext';
+import { MIN_PASSWORD_LENGTH } from '@/lib/auth/password';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
@@ -688,7 +689,8 @@ export default function UserManagerView() {
                     <input
                       type={showPassword ? 'text' : 'password'}
                       required={!formData.id}
-                      placeholder={formData.id ? 'Kosongkan jika tidak diubah' : 'Min. 4 karakter'}
+                      minLength={MIN_PASSWORD_LENGTH}
+                      placeholder={formData.id ? 'Kosongkan jika tidak diubah' : `Min. ${MIN_PASSWORD_LENGTH} karakter`}
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                       className="w-full pl-10 pr-10 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"

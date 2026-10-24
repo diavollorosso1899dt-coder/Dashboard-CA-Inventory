@@ -17,11 +17,13 @@ import {
   Package,
   ChevronDown,
   RefreshCw,
-  HelpCircle
+  HelpCircle,
+  KeyRound
 } from 'lucide-react';
 import { useTheme } from '@/components/theme/ThemeContext';
 import { useNavigation } from './NavigationContext';
 import { useAuth } from '@/components/auth/AuthContext';
+import { ChangePasswordModal } from '@/components/auth/ChangePasswordModal';
 import { SpeedingCarLogo } from '@/components/common/SpeedingCarLogo';
 
 export function Navbar() {
@@ -35,6 +37,7 @@ export function Navbar() {
 
   const [currentTime, setCurrentTime] = useState<string>('');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const isSyncingRef = useRef(false);
 
@@ -112,6 +115,7 @@ export function Navbar() {
   };
 
   return (
+    <>
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd]/95 dark:bg-[#131314]/95 backdrop-blur-md px-4 md:px-6 transition-colors duration-200">
       {/* Brand Title with Google Material Icon */}
       <div className="flex items-center gap-2 sm:gap-3">
@@ -284,7 +288,18 @@ export function Navbar() {
                 <span>Buka Panduan & Tur Fitur</span>
               </button>
 
-              <div className="pt-1 border-t border-slate-100 dark:border-slate-800">
+              <div className="pt-1 border-t border-slate-100 dark:border-slate-800 space-y-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProfileOpen(false);
+                    setIsPasswordModalOpen(true);
+                  }}
+                  className="w-full flex items-center gap-2.5 p-2 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-xs font-semibold transition"
+                >
+                  <KeyRound className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span>Ubah Password</span>
+                </button>
                 <button
                   onClick={() => {
                     setIsProfileOpen(false);
@@ -301,5 +316,11 @@ export function Navbar() {
         </div>
       </div>
     </header>
+
+    <ChangePasswordModal
+      open={isPasswordModalOpen}
+      onClose={() => setIsPasswordModalOpen(false)}
+    />
+    </>
   );
 }

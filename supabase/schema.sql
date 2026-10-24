@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
     role TEXT NOT NULL DEFAULT 'user', -- 'super_user' | 'user' | 'outlet_manager'
     branch_name TEXT,
     phone TEXT,
+    password TEXT,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()

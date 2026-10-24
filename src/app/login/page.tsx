@@ -13,7 +13,6 @@ import {
   UserCheck,
   Truck,
   Clock,
-  ShieldCheck,
   FileCheck2
 } from 'lucide-react';
 import { SpeedingCarLogo } from '@/components/common/SpeedingCarLogo';
@@ -21,7 +20,7 @@ import { LogisticsIllustration } from '@/components/auth/LogisticsIllustration';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, quickLogin } = useAuth();
+  const { login } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -41,11 +40,6 @@ export default function LoginPage() {
       setErrorMsg(result.error || 'Login gagal, periksa username dan password Anda.');
     }
     setLoading(false);
-  };
-
-  const handleDemoSelect = (role: 'super_user' | 'user' | 'outlet_manager') => {
-    setErrorMsg('');
-    quickLogin(role);
   };
 
   return (
@@ -207,41 +201,6 @@ export default function LoginPage() {
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
-          </div>
-
-          {/* Quick Demo Login Shortcuts */}
-          <div className="pt-2 border-t border-[#e0e2ec] dark:border-[#444746] space-y-2">
-            <div className="flex items-center justify-between text-[11px] text-[#747775] dark:text-[#8e918f]">
-              <span className="font-semibold uppercase tracking-wider">Akses Cepat Pengujian:</span>
-              <ShieldCheck className="w-3.5 h-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
-            </div>
-
-            <div className="grid grid-cols-3 gap-1.5">
-              <button
-                type="button"
-                onClick={() => handleDemoSelect('super_user')}
-                className="px-2 py-1.5 rounded-lg border border-[#c2e7ff] dark:border-[#004a77] bg-[#eff6ff] dark:bg-[#004a77]/30 hover:bg-[#d3e3fd] text-[10px] font-bold text-[#0b57d0] dark:text-[#a8c7fa] transition-colors truncate"
-                title="Login sebagai Super User / Admin"
-              >
-                Super User
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDemoSelect('user')}
-                className="px-2 py-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[10px] font-bold text-[#444746] dark:text-[#c4c7c5] transition-colors truncate"
-                title="Login sebagai Tim Logistik SCGA"
-              >
-                Logistik
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDemoSelect('outlet_manager')}
-                className="px-2 py-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[10px] font-bold text-[#444746] dark:text-[#c4c7c5] transition-colors truncate"
-                title="Login sebagai Outlet Manager"
-              >
-                Store Mgr
-              </button>
-            </div>
           </div>
 
           {/* Footer Copyright */}

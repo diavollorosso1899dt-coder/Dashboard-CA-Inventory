@@ -12,7 +12,6 @@ interface AuthContextType {
   canAccessFeature: (featureIdOrHref: string) => boolean;
   login: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
-  quickLogin: (role: 'super_user' | 'user' | 'outlet_manager') => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -91,7 +90,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed && parsed.email) {
-          setUser(parsed);
+          // Sesi lama mungkin menyimpan phone/password. Jangan pertahankan
+          // kredensial di localStorage.
+          const { password, phone, ...safeUser } = parsed;
+          setUser(safeUser);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(safeUser));
           document.cookie = `ca_auth=true; path=/; max-age=604800; SameSite=Lax`;
         }
       }
@@ -107,7 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: password || 'password123' }),
+        body: JSON.stringify({ email, password: password || '' }),
       });
 
       const json = await res.json();
@@ -133,22 +136,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push('/login');
   };
 
-  const quickLogin = async (roleType: 'super_user' | 'user' | 'outlet_manager') => {
-    const demoAccounts = {
-      super_user: 'admin@coffee-arabica.co.id',
-      user: 'logistik@coffee-arabica.co.id',
-      outlet_manager: 'manager.batam@coffee-arabica.co.id',
-    };
-
-    const targetEmail = demoAccounts[roleType];
-    const res = await login(targetEmail, 'admin123');
-    if (res.success) {
-      router.push('/');
-    } else {
-      alert(res.error || 'Gagal login dengan akun demo');
-    }
-  };
-
   return (
     <AuthContext.Provider
       value={{
@@ -159,7 +146,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         canAccessFeature,
         login,
         logout,
-        quickLogin,
       }}
     >
       {children}

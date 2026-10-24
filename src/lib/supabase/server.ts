@@ -1408,12 +1408,44 @@ export async function getUserProfiles(): Promise<UserProfile[]> {
   }));
 }
 
+export async function getUserProfileByEmail(email: string): Promise<UserProfile | null> {
+  const admin = getAdminClient();
+  if (!admin) throw new Error('Supabase admin client tidak dikonfigurasi');
+
+  const normalized = (email || '').trim().toLowerCase();
+  if (!normalized) return null;
+
+  const { data, error } = await admin
+    .from('user_profiles')
+    .select('*')
+    .eq('email', normalized)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+
+  let allowed = (data as any).allowed_features;
+  if (typeof allowed === 'string') {
+    try { allowed = JSON.parse(allowed); } catch (e) { allowed = allowed.split(','); }
+  }
+  const isSuper = data.role === 'Super User' || data.role === 'super_user';
+  if (!Array.isArray(allowed) && isSuper) allowed = ALL_FEATURE_IDS;
+
+  return {
+    ...(data as any),
+    username: (data as any).username || data.email,
+    password: (data as any).password || data.phone || '',
+    allowed_features: allowed || undefined,
+  } as UserProfile;
+}
+
 export async function saveUserProfile(userData: Partial<UserProfile>): Promise<UserProfile> {
   const admin = getAdminClient();
   const userId = ensureUuid(userData.id);
   const branch = userData.branch_name || userData.outlet_assigned || null;
   const username = (userData.username || userData.email || '').trim().toLowerCase();
-  const password = userData.password || userData.phone || '';
+  const providedPassword = (userData.password || '').trim();
+  const providedPhone = (userData.phone || '').trim();
   const isSuper = userData.role === 'Super User' || userData.role === 'super_user';
   const allowedFeatures = isSuper
     ? ALL_FEATURE_IDS
@@ -1425,16 +1457,16 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
     id: userId,
     username,
     email: username,
-    password,
     full_name: userData.full_name || 'User',
     role: userData.role || 'user',
     branch_name: branch || undefined,
     outlet_assigned: branch || undefined,
-    phone: password || userData.phone || undefined,
     is_active: userData.is_active ?? true,
     allowed_features: allowedFeatures,
     created_at: userData.created_at || new Date().toISOString(),
   };
+  if (providedPassword) user.password = providedPassword;
+  if (providedPhone) user.phone = providedPhone;
 
   if (admin) {
     try {
@@ -1444,19 +1476,37 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
         full_name: user.full_name,
         role: user.role,
         branch_name: branch,
-        phone: user.phone || null,
         is_active: user.is_active,
-        allowed_features: user.allowed_features || null,
         created_at: user.created_at,
         updated_at: new Date().toISOString(),
       };
-      
-      let res = await admin.from('user_profiles').upsert(dbPayload, { onConflict: 'email' }).select().single();
-      
-      // If allowed_features column doesn't exist yet in Supabase schema, retry without it
-      if (res.error && res.error.message?.includes('allowed_features')) {
-        delete dbPayload.allowed_features;
+      if (providedPassword) dbPayload.password = providedPassword;
+      if (providedPhone) dbPayload.phone = providedPhone;
+      if (user.allowed_features) dbPayload.allowed_features = user.allowed_features;
+
+      let res: any;
+      for (let attempt = 0; attempt < 4; attempt++) {
         res = await admin.from('user_profiles').upsert(dbPayload, { onConflict: 'email' }).select().single();
+        if (!res.error) break;
+
+        const message = res.error.message || '';
+        let retried = false;
+
+        if (message.includes('allowed_features') && 'allowed_features' in dbPayload) {
+          delete dbPayload.allowed_features;
+          retried = true;
+        }
+
+        // Sebelum migrasi kolom password dijalankan, simpan password baru di
+        // kolom phone agar fitur tetap kompatibel dengan skema lama.
+        if (message.includes('password') && 'password' in dbPayload) {
+          const legacyPassword = dbPayload.password;
+          delete dbPayload.password;
+          if (legacyPassword) dbPayload.phone = legacyPassword;
+          retried = true;
+        }
+
+        if (!retried) break;
       }
 
       if (res.error) {
@@ -1465,10 +1515,10 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
         const result = {
           ...res.data,
           username: (res.data as any).username || res.data.email,
-          password: (res.data as any).password || (res.data as any).phone || password,
+          password: (res.data as any).password || (res.data as any).phone || providedPassword || '',
           allowed_features: (res.data as any).allowed_features || user.allowed_features,
         } as UserProfile;
-        
+
         // Sync to cache
         syncUserToCache(result);
         return result;

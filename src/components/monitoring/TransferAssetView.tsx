@@ -119,6 +119,7 @@ export function TransferAssetView({
   const [isSuperUserModalOpen, setIsSuperUserModalOpen] = useState(false);
   const [superUserPasswordInput, setSuperUserPasswordInput] = useState('');
   const [superUserError, setSuperUserError] = useState<string | null>(null);
+  const [isVerifyingSuperUser, setIsVerifyingSuperUser] = useState(false);
   const [pendingDeleteAction, setPendingDeleteAction] = useState<{
     transfer: AssetTransfer;
     item: TransferItem;
@@ -772,14 +773,32 @@ export function TransferAssetView({
 
   const handleVerifySuperUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (superUserPasswordInput !== 'usergacor') {
-      setSuperUserError('Kata sandi Superuser salah. Akses ditolak!');
-      return;
-    }
-    setIsSuperUserModalOpen(false);
-    if (pendingDeleteAction) {
-      await executeDeleteItem(pendingDeleteAction.transfer, pendingDeleteAction.item);
-      setPendingDeleteAction(null);
+    setSuperUserError(null);
+    setIsVerifyingSuperUser(true);
+
+    try {
+      const res = await fetch('/api/auth/verify-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: superUserPasswordInput }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || !json.success) {
+        setSuperUserError(json.error || 'Kata sandi Superuser salah. Akses ditolak!');
+        return;
+      }
+
+      setIsSuperUserModalOpen(false);
+      setSuperUserPasswordInput('');
+      if (pendingDeleteAction) {
+        await executeDeleteItem(pendingDeleteAction.transfer, pendingDeleteAction.item);
+        setPendingDeleteAction(null);
+      }
+    } catch (err) {
+      setSuperUserError('Terjadi gangguan koneksi saat memverifikasi kata sandi Superuser.');
+    } finally {
+      setIsVerifyingSuperUser(false);
     }
   };
 
@@ -2594,6 +2613,7 @@ export function TransferAssetView({
                   type="password"
                   autoFocus
                   required
+                  disabled={isVerifyingSuperUser}
                   value={superUserPasswordInput}
                   onChange={(e) => {
                     setSuperUserPasswordInput(e.target.value);
@@ -2622,11 +2642,11 @@ export function TransferAssetView({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting || !superUserPasswordInput}
+                  disabled={isVerifyingSuperUser || !superUserPasswordInput}
                   className="flex items-center gap-1.5 rounded-full bg-rose-600 hover:bg-rose-700 text-white px-5 py-1.5 text-xs font-bold transition-colors shadow-xs disabled:opacity-50"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  <span>Verifikasi &amp; Hapus</span>
+                  <span>{isVerifyingSuperUser ? 'Memverifikasi...' : 'Verifikasi & Hapus'}</span>
                 </button>
               </div>
             </form>
