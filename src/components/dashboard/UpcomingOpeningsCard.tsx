@@ -1,17 +1,75 @@
-import React from 'react';
+'use client';
+
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Store, Calendar, ArrowRight, AlertTriangle } from 'lucide-react';
 import { BranchOpeningSummary } from '@/lib/supabase/types';
-import { formatDateOnly } from '@/lib/utils/date-formatter';
+import { formatDateOnly, getDaysRemaining } from '@/lib/utils/date-formatter';
+import { buildBranchOpeningSummaries } from '@/lib/dashboard/branch-summaries';
+import { useAssetLiveStore, type AssetLiveStatus } from './DashboardLiveProvider';
 
 interface UpcomingOpeningsCardProps {
   branches: BranchOpeningSummary[];
 }
 
-export function UpcomingOpeningsCard({ branches }: UpcomingOpeningsCardProps) {
-  const displayBranches = branches.slice(0, 6);
+function LiveBadge({ status }: { status: AssetLiveStatus }) {
+  if (status === 'live') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+        Live
+      </span>
+    );
+  }
 
-  const criticalBranches = branches.filter(
+  if (status === 'connecting') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/70 dark:text-amber-300">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+        Menghubungkan
+      </span>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-950/70 dark:text-rose-300">
+        <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+        Live terputus
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+      title="Realtime belum dikonfigurasi. Data tetap bisa diperbarui lewat Sync Data."
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+      Live nonaktif
+    </span>
+  );
+}
+
+export function UpcomingOpeningsCard({ branches }: UpcomingOpeningsCardProps) {
+  const live = useAssetLiveStore();
+  const liveItems = live?.items;
+  const [liveReady, setLiveReady] = useState(false);
+
+  useEffect(() => {
+    setLiveReady(true);
+  }, []);
+
+  const displayBranchData = useMemo<BranchOpeningSummary[]>(() => {
+    if (liveReady && liveItems) {
+      return buildBranchOpeningSummaries(liveItems, getDaysRemaining);
+    }
+    return branches;
+  }, [liveReady, liveItems, branches]);
+
+  const displayBranches = displayBranchData.slice(0, 6);
+
+  const criticalBranches = displayBranchData.filter(
     (b) => (b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 3 && b.readiness_percentage < 100) ||
            (b.days_until_opening !== null && b.days_until_opening < 0 && b.readiness_percentage < 100)
   );
@@ -20,9 +78,10 @@ export function UpcomingOpeningsCard({ branches }: UpcomingOpeningsCardProps) {
     <div className="panel-card p-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
-          <h3 className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] text-sm md:text-base flex items-center gap-2">
+          <h3 className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] text-sm md:text-base flex flex-wrap items-center gap-2">
             <Store className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
             Jadwal Pembukaan Outlet Baru
+            {live && <LiveBadge status={live.status} />}
           </h3>
           <p className="text-xs text-[#444746] dark:text-[#c4c7c5]">
             Monitoring kesiapan dan progres kelengkapan aset per cabang
@@ -39,7 +98,7 @@ export function UpcomingOpeningsCard({ branches }: UpcomingOpeningsCardProps) {
             href="/opening-readiness"
             className="flex items-center gap-1 text-xs font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline transition-colors"
           >
-            Lihat Semua ({branches.length})
+            Lihat Semua ({displayBranchData.length})
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
