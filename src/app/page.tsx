@@ -1,10 +1,13 @@
 import React from 'react';
 import Link from 'next/link';
 import { UpcomingOpeningsCard } from '@/components/dashboard/UpcomingOpeningsCard';
+import { DashboardLiveProvider } from '@/components/dashboard/DashboardLiveProvider';
 import { ExecutiveKpiCards } from '@/components/dashboard/ExecutiveKpiCards';
 import { AssetDataTable } from '@/components/tracker/AssetDataTable';
-import { getBranchOpeningSummaries, getAssetRequests, getRequestOrders, getSuratJalanList } from '@/lib/supabase/server';
+import { getAssetRequests, getRequestOrders, getSuratJalanList } from '@/lib/supabase/server';
 import { RegionType } from '@/lib/supabase/types';
+import { buildBranchOpeningSummaries } from '@/lib/dashboard/branch-summaries';
+import { getDaysRemaining } from '@/lib/utils/date-formatter';
 import { Layers, ClipboardCheck, ArrowRight } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -17,12 +20,13 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const { region: rawRegion } = await searchParams;
   const region = (rawRegion as RegionType) || 'ALL';
 
-  const [branchSummaries, assetResponse, allRos, allSj] = await Promise.all([
-    getBranchOpeningSummaries(region),
+  const [assetResponse, allRos, allSj] = await Promise.all([
     getAssetRequests({ region, limit: 10000 }),
     getRequestOrders(),
     getSuratJalanList(),
   ]);
+
+  const branchSummaries = buildBranchOpeningSummaries(assetResponse.data, getDaysRemaining);
 
   const filteredRos = region === 'ALL' ? allRos : allRos.filter((r) => r.region === region);
   const filteredSj = region === 'ALL' ? allSj : allSj.filter((s) => s.region === region);
@@ -108,23 +112,25 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         avgReadiness={avgReadiness}
       />
 
-      {/* 2. Jadwal Opening Outlet */}
-      <UpcomingOpeningsCard branches={branchSummaries} />
+      <DashboardLiveProvider key={region} initialItems={assetResponse.data} region={region}>
+        {/* 2. Jadwal Opening Outlet */}
+        <UpcomingOpeningsCard branches={branchSummaries} />
 
-      {/* 2. Tabel Pemantauan Permohonan Aset */}
-      <div className="space-y-2.5 pt-1">
-        <div>
-          <h2 className="text-base font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-2">
-            <Layers className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
-            Daftar Permohonan dan Pelacakan Aset
-          </h2>
-          <p className="text-xs text-[#444746] dark:text-[#c4c7c5]">
-            Pilih baris untuk melihat detail spesifikasi item atau memperbarui status penerimaan barang ke database.
-          </p>
+        {/* 2. Tabel Pemantauan Permohonan Aset */}
+        <div className="space-y-2.5 pt-1">
+          <div>
+            <h2 className="text-base font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center gap-2">
+              <Layers className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
+              Daftar Permohonan dan Pelacakan Aset
+            </h2>
+            <p className="text-xs text-[#444746] dark:text-[#c4c7c5]">
+              Pilih baris untuk melihat detail spesifikasi item atau memperbarui status penerimaan barang ke database.
+            </p>
+          </div>
+
+          <AssetDataTable regionFilter={region} />
         </div>
-
-        <AssetDataTable initialItems={assetResponse.data} regionFilter={region} />
-      </div>
+      </DashboardLiveProvider>
     </div>
   );
 }

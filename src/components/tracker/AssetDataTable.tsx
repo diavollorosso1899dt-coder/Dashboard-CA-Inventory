@@ -40,6 +40,7 @@ import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
 import { getItemSpecification } from '@/lib/assetSpecHelper';
 import UploadImageModal from '@/components/items/UploadImageModal';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
+import { useAssetLiveStore } from '@/components/dashboard/DashboardLiveProvider';
 
 export interface ColumnConfig {
   id: string;
@@ -77,17 +78,25 @@ export const DEFAULT_VISIBLE_COLUMNS: Record<string, boolean> = {
 };
 
 interface AssetDataTableProps {
-  initialItems: AssetRequest[];
+  initialItems?: AssetRequest[];
   regionFilter?: RegionType;
 }
 
+const EMPTY_ASSET_ITEMS: AssetRequest[] = [];
+
 type QuickFilterType = 'ALL' | 'OVERDUE' | 'READY_STOCK' | 'NEED_PR' | 'COMPLETED' | 'TERIMA_OUTLET' | 'TRANSFER_SYSTEM';
 
-export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: AssetDataTableProps) {
+export function AssetDataTable({ initialItems = EMPTY_ASSET_ITEMS, regionFilter = 'ALL' }: AssetDataTableProps) {
   const searchParams = useSearchParams();
   const urlRegion = searchParams ? searchParams.get('region') : null;
 
-  const [items, setItems] = useState<AssetRequest[]>(initialItems);
+  const liveStore = useAssetLiveStore();
+  const isLive = liveStore !== null;
+  const [localItems, setLocalItems] = useState<AssetRequest[]>(initialItems);
+  const items = liveStore ? liveStore.items : localItems;
+  const setItems = liveStore ? liveStore.setItems : setLocalItems;
+  const initialSnapshot = liveStore?.initialItems ?? initialItems;
+
   const [search, setSearch] = useState('');
   const [selectedRegion, setSelectedRegion] = useState<RegionType>(normalizeRegion(urlRegion || regionFilter));
   const [selectedBranch, setSelectedBranch] = useState<string>('ALL');
@@ -97,10 +106,10 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>('ALL');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
-  // Sync items when initialItems prop changes
+  // Sync items when initialItems prop changes outside the live dashboard store.
   useEffect(() => {
-    setItems(initialItems);
-  }, [initialItems]);
+    if (!isLive) setLocalItems(initialItems);
+  }, [initialItems, isLive]);
 
   // Sync selectedRegion when URL query or regionFilter prop changes
   useEffect(() => {
@@ -254,14 +263,14 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
       console.error('Failed reading localStorage system transfer ids:', e);
     }
 
-    const itemTransferIds = (initialItems || [])
+    const itemTransferIds = (initialSnapshot || [])
       .filter((i) => i.is_system_transfer)
       .map((i) => i.id || i.external_id);
 
     const mergedTransferIds = Array.from(new Set([...itemTransferIds, ...storedIds]));
     setSystemTransferIds(mergedTransferIds);
 
-    const updatedItems = (initialItems || []).map((it) => {
+    const updatedItems = (initialSnapshot || []).map((it) => {
       const itId = it.id || it.external_id;
       if (mergedTransferIds.includes(itId)) {
         return { ...it, is_system_transfer: true };
@@ -271,7 +280,7 @@ export function AssetDataTable({ initialItems = [], regionFilter = 'ALL' }: Asse
 
     setItems(updatedItems);
     setCurrentPage(1);
-  }, [initialItems]);
+  }, [initialSnapshot]);
 
   useEffect(() => {
     const handleResetEvent = () => {
