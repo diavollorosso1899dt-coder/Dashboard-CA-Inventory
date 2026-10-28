@@ -221,7 +221,8 @@ export function useColumnVisibility(
     } catch {}
   }, [storageKey]);
 
-  const isVisible = (colId: string) => visibleColumns[colId] !== false;
+  const isVisible = (colId: string) =>
+    columns.some((col) => col.id === colId) && visibleColumns[colId] !== false;
 
   return {
     visibleColumns,

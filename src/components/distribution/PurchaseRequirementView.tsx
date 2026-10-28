@@ -476,7 +476,7 @@ export default function PurchaseRequirementView({
                     />
                   </th>
                 )}
-                {isVisible('actions') && (
+                {!isHistory && isVisible('actions') && (
                   <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-right shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
                     Aksi Tanggal
                   </th>
@@ -634,7 +634,7 @@ export default function PurchaseRequirementView({
                           )}
                         </td>
                       )}
-                      {isVisible('actions') && (
+                      {!isHistory && isVisible('actions') && (
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
                             <button
