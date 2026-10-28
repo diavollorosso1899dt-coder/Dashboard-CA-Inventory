@@ -19,6 +19,10 @@ import { buildBranchOpeningSummaries } from '../dashboard/branch-summaries';
 import { getItemImageUrl, setItemImageOverride } from '@/lib/assetImageHelper';
 import { getItemSpecification, setItemSpecificationOverride } from '@/lib/assetSpecHelper';
 import { sortOrdersNewestFirst } from '../utils/ro-sorter';
+import {
+  filterPurchaseRequirementHistory,
+  matchesPurchaseRequirementFilter,
+} from '../procurement/pr-history';
 export { sortOrdersNewestFirst };
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -3004,14 +3008,13 @@ export async function updateDispositionStatus(
 // 5. PURCHASE REQUIREMENT (PR) & MASTER ASSET CATALOG HELPERS
 // ==============================================================================
 
-export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): Promise<AssetRequest[]> {
+export async function getPurchaseRequirementItems(
+  region: RegionType = 'ALL',
+  includeCompleted = false
+): Promise<AssetRequest[]> {
   const { data: allItems } = await getAssetRequests({ region, limit: 5000 });
-  const sheetPrItems = allItems.filter(
-    (it) =>
-      it.procurement_status !== 'selesai' &&
-      !it.item_delivery_status?.toLowerCase().includes('ready') &&
-      !it.stock_status?.toLowerCase().includes('ready stock') &&
-      (it.quantity_pr > 0 || it.stock_status.includes('Not Ready') || Boolean(it.procurement_status))
+  const sheetPrItems = allItems.filter((it) =>
+    matchesPurchaseRequirementFilter(it, includeCompleted)
   );
 
   // Fetch RO items that require PR (stock_source === 'PR_VENDOR')
@@ -3094,6 +3097,13 @@ export async function getPurchaseRequirementItems(region: RegionType = 'ALL'): P
   }
 
   return [...roPrItems, ...sheetPrItems];
+}
+
+export async function getPurchaseRequirementHistory(
+  region: RegionType = 'ALL'
+): Promise<AssetRequest[]> {
+  const items = await getPurchaseRequirementItems(region, true);
+  return filterPurchaseRequirementHistory(items);
 }
 
 export interface MasterAssetItem {

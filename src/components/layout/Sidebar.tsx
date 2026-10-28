@@ -28,6 +28,7 @@ import {
 
 import { useNavigation } from './NavigationContext';
 import { useAuth } from '@/components/auth/AuthContext';
+import { findActiveMenuHref } from '@/lib/navigation/active-menu';
 
 interface SubMenuItem {
   name: string;
@@ -69,6 +70,7 @@ export function Sidebar() {
       items: [
         { name: 'Kelola RO', href: '/distribution/ro', icon: FileCheck2 },
         { name: 'Purchase Requirement (PR)', href: '/distribution/pr', icon: Clock },
+        { name: 'Riwayat PR', href: '/distribution/pr/history', icon: History },
       ],
     },
     {
@@ -103,6 +105,11 @@ export function Sidebar() {
     }))
     .filter((group) => group.items.length > 0);
 
+  const activeMenuHref = findActiveMenuHref(
+    pathname,
+    visibleMenuGroups.flatMap((group) => group.items)
+  );
+
   // Auto expand groups that contain the active route
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
     'Utama': true,
@@ -113,11 +120,11 @@ export function Sidebar() {
 
   useEffect(() => {
     visibleMenuGroups.forEach((group) => {
-      if (group.items.some((it) => (it.href === '/' ? pathname === '/' : pathname === it.href || pathname.startsWith(it.href)))) {
+      if (group.items.some((it) => it.href === activeMenuHref)) {
         setOpenGroups((prev) => ({ ...prev, [group.title]: true }));
       }
     });
-  }, [pathname]);
+  }, [pathname, activeMenuHref]);
 
   const toggleGroup = (title: string) => {
     setOpenGroups((prev) => ({ ...prev, [title]: !prev[title] }));
@@ -145,9 +152,7 @@ export function Sidebar() {
           {visibleMenuGroups.map((group) => {
             const isOpen = openGroups[group.title] ?? true;
             const GroupIcon = group.icon;
-            const hasActiveChild = group.items.some((it) =>
-              it.href === '/' ? pathname === '/' : pathname === it.href || pathname.startsWith(it.href)
-            );
+            const hasActiveChild = group.items.some((it) => it.href === activeMenuHref);
 
             return (
               <div key={group.title} className="space-y-1">
@@ -174,7 +179,7 @@ export function Sidebar() {
                 {isOpen && (
                   <div className="space-y-0.5 pl-2 border-l border-[#e0e2ec] dark:border-[#444746] ml-2">
                     {group.items.map((item) => {
-                      const isActive = item.href === '/' ? pathname === '/' : pathname === item.href || pathname.startsWith(item.href);
+                      const isActive = item.href === activeMenuHref;
                       const Icon = item.icon;
 
                       return (

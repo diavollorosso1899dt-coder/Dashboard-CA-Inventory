@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { UserProfile, UserRole, APP_FEATURES, ALL_FEATURE_IDS } from '@/lib/supabase/types';
+import { findFeatureByIdOrHref } from '@/lib/access/app-feature';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -37,12 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
 
-    const feat = APP_FEATURES.find(
-      (f) =>
-        f.id === featureIdOrHref ||
-        f.href === featureIdOrHref ||
-        (featureIdOrHref !== '/' && f.href !== '/' && featureIdOrHref.startsWith(f.href))
-    );
+    const feat = findFeatureByIdOrHref(featureIdOrHref, APP_FEATURES);
     const featureId = feat ? feat.id : featureIdOrHref;
 
     // If super user explicitly set allowed_features for this user
@@ -60,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         'assets_input',
         'kelola_ro',
         'purchase_pr',
+        'riwayat_pr',
         'surat_jalan',
         'monitoring_transfer',
         'monitoring_sla',
@@ -78,6 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       'assets_input',
       'kelola_ro',
       'purchase_pr',
+      'riwayat_pr',
       'surat_jalan',
       'monitoring_transfer',
       'monitoring_sla',

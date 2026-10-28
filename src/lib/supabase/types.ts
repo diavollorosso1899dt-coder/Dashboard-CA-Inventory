@@ -178,6 +178,7 @@ export const APP_FEATURES: AppFeature[] = [
   { id: 'assets_input', name: 'Input Aset Baru', href: '/monitoring/input', group: 'Utama', description: 'Formulir input permohonan aset baru ke sistem' },
   { id: 'kelola_ro', name: 'Kelola RO', href: '/distribution/ro', group: 'Pengadaan', description: 'Kelola alur release order 9 tahap' },
   { id: 'purchase_pr', name: 'Purchase Requirement (PR)', href: '/distribution/pr', group: 'Pengadaan', description: 'Pemantauan pengadaan ke vendor' },
+  { id: 'riwayat_pr', name: 'Riwayat PR', href: '/distribution/pr/history', group: 'Pengadaan', description: 'Arsip aset yang telah selesai proses pengadaan' },
   { id: 'surat_jalan', name: 'Surat Jalan', href: '/distribution/surat-jalan', group: 'Distribusi & Logistik', description: 'Penerbitan dan cetak surat jalan armada' },
   { id: 'monitoring_transfer', name: 'Pemantauan Distribusi', href: '/monitoring/transfer', group: 'Distribusi & Logistik', description: 'Pengiriman antar outlet dan penerimaan aset' },
   { id: 'monitoring_sla', name: 'Monitoring SLA', href: '/distribution/sla', group: 'Distribusi & Logistik', description: 'Monitoring ketepatan waktu pengiriman vs permohonan' },

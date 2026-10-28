@@ -9,6 +9,7 @@ import {
   PlusCircle, 
   GitPullRequest, 
   ShoppingCart, 
+  History,
   Truck, 
   ArrowLeftRight, 
   Clock, 
@@ -108,6 +109,17 @@ const FEATURE_META: Record<string, {
       'Sinkronisasi pengadaan yang siap dimasukkan ke stok gudang',
     ],
     tips: 'Status PR yang selesai otomatis memudahkan pemenuhan RO yang tertunda.',
+  },
+  riwayat_pr: {
+    icon: History,
+    gradient: 'from-teal-500/20 to-emerald-500/20 text-teal-600 dark:text-teal-400 border-teal-200 dark:border-teal-800',
+    badgeColor: 'bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300',
+    highlights: [
+      'Arsip aset yang sudah selesai diproses melalui Purchase Requirement',
+      'Cari riwayat berdasarkan item, cabang, nomor RAB, atau vendor',
+      'Pantau status distribusi lanjutan dari aset yang sudah selesai PR',
+    ],
+    tips: 'Gunakan halaman ini sebagai referensi read-only; perubahan status tetap dilakukan dari menu PR aktif.',
   },
   surat_jalan: {
     icon: Truck,

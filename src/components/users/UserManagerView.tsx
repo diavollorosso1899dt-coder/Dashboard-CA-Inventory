@@ -35,12 +35,12 @@ import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 export const DEFAULT_SUPERUSER_FEATURES = ALL_FEATURE_IDS;
 export const DEFAULT_ADMIN_FEATURES = [
   'dashboard', 'so_harian', 'assets_tracking', 'assets_input',
-  'kelola_ro', 'purchase_pr', 'surat_jalan', 'monitoring_transfer', 'monitoring_sla',
+  'kelola_ro', 'purchase_pr', 'riwayat_pr', 'surat_jalan', 'monitoring_transfer', 'monitoring_sla',
   'master_items', 'master_outlets', 'trash_audit'
 ];
 export const DEFAULT_LOGISTICS_FEATURES = [
   'dashboard', 'so_harian', 'assets_tracking', 'assets_input',
-  'kelola_ro', 'purchase_pr', 'surat_jalan', 'monitoring_transfer', 'monitoring_sla'
+  'kelola_ro', 'purchase_pr', 'riwayat_pr', 'surat_jalan', 'monitoring_transfer', 'monitoring_sla'
 ];
 export const DEFAULT_OUTLET_FEATURES = ['dashboard', 'assets_tracking', 'kelola_ro'];
 export const DEFAULT_TRASH_FEATURES = DEFAULT_ADMIN_FEATURES;
@@ -539,13 +539,13 @@ export default function UserManagerView() {
                           {u.role === 'Super User' || u.role === 'super_user' ? (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
                               <ShieldCheck className="w-3.5 h-3.5 text-purple-600" />
-                              <span>Akses Semua (13 Fitur)</span>
+                              <span>Akses Semua ({APP_FEATURES.length} Fitur)</span>
                             </span>
                           ) : (
                             <div className="flex flex-col gap-1">
                               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 w-fit">
                                 <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
-                                <span>{(u.allowed_features?.length || 0)}/13 Fitur Dibuka</span>
+                                <span>{(u.allowed_features?.length || 0)}/{APP_FEATURES.length} Fitur Dibuka</span>
                               </span>
                               <div className="flex flex-wrap gap-1 max-w-xs">
                                 {(u.allowed_features || []).slice(0, 3).map((fId) => {

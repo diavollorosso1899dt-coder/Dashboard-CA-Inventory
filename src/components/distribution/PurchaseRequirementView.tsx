@@ -22,7 +22,8 @@ import {
   ChevronRight,
   Boxes,
   ArrowRight,
-  FileText
+  FileText,
+  History
 } from 'lucide-react';
 import { AssetRequest, RegionType } from '@/lib/supabase/types';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
@@ -47,12 +48,23 @@ const PR_COLUMNS: ColumnItem[] = [
   { id: 'actions', label: 'Aksi Tanggal', defaultVisible: true, alwaysVisible: true },
 ];
 
+const HISTORY_PR_COLUMNS: ColumnItem[] = PR_COLUMNS.filter(
+  (column) => column.id !== 'actions'
+);
+
 interface PurchaseRequirementViewProps {
   initialItems: AssetRequest[];
   region: RegionType;
+  mode?: 'active' | 'history';
 }
 
-export default function PurchaseRequirementView({ initialItems, region }: PurchaseRequirementViewProps) {
+export default function PurchaseRequirementView({
+  initialItems,
+  region,
+  mode = 'active',
+}: PurchaseRequirementViewProps) {
+  const isHistory = mode === 'history';
+  const columns = isHistory ? HISTORY_PR_COLUMNS : PR_COLUMNS;
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialTab = searchParams.get('tab') === 'input' ? 'input' : 'monitoring';
@@ -90,10 +102,10 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
 
   // Column Visibility
   const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
-    'ca_pr_columns',
-    PR_COLUMNS
+    isHistory ? 'ca_pr_history_columns' : 'ca_pr_columns',
+    columns
   );
-  const visibleColCount = PR_COLUMNS.filter((c) => isVisible(c.id)).length;
+  const visibleColCount = columns.filter((c) => isVisible(c.id)).length;
 
   // Input Data Tanggal Permintaan State (Modal / Form Edit)
   const [editingItem, setEditingItem] = useState<AssetRequest | null>(null);
@@ -208,7 +220,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
       it.rab_number.toLowerCase().includes(q);
 
     const matchStatus =
-      statusFilter === 'ALL' || it.procurement_status === statusFilter;
+      isHistory || statusFilter === 'ALL' || it.procurement_status === statusFilter;
 
     return matchSearch && matchStatus;
   });
@@ -248,7 +260,12 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
     sortDirection: prSortDirection,
     handleSort: handlePrSort,
     sortedItems: sortedFilteredItems,
-  } = useTableSort<AssetRequest>(filteredItems, null, 'asc', customPrSortFns);
+  } = useTableSort<AssetRequest>(
+    filteredItems,
+    isHistory ? 'received_date' : null,
+    isHistory ? 'desc' : 'asc',
+    customPrSortFns
+  );
 
   const totalCount = sortedFilteredItems.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / (pageSize === 0 ? totalCount || 1 : pageSize)));
@@ -261,41 +278,52 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-blue-50 dark:bg-blue-950/50 rounded-xl text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50">
-            <Clock className="w-6 h-6" />
+            {isHistory ? <History className="w-6 h-6" /> : <Clock className="w-6 h-6" />}
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-              Purchase Requirement (PR) Pengadaan Aset
+              {isHistory
+                ? 'Riwayat Purchase Requirement (PR)'
+                : 'Purchase Requirement (PR) Pengadaan Aset'}
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Pelacakan alur permintaan pengadaan aset baru ke vendor luar, input tanggal permintaan, PO, dan SLA.
+              {isHistory
+                ? 'Arsip read-only aset yang telah selesai diproses melalui pengadaan PR vendor.'
+                : 'Pelacakan alur permintaan pengadaan aset baru ke vendor luar, input tanggal permintaan, PO, dan SLA.'}
             </p>
           </div>
         </div>
 
-        {/* Tab Buttons matching Mind Map */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
-          <button
-            onClick={() => setActiveTab('monitoring')}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-              activeTab === 'monitoring'
-                ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-            }`}
-          >
-            Monitoring PR
-          </button>
-          <button
-            onClick={() => setActiveTab('input')}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-              activeTab === 'input'
-                ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-            }`}
-          >
-            Input Data Tanggal Permintaan
-          </button>
-        </div>
+        {isHistory ? (
+          <span className="inline-flex items-center gap-1.5 self-start sm:self-center px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            Read-only • Selesai PR
+          </span>
+        ) : (
+          /* Tab Buttons matching Mind Map */
+          <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+            <button
+              onClick={() => setActiveTab('monitoring')}
+              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+                activeTab === 'monitoring'
+                  ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+              }`}
+            >
+              Monitoring PR
+            </button>
+            <button
+              onClick={() => setActiveTab('input')}
+              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+                activeTab === 'input'
+                  ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+              }`}
+            >
+              Input Data Tanggal Permintaan
+            </button>
+          </div>
+        )}
       </div>
 
 
@@ -325,12 +353,12 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
             syncUrl={true}
           />
           <ColumnVisibilityPicker
-            columns={PR_COLUMNS}
+            columns={columns}
             visibleColumns={visibleColumns}
             onChange={setVisibleColumns}
-            storageKey="ca_pr_columns"
+            storageKey={isHistory ? 'ca_pr_history_columns' : 'ca_pr_columns'}
           />
-          {['ALL', 'proses', 'po', 'selesai', 'belum'].map((st) => (
+          {!isHistory && ['ALL', 'proses', 'po', 'selesai', 'belum'].map((st) => (
             <button
               key={st}
               onClick={() => {
@@ -459,7 +487,9 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
               {paginatedItems.length === 0 ? (
                 <tr>
                   <td colSpan={visibleColCount} className="py-12 text-center text-slate-400">
-                    Tidak ada data Purchase Requirement (PR) yang sesuai.
+                    {isHistory
+                      ? 'Belum ada aset yang selesai diproses melalui Purchase Requirement.'
+                      : 'Tidak ada data Purchase Requirement (PR) yang sesuai.'}
                   </td>
                 </tr>
               ) : (
@@ -535,6 +565,8 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                                     loading="lazy"
                                   />
                                 </button>
+                              ) : isHistory ? (
+                                <span className="text-slate-300 dark:text-slate-600 text-xs">-</span>
                               ) : (
                                 <button
                                   type="button"
@@ -594,6 +626,11 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
                                 ? 'PO'
                                 : 'Proses'}
                             </span>
+                          )}
+                          {isHistory && it.item_delivery_status && (
+                            <div className="mt-1 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                              Distribusi: {it.item_delivery_status}
+                            </div>
                           )}
                         </td>
                       )}
@@ -679,7 +716,7 @@ export default function PurchaseRequirementView({ initialItems, region }: Purcha
       </div>
 
       {/* Modal Input Tanggal Permintaan & PR */}
-      {editingItem && (
+      {!isHistory && editingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
