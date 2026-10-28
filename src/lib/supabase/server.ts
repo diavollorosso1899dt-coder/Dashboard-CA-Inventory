@@ -22,6 +22,8 @@ import { sortOrdersNewestFirst } from '../utils/ro-sorter';
 import {
   filterPurchaseRequirementHistory,
   matchesPurchaseRequirementFilter,
+  mergeManualAssetEdit,
+  sanitizeAssetRequestDbPayload,
 } from '../procurement/pr-history';
 export { sortOrdersNewestFirst };
 
@@ -362,7 +364,9 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
         // Fetch existing manually edited external_ids to preserve dashboard updates
         const { data: existingEdits } = await admin
           .from('asset_requests')
-          .select('external_id, is_manually_edited, item_delivery_status, stock_status, pic_receiver, notes')
+          .select(
+            'external_id, is_manually_edited, item_delivery_status, stock_status, pic_receiver, notes, procurement_status, pr_datetime, po_date, received_date, order_datetime, vendor_name, is_system_transfer'
+          )
           .eq('is_manually_edited', true);
 
         const editedMap = new Map<string, any>();
@@ -374,17 +378,7 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
           const chunk = items.slice(i, i + chunkSize).map((item) => {
             const { id, ...rest } = item;
             const manualEdit = editedMap.get(item.external_id);
-            if (manualEdit) {
-              return {
-                ...rest,
-                item_delivery_status: manualEdit.item_delivery_status ?? item.item_delivery_status,
-                stock_status: manualEdit.stock_status ?? item.stock_status,
-                pic_receiver: manualEdit.pic_receiver ?? item.pic_receiver,
-                notes: manualEdit.notes ?? item.notes,
-                is_manually_edited: true,
-              };
-            }
-            return rest;
+            return mergeManualAssetEdit(rest, manualEdit);
           });
 
           const { error } = await admin
@@ -653,14 +647,23 @@ export async function updateAssetRequest(
 ): Promise<{ success: boolean; data?: AssetRequest; error?: string }> {
   try {
     const admin = getAdminClient();
+    const nowIso = new Date().toISOString();
     const updatePayload = {
       ...payload,
       is_manually_edited: true,
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso,
     };
+    const dbPayload = sanitizeAssetRequestDbPayload(payload, nowIso);
 
-    if (admin) {
-      let query = admin.from('asset_requests').update(updatePayload);
+    const isRoItemId =
+      id.startsWith('ro-pr-') ||
+      id.startsWith('roi-') ||
+      id.startsWith('ro-') ||
+      id.includes('RO-') ||
+      id.includes('ro-');
+
+    if (admin && !isRoItemId) {
+      let query = admin.from('asset_requests').update(dbPayload);
       if (isUuid(id)) {
         query = query.eq('id', id);
       } else {
@@ -694,13 +697,6 @@ export async function updateAssetRequest(
     }
 
     // Support updating items from Request Orders (PR items)
-    const isRoItemId =
-      id.startsWith('ro-pr-') ||
-      id.startsWith('roi-') ||
-      id.startsWith('ro-') ||
-      id.includes('RO-') ||
-      id.includes('ro-');
-
     if (isRoItemId) {
       console.log(`[PR UPDATE] Processing RO Item ID: ${id}`);
       cache.manualEdits.set(id, updatePayload);
@@ -840,11 +836,13 @@ export async function updateAssetRequestsBulk(
 ): Promise<{ success: boolean; updatedCount: number; error?: string }> {
   try {
     const admin = getAdminClient();
+    const nowIso = new Date().toISOString();
     const updatePayload = {
       ...payload,
       is_manually_edited: true,
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso,
     };
+    const dbPayload = sanitizeAssetRequestDbPayload(payload, nowIso);
 
     if (admin) {
       const uuidIds = ids.filter(isUuid);
@@ -854,7 +852,7 @@ export async function updateAssetRequestsBulk(
       if (uuidIds.length > 0) {
         const { data, error } = await admin
           .from('asset_requests')
-          .update(updatePayload)
+          .update(dbPayload)
           .in('id', uuidIds)
           .select('id');
         if (error) {
@@ -867,7 +865,7 @@ export async function updateAssetRequestsBulk(
       if (extIds.length > 0) {
         const { data, error } = await admin
           .from('asset_requests')
-          .update(updatePayload)
+          .update(dbPayload)
           .in('external_id', extIds)
           .select('id');
         if (error) {
@@ -876,6 +874,8 @@ export async function updateAssetRequestsBulk(
           totalUpdated += data.length;
         }
       }
+
+      invalidateAssetRequestsCache();
 
       // Update in local cache as well
       ids.forEach((id) => {
