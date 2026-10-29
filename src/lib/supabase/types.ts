@@ -236,6 +236,8 @@ export interface TransferItem {
   item_name: string;
   specification?: string;
   quantity: number;
+  /** Jumlah fisik yang benar-benar diterima outlet (diisi manual saat distribusi). */
+  received_quantity?: number;
   condition: 'BAIK' | 'PERLU_PERBAIKAN' | 'BEKAS_LAYAK';
   notes?: string;
 }

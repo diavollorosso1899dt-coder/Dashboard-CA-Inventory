@@ -124,6 +124,10 @@ export function TransferAssetView({
     item: TransferItem;
   } | null>(null);
 
+  // Jumlah fisik real yang diterima outlet (diisi manual saat distribusi)
+  const [receivedQtyMap, setReceivedQtyMap] = useState<Record<string, number>>({});
+  const [receiveItemQtys, setReceiveItemQtys] = useState<Record<string, number>>({});
+
   // Load saved view mode and dispatched keys from localStorage
   useEffect(() => {
     try {
@@ -135,6 +139,10 @@ export function TransferAssetView({
       if (savedDispatched) {
         setDispatchedKeys(JSON.parse(savedDispatched));
       }
+      const savedReceivedQty = localStorage.getItem('ca_received_qty_map');
+      if (savedReceivedQty) {
+        setReceivedQtyMap(JSON.parse(savedReceivedQty));
+      }
     } catch (e) {}
   }, []);
 
@@ -143,6 +151,29 @@ export function TransferAssetView({
     try {
       localStorage.setItem('ca_queue_view_mode', mode);
     } catch (e) {}
+  };
+
+  // Helper: kunci unik antrean aset & jumlah real yang diterima outlet
+  const getQueueAssetKey = (asset: AssetRequest) =>
+    asset.id || asset.external_id || `${asset.branch_name || ''}:::${asset.item_name || ''}`;
+
+  const getReceivedQty = (asset: AssetRequest) => {
+    const key = getQueueAssetKey(asset);
+    const stored = receivedQtyMap[key];
+    if (typeof stored === 'number' && Number.isFinite(stored)) return stored;
+    return asset.quantity_needed || 1;
+  };
+
+  const handleReceivedQtyChange = (asset: AssetRequest, rawValue: string) => {
+    const key = getQueueAssetKey(asset);
+    const parsed = Math.max(0, Math.floor(Number(rawValue) || 0));
+    setReceivedQtyMap((prev) => {
+      const next = { ...prev, [key]: parsed };
+      try {
+        localStorage.setItem('ca_received_qty_map', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
   };
 
   const copyToClipboard = async (text: string, label: string, id: string = 'global') => {
@@ -185,6 +216,10 @@ export function TransferAssetView({
       const note = a.item_notes || (a.notes && !a.notes.startsWith('No. RO:') ? a.notes : '');
 
       lines.push(`${idx + 1}. ${a.item_name} (${a.quantity_needed || 1} unit)`);
+      const receivedQty = getReceivedQty(a);
+      if (receivedQty !== (a.quantity_needed || 1)) {
+        lines.push(`   • Jumlah Diterima: ${receivedQty} unit`);
+      }
       if (a.external_id) lines.push(`   • No. RO: ${a.external_id}`);
       if (reqDate) lines.push(`   • Tgl Permintaan: ${formatDateOnly(reqDate)}`);
       if (a.specification) lines.push(`   • Spesifikasi: ${a.specification}`);
@@ -231,6 +266,8 @@ export function TransferAssetView({
     const note = asset.item_notes || (asset.notes && !asset.notes.startsWith('No. RO:') ? asset.notes : '');
 
     let text = `📦 ${asset.item_name} (${asset.quantity_needed || 1} unit) - Tujuan: ${branchName}`;
+    const receivedQty = getReceivedQty(asset);
+    if (receivedQty !== (asset.quantity_needed || 1)) text += ` | Diterima: ${receivedQty} unit`;
     if (asset.external_id) text += ` | RO: ${asset.external_id}`;
     if (reqDate) text += ` | Tgl: ${formatDateOnly(reqDate)}`;
     if (asset.specification) text += ` | Spek: ${asset.specification}`;
@@ -250,7 +287,9 @@ export function TransferAssetView({
       `Item (${itemsCount}):`,
     ];
     (t.items || []).forEach((it, idx) => {
-      lines.push(`${idx + 1}. ${it.item_name} (${it.quantity} unit) ${it.notes ? `[${it.notes}]` : ''}`);
+      const received = it.received_quantity ?? it.quantity;
+      const receivedInfo = received !== it.quantity ? ` | Diterima: ${received} unit` : '';
+      lines.push(`${idx + 1}. ${it.item_name} (${it.quantity} unit)${receivedInfo} ${it.notes ? `[${it.notes}]` : ''}`);
     });
     if (t.notes) lines.push(`Catatan: ${t.notes}`);
     return lines.join('\n');
@@ -590,6 +629,7 @@ export function TransferAssetView({
         item_name: a.item_name,
         specification: a.classification,
         quantity: a.quantity_needed || 1,
+        received_quantity: getReceivedQty(a),
         condition: 'BAIK',
         notes: itemNote || (a.notes || ''),
       };
@@ -678,8 +718,11 @@ export function TransferAssetView({
 
   // Direct Ship Single Item ("Kirim Ini Saja")
   const handleDirectShipSingleItem = async (asset: AssetRequest, branchName: string) => {
+    const orderedQty = asset.quantity_needed || 1;
+    const receivedQty = getReceivedQty(asset);
+    const qtyMismatch = receivedQty !== orderedQty;
     const confirmSend = window.confirm(
-      `Terbitkan Surat Jalan & kirim item ini sekarang?\n\n• Item: ${asset.item_name}\n• Jumlah: ${asset.quantity_needed || 1} unit\n• Cabang Tujuan: ${branchName}\n\nItem akan langsung dipindahkan ke Daftar Dokumen Distribusi dan dihapus dari antrean Outlet.`
+      `Terbitkan Surat Jalan & kirim item ini sekarang?\n\n• Item: ${asset.item_name}\n• Jumlah Diminta: ${orderedQty} unit\n• Jumlah Diterima: ${receivedQty} unit\n• Cabang Tujuan: ${branchName}\n\n${qtyMismatch ? `⚠️ Jumlah diterima berbeda dari jumlah diminta (${receivedQty} dari ${orderedQty} unit).\n\n` : ''}Item akan langsung dipindahkan ke Daftar Dokumen Distribusi dan dihapus dari antrean Outlet.`
     );
     if (!confirmSend) return;
 
@@ -695,7 +738,8 @@ export function TransferAssetView({
         asset_id: asset.id || asset.external_id,
         item_name: asset.item_name,
         specification: asset.classification || asset.specification || '',
-        quantity: asset.quantity_needed || 1,
+        quantity: orderedQty,
+        received_quantity: receivedQty,
         condition: 'BAIK',
         notes: itemNote || (asset.notes || ''),
       };
@@ -859,6 +903,11 @@ export function TransferAssetView({
     setReceivePic(transfer.receiver_pic || '');
     setReceiveDate(new Date().toISOString().split('T')[0]);
     setReceiveNotes('Aset diterima di cabang dalam kondisi lengkap dan baik sesuai Surat Jalan.');
+    const qtys: Record<string, number> = {};
+    (transfer.items || []).forEach((item) => {
+      qtys[item.id] = item.received_quantity ?? item.quantity;
+    });
+    setReceiveItemQtys(qtys);
     setIsReceiveModalOpen(true);
   };
 
@@ -872,6 +921,15 @@ export function TransferAssetView({
 
     try {
       setIsSubmitting(true);
+      const updatedItems: TransferItem[] = (selectedTransfer.items || []).map((item) => {
+        const inputQty = receiveItemQtys[item.id];
+        const receivedQty =
+          typeof inputQty === 'number' && Number.isFinite(inputQty)
+            ? Math.max(0, Math.floor(inputQty))
+            : (item.received_quantity ?? item.quantity);
+        return { ...item, received_quantity: receivedQty };
+      });
+
       const res = await fetch('/api/transfers', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -881,6 +939,7 @@ export function TransferAssetView({
           receiver_pic: receivePic.trim(),
           received_date: receiveDate,
           received_notes: receiveNotes.trim(),
+          items: updatedItems,
         }),
       });
 
@@ -892,8 +951,9 @@ export function TransferAssetView({
         // Sinkronisasi item yang diterima ke Kelola RO untuk pengukuran SLA
         try {
           const destOutlet = (selectedTransfer.to_location || '').toLowerCase().trim();
-          for (const item of selectedTransfer.items || []) {
+          for (const item of updatedItems) {
             const itName = (item.item_name || '').toLowerCase().trim();
+            const receivedQty = item.received_quantity ?? item.quantity;
             // Cari dokumen RO yang cocok
             const targetRo = (requestOrders || []).find((ro) => {
               if (item.asset_id && (item.asset_id === ro.ro_number || item.asset_id.startsWith(`ro-${ro.id}`))) {
@@ -914,7 +974,8 @@ export function TransferAssetView({
                 if ((ri.item_name || '').toLowerCase().trim() === itName) {
                   return {
                     ...ri,
-                    quantity_fulfilled: item.quantity || ri.quantity_ordered,
+                    quantity_fulfilled: receivedQty,
+                    received_qty: receivedQty,
                     stock_source: 'GUDANG_SCGA',
                   };
                 }
@@ -1620,7 +1681,7 @@ export function TransferAssetView({
                             <th className="py-2.5 px-3">Item Aset</th>
                             <th className="py-2.5 px-3">Spesifikasi</th>
                             <th className="py-2.5 px-3 text-center">Jumlah</th>
-                            <th className="py-2.5 px-3">Sumber / No. RO</th>
+                            <th className="py-2.5 px-3 text-center">Jumlah yang diterima</th>
                             <th className="py-2.5 px-3">Tgl Permintaan</th>
                             <th className="py-2.5 px-3">Catatan</th>
                             <th className="py-2.5 px-3 text-right">Aksi</th>
@@ -1628,12 +1689,14 @@ export function TransferAssetView({
                         </thead>
                         <tbody className="divide-y divide-[#e0e2ec]/60 dark:divide-[#333538]/60">
                           {group.assets.map((asset, idx) => {
-                            const isFromRo = asset.id?.startsWith('ro-');
                             const photoUrl = asset.photo_url || getItemImageUrl(asset.item_name);
                             const rawDate = asset.order_datetime || (asset as any).request_date || (asset.created_at ? asset.created_at.split('T')[0] : null);
                             const reqDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate.split(' ')[0]) : null;
                             const itemNote = asset.item_notes || (asset.notes && !asset.notes.startsWith('No. RO:') ? asset.notes : '');
                             const assetKey = asset.id || asset.external_id;
+                            const orderedQty = asset.quantity_needed || 1;
+                            const receivedQty = getReceivedQty(asset);
+                            const qtyMismatch = receivedQty !== orderedQty;
 
                             return (
                               <tr key={assetKey} className="hover:bg-[#f8fafd] dark:hover:bg-[#282a2c]/50 transition-colors">
@@ -1662,15 +1725,26 @@ export function TransferAssetView({
                                   </span>
                                 </td>
                                 <td className="py-2.5 px-3">
-                                  {isFromRo ? (
-                                    <span className="inline-flex rounded-full bg-emerald-100 dark:bg-emerald-900/60 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700">
-                                      RO: {asset.external_id}
+                                  <div className="flex flex-col items-center gap-1">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step={1}
+                                      inputMode="numeric"
+                                      value={receivedQty}
+                                      onChange={(e) => handleReceivedQtyChange(asset, e.target.value)}
+                                      aria-label={`Jumlah yang diterima untuk ${asset.item_name}`}
+                                      title="Isi jumlah fisik yang benar-benar diterima outlet"
+                                      className={`w-20 min-h-[36px] rounded-lg border px-2 py-1 text-center text-xs font-bold font-mono transition-colors focus:outline-none focus:ring-2 focus:ring-[#0b57d0]/30 ${
+                                        qtyMismatch
+                                          ? 'border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200'
+                                          : 'border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] text-[#0b57d0] dark:text-[#a8c7fa]'
+                                      }`}
+                                    />
+                                    <span className={`text-[10px] font-medium ${qtyMismatch ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                                      dari {orderedQty} unit
                                     </span>
-                                  ) : (
-                                    <span className="inline-flex rounded-full bg-blue-100 dark:bg-blue-950/60 px-2 py-0.5 text-[10px] font-bold text-blue-800 dark:text-blue-300">
-                                      Ready Antar
-                                    </span>
-                                  )}
+                                  </div>
                                 </td>
                                 <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400 whitespace-nowrap">
                                   {reqDate ? formatDateOnly(reqDate) : '-'}
@@ -2081,6 +2155,69 @@ export function TransferAssetView({
 
               <div>
                 <label className="block text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-1">
+                  Jumlah Fisik Diterima per Item *
+                </label>
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {(selectedTransfer.items || []).map((item) => {
+                    const sentQty = item.quantity;
+                    const inputQty = receiveItemQtys[item.id];
+                    const receivedQty =
+                      typeof inputQty === 'number' && Number.isFinite(inputQty)
+                        ? inputQty
+                        : (item.received_quantity ?? sentQty);
+                    const qtyMismatch = receivedQty !== sentQty;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={`rounded-xl border p-2.5 ${
+                          qtyMismatch
+                            ? 'border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20'
+                            : 'border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c]/60'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
+                              {item.item_name}
+                            </div>
+                            <div className="text-[10px] text-[#747775] dark:text-[#8e918f]">
+                              Dikirim: <strong>{sentQty} unit</strong>
+                              {qtyMismatch && (
+                                <span className="ml-1 font-bold text-amber-700 dark:text-amber-300">
+                                  (selisih {receivedQty - sentQty > 0 ? '+' : ''}{receivedQty - sentQty} unit)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              inputMode="numeric"
+                              value={receivedQty}
+                              onChange={(e) => {
+                                const parsed = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                                setReceiveItemQtys((prev) => ({ ...prev, [item.id]: parsed }));
+                              }}
+                              aria-label={`Jumlah diterima ${item.item_name}`}
+                              className="w-20 min-h-[36px] rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] px-2 py-1 text-center text-xs font-bold font-mono text-[#0b57d0] dark:text-[#a8c7fa] focus:border-[#0b57d0] focus:outline-none"
+                            />
+                            <span className="text-[10px] font-semibold text-[#747775] dark:text-[#8e918f]">unit</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-[10px] text-[#747775] dark:text-[#8e918f]">
+                  Isi jumlah fisik yang benar-benar diterima outlet. Nilai ini disimpan ke dokumen distribusi dan dipakai untuk monitoring SLA.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-1">
                   Nama PIC Penerima di Outlet Tujuan *
                 </label>
                 <input
@@ -2222,6 +2359,7 @@ export function TransferAssetView({
                       <th className="border border-gray-400 py-2 px-2 text-center w-10">No</th>
                       <th className="border border-gray-400 py-2 px-3 text-left">Nama Barang / Aset</th>
                       <th className="border border-gray-400 py-2 px-3 text-center w-20">Kuantitas</th>
+                      <th className="border border-gray-400 py-2 px-3 text-center w-24">Jumlah Diterima</th>
                       <th className="border border-gray-400 py-2 px-3 text-center w-28">Kondisi Fisik</th>
                       <th className="border border-gray-400 py-2 px-3 text-left">Keterangan</th>
                     </tr>
@@ -2235,6 +2373,9 @@ export function TransferAssetView({
                           {it.specification && <div className="text-[10px] text-gray-500">{it.specification}</div>}
                         </td>
                         <td className="border border-gray-400 py-2 px-3 text-center font-bold">{it.quantity} Unit</td>
+                        <td className="border border-gray-400 py-2 px-3 text-center font-bold">
+                          {it.received_quantity ?? '-'} {it.received_quantity !== undefined ? 'Unit' : ''}
+                        </td>
                         <td className="border border-gray-400 py-2 px-3 text-center">{it.condition}</td>
                         <td className="border border-gray-400 py-2 px-3 text-gray-600">{it.notes || '-'}</td>
                       </tr>

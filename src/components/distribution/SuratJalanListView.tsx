@@ -1054,6 +1054,9 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                                   {group.items.slice(0, 3).map((it: any, idx: number) => {
                                     const itName = it.item_name || it.nama_barang || 'Barang';
                                     const qty = it.quantity ?? it.qty ?? 1;
+                                    const receivedQty = it.received_quantity ?? it.received_qty;
+                                    const hasReceived = receivedQty !== undefined && receivedQty !== null;
+                                    const qtyMismatch = hasReceived && Number(receivedQty) !== Number(qty);
                                     const unit = it.unit || it.satuan || 'Unit';
                                     return (
                                       <div
@@ -1063,8 +1066,15 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                                         <span className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
                                           {itName}
                                         </span>
-                                        <span className="font-bold text-[#0b57d0] dark:text-[#a8c7fa] font-mono shrink-0">
-                                          {qty} {unit}
+                                        <span className="flex items-center gap-1 shrink-0">
+                                          {qtyMismatch && (
+                                            <span className="rounded-md bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 px-1 py-0.5 text-[9px] font-bold text-amber-800 dark:text-amber-200">
+                                              diterima {receivedQty}
+                                            </span>
+                                          )}
+                                          <span className="font-bold text-[#0b57d0] dark:text-[#a8c7fa] font-mono">
+                                            {qty} {unit}
+                                          </span>
                                         </span>
                                       </div>
                                     );
@@ -1273,14 +1283,23 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                             {group.items.slice(0, 3).map((it: any, idx: number) => {
                               const itemName = it.item_name || it.nama_barang || it.name || 'Nama Item';
                               const qty = it.quantity ?? it.qty ?? 1;
+                              const receivedQty = it.received_quantity ?? it.received_qty;
+                              const qtyMismatch = receivedQty !== undefined && receivedQty !== null && Number(receivedQty) !== Number(qty);
                               const unit = it.unit || it.satuan || 'UNIT';
                               return (
                                 <div key={it.id || idx} className="flex items-center justify-between">
                                   <span className="truncate pr-2 font-medium text-slate-700 dark:text-slate-300">
                                     {itemName}
                                   </span>
-                                  <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 shrink-0">
-                                    {qty} {unit}
+                                  <span className="flex items-center gap-1 shrink-0">
+                                    {qtyMismatch && (
+                                      <span className="rounded-md bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 px-1 py-0.5 text-[9px] font-bold text-amber-800 dark:text-amber-200">
+                                        diterima {receivedQty}
+                                      </span>
+                                    )}
+                                    <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                                      {qty} {unit}
+                                    </span>
                                   </span>
                                 </div>
                               );
@@ -1397,14 +1416,15 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                 </div>
               </div>
 
-              <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+              <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold border-b border-slate-200 dark:border-slate-700">
-                      <th className="py-2.5 px-3 w-10 text-center">No</th>
-                      <th className="py-2.5 px-3">Nama Item / Barang</th>
-                      <th className="py-2.5 px-3 text-center w-24">Jumlah</th>
-                      <th className="py-2.5 px-3">Keterangan</th>
+                      <th className="py-2.5 px-2 sm:px-3 w-8 sm:w-10 text-center">No</th>
+                      <th className="py-2.5 px-2 sm:px-3">Nama Item / Barang</th>
+                      <th className="py-2.5 px-2 sm:px-3 text-center w-14 sm:w-24">Jumlah</th>
+                      <th className="py-2.5 px-2 sm:px-3 text-center w-20 sm:w-28">Jumlah Diterima</th>
+                      <th className="py-2.5 px-3 hidden sm:table-cell">Keterangan</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1412,17 +1432,25 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                       detailModalGroup.items.map((it: any, idx: number) => {
                         const itemName = it.item_name || it.nama_barang || it.name || 'Barang';
                         const qty = it.quantity ?? it.qty ?? it.jumlah ?? 1;
+                        const receivedQty = it.received_quantity ?? it.received_qty;
+                        const hasReceived = receivedQty !== undefined && receivedQty !== null;
+                        const qtyMismatch = hasReceived && Number(receivedQty) !== Number(qty);
                         const unit = it.unit || it.satuan || 'UNIT';
                         return (
                           <tr key={it.id || idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                            <td className="py-2.5 px-3 text-center font-medium text-slate-500">{idx + 1}</td>
-                            <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
+                            <td className="py-2.5 px-2 sm:px-3 text-center font-medium text-slate-500">{idx + 1}</td>
+                            <td className="py-2.5 px-2 sm:px-3 font-semibold text-slate-900 dark:text-white">
                               {itemName}
                             </td>
-                            <td className="py-2.5 px-3 text-center font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                            <td className="py-2.5 px-2 sm:px-3 text-center font-mono font-bold text-indigo-600 dark:text-indigo-400">
                               {qty} {unit}
                             </td>
-                            <td className="py-2.5 px-3 text-slate-500 text-[11px] italic">
+                            <td className={`py-2.5 px-2 sm:px-3 text-center font-mono font-bold ${
+                              qtyMismatch ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'
+                            }`}>
+                              {hasReceived ? `${receivedQty} ${unit}` : '-'}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-500 text-[11px] italic hidden sm:table-cell">
                               {it.notes || it.specification || '-'}
                             </td>
                           </tr>
@@ -1430,7 +1458,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                       })
                     ) : (
                       <tr>
-                        <td colSpan={4} className="py-4 text-center text-slate-400 italic">
+                        <td colSpan={5} className="py-4 text-center text-slate-400 italic">
                           Tidak ada rincian item dalam dokumen ini.
                         </td>
                       </tr>
@@ -1442,6 +1470,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         <td colSpan={2} className="py-2 px-3 text-right">Total Fisik:</td>
                         <td className="py-2 px-3 text-center font-mono text-indigo-600 dark:text-indigo-400">{detailModalGroup.totalUnits} UNIT</td>
                         <td></td>
+                        <td className="hidden sm:table-cell"></td>
                       </tr>
                     </tfoot>
                   )}

@@ -2650,6 +2650,7 @@ export async function getSuratJalanList(): Promise<SuratJalan[]> {
           nama_barang: it.item_name,
           quantity: it.quantity,
           qty: it.quantity,
+          received_quantity: it.received_quantity,
           specification: it.specification,
           notes: it.notes,
         })),
