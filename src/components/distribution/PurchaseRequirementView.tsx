@@ -846,15 +846,6 @@ export default function PurchaseRequirementView({
                     <Save className="w-3.5 h-3.5" />
                     <span>Simpan Data PR</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => handleSavePrDates(e, true)}
-                    disabled={saving}
-                    className="flex items-center gap-1.5 px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-xs disabled:opacity-50"
-                  >
-                    <Boxes className="w-4 h-4" />
-                    <span>Update Status &rarr; Ready Stock</span>
-                  </button>
                 </div>
               </div>
             </form>
