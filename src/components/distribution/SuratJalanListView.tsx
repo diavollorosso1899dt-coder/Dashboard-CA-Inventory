@@ -683,14 +683,14 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
           </div>
 
           {/* Date Range Filter */}
-          <div className="flex items-center gap-1.5 bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] text-xs">
+          <div className="flex w-full min-w-0 items-center gap-1.5 bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] text-xs sm:w-auto">
             <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <span className="text-[10px] text-slate-400 font-semibold">Tgl Terbit:</span>
+            <span className="hidden text-[10px] text-slate-400 font-semibold sm:inline">Tgl Terbit:</span>
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="bg-transparent text-[11px] text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
+              className="min-w-0 flex-1 bg-transparent text-[11px] text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer sm:flex-none"
               title="Tanggal awal penerbitan"
             />
             <span className="text-[10px] text-slate-400 font-semibold">s/d</span>
@@ -698,7 +698,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="bg-transparent text-[11px] text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
+              className="min-w-0 flex-1 bg-transparent text-[11px] text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer sm:flex-none"
               title="Tanggal akhir penerbitan"
             />
             {(startDate || endDate) && (

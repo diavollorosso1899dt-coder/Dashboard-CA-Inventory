@@ -96,7 +96,7 @@ export function UpcomingOpeningsCard({ branches }: UpcomingOpeningsCardProps) {
           )}
           <Link
             href="/opening-readiness"
-            className="flex items-center gap-1 text-xs font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline transition-colors"
+            className="inline-flex min-h-[32px] items-center gap-1 text-xs font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline transition-colors"
           >
             Lihat Semua ({displayBranchData.length})
             <ArrowRight className="h-3.5 w-3.5" />

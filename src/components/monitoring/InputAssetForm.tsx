@@ -578,7 +578,7 @@ export function InputAssetForm({ outlets: initialOutlets }: InputAssetFormProps)
                   }
                 }}
                 placeholder="Atau masukkan URL foto online (opsional)..."
-                className="flex-1 rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                className="min-w-0 flex-1 rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-3 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
               />
               <button
                 type="button"

@@ -298,6 +298,49 @@ html.dark .badge-neutral {
   outline-offset: 2px;
 }
 
+/* ==============================================================================
+   Mobile Ergonomics (Phones)
+   - 16px form controls prevent iOS Safari from zooming the page on focus.
+   - Comfortable tap targets for thumbs without changing desktop layouts.
+   - Tall modals scroll from the top instead of being clipped off-screen.
+   ============================================================================== */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='hidden']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  button,
+  [role='button'] {
+    min-height: 36px;
+    min-width: 36px;
+    touch-action: manipulation;
+  }
+
+  a[href] {
+    min-height: 36px;
+    min-width: 36px;
+    touch-action: manipulation;
+  }
+
+  select,
+  input,
+  textarea {
+    touch-action: manipulation;
+  }
+
+  /* Modal backdrops: start at the top and let the overlay scroll when the
+     dialog is taller than the phone screen. */
+  .fixed.inset-0.flex.items-center {
+    align-items: flex-start;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+}
+
 /* ==========================================================================
    Print Media Styles: Pure BAST Document Printing (A4 Format)
    ========================================================================== */

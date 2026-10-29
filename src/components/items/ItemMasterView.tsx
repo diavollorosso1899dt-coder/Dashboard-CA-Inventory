@@ -274,7 +274,7 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
             />
           </div>
 
-          <div className="flex items-center gap-2 self-end md:self-auto">
+          <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:flex-nowrap md:self-auto">
             {/* Upload Custom Image to Supabase */}
             <button
               onClick={() => setUploadModalTarget({ itemName: '' })}

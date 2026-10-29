@@ -1887,8 +1887,8 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                     const imgUrl = getItemImageUrl(it.item_name);
                     return (
                       <div key={it.id || idx} className="p-3 rounded-xl border border-[#e0e2ec] dark:border-[#35383a] bg-white dark:bg-[#282a2c] space-y-2.5 shadow-2xs">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2.5 pr-2 min-w-0">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex min-w-0 items-center gap-2.5 pr-2">
                             {imgUrl ? (
                               <button
                                 type="button"
@@ -1962,7 +1962,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                               updated[idx] = { ...updated[idx], stock_source: val };
                               setSelectedRoForProcess({ ...selectedRoForProcess, items: updated });
                             }}
-                            className={`rounded-lg border px-2 py-1 text-xs font-semibold outline-hidden transition-colors shrink-0 ${
+                            className={`w-full shrink-0 rounded-lg border px-2 py-1 text-xs font-semibold outline-hidden transition-colors sm:w-auto ${
                               it.stock_source === 'CANCELLED'
                                 ? 'bg-rose-50 border-rose-300 text-rose-800 dark:bg-rose-950/50 dark:border-rose-700 dark:text-rose-200'
                                 : it.stock_source === 'PR_VENDOR'
@@ -2007,24 +2007,24 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               </div>
             </div>
 
-          <div className="flex items-center justify-between gap-2 pt-3 border-t">
+          <div className="flex flex-col gap-2 pt-3 border-t sm:flex-row sm:items-center sm:justify-between">
               <button
                 type="button"
                 onClick={() => {
                   setRejectReasonText('');
                   setRejectReasonModalOpen(true);
                 }}
-                className="rounded-full border border-rose-300 text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/40 px-3.5 py-1.5 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                className="flex items-center justify-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/40 sm:justify-start sm:py-1.5"
               >
                 <Ban className="h-3.5 w-3.5 text-rose-600" />
                 <span>Tolak / Batalkan RO</span>
               </button>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <button
                   type="button"
                   onClick={() => setSelectedRoForProcess(null)}
-                  className="rounded-full border px-4 py-2 text-xs font-semibold"
+                  className="w-full rounded-full border px-4 py-2 text-xs font-semibold sm:w-auto"
                 >
                   Batal
                 </button>
@@ -2032,7 +2032,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                   type="button"
                   onClick={handleSaveProcessDecision}
                   disabled={isSubmitting}
-                  className="rounded-full bg-[#0b57d0] text-white px-5 py-2 text-xs font-semibold hover:bg-[#0842a0] flex items-center gap-1.5 shadow-xs"
+                  className="flex w-full items-center justify-center gap-1.5 rounded-full bg-[#0b57d0] px-5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#0842a0] disabled:opacity-50 sm:w-auto"
                 >
                   {isSubmitting ? 'Memproses Alur...' : 'Simpan & Lanjutkan Alur Otomatis'}
                 </button>

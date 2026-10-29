@@ -84,7 +84,7 @@ export default function LoginPage() {
           </div>
 
           {/* Bottom Highlights Pills */}
-          <div className="relative z-10 grid grid-cols-3 gap-2.5 pt-2 border-t border-[#e0e2ec]/80 dark:border-[#333538]">
+          <div className="relative z-10 grid grid-cols-1 gap-2.5 pt-2 border-t border-[#e0e2ec]/80 dark:border-[#333538] sm:grid-cols-3">
             <div className="flex items-center gap-2 p-2 rounded-xl bg-white/80 dark:bg-[#282a2c]/80 border border-[#e0e2ec] dark:border-[#444746]">
               <div className="p-1.5 rounded-lg bg-[#d3e3fd] dark:bg-[#004a77] text-[#0b57d0] dark:text-[#a8c7fa] shrink-0">
                 <FileCheck2 className="w-3.5 h-3.5" />

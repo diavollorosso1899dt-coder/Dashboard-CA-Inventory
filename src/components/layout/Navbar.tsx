@@ -132,7 +132,7 @@ export function Navbar() {
         </Link>
         <div>
           <div className="flex items-center gap-2">
-            <Link href="/" className="font-extrabold text-[#1f1f1f] dark:text-[#e3e3e3] text-base md:text-lg tracking-tight hover:text-[#0b57d0] dark:hover:text-[#a8c7fa] transition-colors">
+            <Link href="/" className="inline-flex min-h-[36px] items-center font-extrabold text-[#1f1f1f] dark:text-[#e3e3e3] text-base md:text-lg tracking-tight hover:text-[#0b57d0] dark:hover:text-[#a8c7fa] transition-colors">
               HANTARAN
             </Link>
             <span className="hidden sm:inline-block rounded-full bg-[#e8f0fe] dark:bg-[#004a77] px-2.5 py-0.5 text-[11px] font-medium text-[#0b57d0] dark:text-[#c2e7ff]">
@@ -168,8 +168,8 @@ export function Navbar() {
           <span>{currentTime}</span>
         </div>
 
-        {/* Google Material 3 Segmented Button for Region */}
-        <div className="flex items-center rounded-full bg-[#e9eef6] dark:bg-[#282a2c] p-1 text-xs">
+        {/* Google Material 3 Segmented Button for Region (desktop) */}
+        <div className="hidden items-center rounded-full bg-[#e9eef6] dark:bg-[#282a2c] p-1 text-xs sm:flex">
           <button
             onClick={() => handleRegionChange('ALL')}
             className={`rounded-full px-3 py-1 font-medium transition-all ${
@@ -202,6 +202,8 @@ export function Navbar() {
           </button>
         </div>
 
+        {/* Region selection on phones lives in the mobile sidebar */}
+
         {/* Google Material 3 Round Theme Toggle Button */}
         <button
           onClick={toggleTheme}
@@ -219,7 +221,7 @@ export function Navbar() {
         {/* Tombol Panduan Fitur */}
         <button
           onClick={openTutorial}
-          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60 border border-purple-200/60 dark:border-purple-800/60 transition-all hover:scale-105 active:scale-95 shadow-xs"
+          className="hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60 border border-purple-200/60 dark:border-purple-800/60 transition-all hover:scale-105 active:scale-95 shadow-xs sm:flex"
           title="Buka panduan & pengenalan fitur"
         >
           <HelpCircle className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { 
   LayoutDashboard, 
   Layers,
@@ -46,10 +46,24 @@ interface MenuGroup {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const { isMobileOpen, closeMobile } = useNavigation();
   const { user, logout, isSuperUser, canAccessFeature } = useAuth();
+  const currentRegion = searchParams.get('region') || 'ALL';
   const regionQuery = searchParams.get('region') ? `?region=${searchParams.get('region')}` : '';
+
+  const handleRegionChange = (region: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (region === 'ALL') {
+      params.delete('region');
+    } else {
+      params.set('region', region);
+    }
+    const query = params.toString();
+    router.push(`${pathname}${query ? `?${query}` : ''}`);
+    closeMobile();
+  };
 
   const menuGroups: MenuGroup[] = [
     {
@@ -148,6 +162,33 @@ export function Sidebar() {
         }`}
       >
         <nav className="flex-1 space-y-3 overflow-y-auto pr-1">
+          {/* Region filter for phones (header segmented control is hidden below sm) */}
+          <div className="rounded-2xl border border-[#e0e2ec] bg-white p-2.5 dark:border-[#444746] dark:bg-[#1e1f20] sm:hidden">
+            <div className="px-1 text-[10px] font-bold uppercase tracking-wider text-[#747775] dark:text-[#8e918f]">
+              Wilayah
+            </div>
+            <div className="mt-1.5 grid grid-cols-3 gap-1">
+              {[
+                { value: 'ALL', label: 'Semua' },
+                { value: 'JABODETABEK', label: 'JABO' },
+                { value: 'KALBAR', label: 'KALBAR' },
+              ].map((region) => (
+                <button
+                  key={region.value}
+                  type="button"
+                  onClick={() => handleRegionChange(region.value)}
+                  className={`min-h-[36px] rounded-xl px-2 py-1 text-[11px] font-semibold transition-colors ${
+                    currentRegion === region.value
+                      ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
+                      : 'bg-[#f0f4f9] text-[#444746] hover:bg-[#e9eef6] dark:bg-[#282a2c] dark:text-[#c4c7c5] dark:hover:bg-[#333537]'
+                  }`}
+                >
+                  {region.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Navigation Groups */}
           {visibleMenuGroups.map((group) => {
             const isOpen = openGroups[group.title] ?? true;
