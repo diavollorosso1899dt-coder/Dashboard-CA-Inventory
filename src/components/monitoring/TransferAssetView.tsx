@@ -167,10 +167,24 @@ export function TransferAssetView({
   const handleReceivedQtyChange = (asset: AssetRequest, rawValue: string) => {
     const key = getQueueAssetKey(asset);
     const parsed = Math.max(0, Math.floor(Number(rawValue) || 0));
+    const cleanItem = (asset.item_name || '').trim();
+    const lowerItem = cleanItem.toLowerCase();
+    const branch = (asset.branch_name || '').trim();
+    const extId = (asset.external_id || '').trim();
+
     setReceivedQtyMap((prev) => {
-      const next = { ...prev, [key]: parsed };
+      const next: Record<string, number> = { ...prev, [key]: parsed };
+      if (branch && cleanItem) {
+        next[`${branch}:::${cleanItem}`] = parsed;
+        next[`${branch.toLowerCase()}:::${lowerItem}`] = parsed;
+      }
+      if (extId && cleanItem) {
+        next[`${extId}:::${cleanItem}`] = parsed;
+        next[`${extId.toLowerCase()}:::${lowerItem}`] = parsed;
+      }
       try {
         localStorage.setItem('ca_received_qty_map', JSON.stringify(next));
+        window.dispatchEvent(new Event('ca_received_qty_updated'));
       } catch (e) {}
       return next;
     });

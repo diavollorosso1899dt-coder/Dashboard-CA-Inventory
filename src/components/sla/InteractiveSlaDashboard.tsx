@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Clock, 
   AlertTriangle, 
@@ -34,6 +34,7 @@ import { formatDateSlash, formatLeadTime } from '@/lib/utils/date-formatter';
 import BranchReadinessCards from '@/components/sla/BranchReadinessCards';
 import CriticalH3AlertBanner, { CriticalEntity } from '@/components/sla/CriticalH3AlertBanner';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
+import { buildDistributionQueueKeys, resolveReceivedQuantity } from '@/lib/distribution/received-qty';
 
 interface InteractiveSlaDashboardProps {
   initialRoOrders: RequestOrder[];
@@ -85,6 +86,7 @@ interface EnrichedSlaItem {
   specification?: string;
   quantity_ordered: number;
   quantity_fulfilled: number;
+  received_quantity: number;
   stock_source: 'ON_PROSES' | 'GUDANG_SCGA' | 'PR_VENDOR' | 'CANCELLED';
   pr_vendor_name?: string;
   slaCategory: 'OVERDUE' | 'CRITICAL' | 'ON_TIME' | 'COMPLETED';
@@ -123,7 +125,7 @@ const SLA_ITEM_COLUMNS: ColumnItem[] = [
   { id: 'sla_lead_time', label: 'Durasi SLA Kirim' },
   { id: 'sla_status', label: 'Ketepatan SLA' },
   { id: 'quantity', label: 'Jumlah Permintaan' },
-  { id: 'stock_source', label: 'Alokasi Stok' },
+  { id: 'stock_source', label: 'Jumlah yang Diterima' },
   { id: 'stage', label: 'Tahap Alur' },
   { id: 'actions', label: 'Detail RO', alwaysVisible: true },
 ];
@@ -205,6 +207,25 @@ export default function InteractiveSlaDashboard({
   });
 
   const [selectedRoDetail, setSelectedRoDetail] = useState<EnrichedRO | null>(null);
+  const [receivedQtyMap, setReceivedQtyMap] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const syncReceivedQtyMap = () => {
+      try {
+        const saved = localStorage.getItem('ca_received_qty_map');
+        if (saved) {
+          setReceivedQtyMap(JSON.parse(saved));
+        }
+      } catch {}
+    };
+    syncReceivedQtyMap();
+    window.addEventListener('storage', syncReceivedQtyMap);
+    window.addEventListener('ca_received_qty_updated', syncReceivedQtyMap);
+    return () => {
+      window.removeEventListener('storage', syncReceivedQtyMap);
+      window.removeEventListener('ca_received_qty_updated', syncReceivedQtyMap);
+    };
+  }, []);
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -384,6 +405,27 @@ export default function InteractiveSlaDashboard({
           itemSlaLabel = 'Belum Lengkap';
         }
 
+        const orderedQty = it.quantity_ordered || 1;
+        const resolvedStockSource = it.stock_source || (matched ? 'GUDANG_SCGA' : 'ON_PROSES');
+        const candidateKeys = buildDistributionQueueKeys({
+          roId: ro.id,
+          roNumber: ro.ro_number,
+          branchName: ro.branch_name,
+          itemId: it.id,
+          itemName: it.item_name,
+        });
+        const receivedQuantity = resolveReceivedQuantity({
+          orderedQty,
+          itemReceivedQty: (it as any).received_qty,
+          itemFulfilledQty: it.quantity_fulfilled,
+          stockSource: resolvedStockSource,
+          transferReceivedQty: matched?.item.received_quantity,
+          transferQty: matched?.item.quantity,
+          isTransferredAndReceived,
+          receivedQtyMap,
+          candidateKeys,
+        });
+
         list.push({
           id: it.id || `item-${ro.id}-${idx}`,
           roId: ro.id,
@@ -396,9 +438,10 @@ export default function InteractiveSlaDashboard({
           current_stage: ro.current_stage,
           item_name: it.item_name,
           specification: it.specification,
-          quantity_ordered: it.quantity_ordered || 1,
-          quantity_fulfilled: isTransferredAndReceived ? (matched?.item.quantity || it.quantity_ordered) : (it.quantity_fulfilled || 0),
-          stock_source: it.stock_source || (matched ? 'GUDANG_SCGA' : 'ON_PROSES'),
+          quantity_ordered: orderedQty,
+          quantity_fulfilled: isTransferredAndReceived ? (matched?.item.quantity || orderedQty) : (it.quantity_fulfilled || 0),
+          received_quantity: receivedQuantity,
+          stock_source: resolvedStockSource,
           pr_vendor_name: it.pr_vendor_name,
           slaCategory: itemSlaCategory,
           diffDays: ro.diffDays,
@@ -415,7 +458,7 @@ export default function InteractiveSlaDashboard({
       });
     });
     return list;
-  }, [enrichedOrders, transferItemMap]);
+  }, [enrichedOrders, transferItemMap, receivedQtyMap]);
 
   // 3. Filter by Region first (Scope for dropdown options)
   const regionOrders = useMemo(() => {
@@ -639,9 +682,9 @@ export default function InteractiveSlaDashboard({
         return da - db;
       },
       sla_lead_time: (a: any, b: any) => (a.lead_time_days || 0) - (b.lead_time_days || 0),
-      quantity: (a: any, b: any) => (Number(a.quantity) || 0) - (Number(b.quantity) || 0),
+      quantity: (a: any, b: any) => (Number(a.quantity_ordered) || 0) - (Number(b.quantity_ordered) || 0),
       stock_source: (a: any, b: any) =>
-        (a.stock_source || '').localeCompare(b.stock_source || '', 'id'),
+        (Number(a.received_quantity) || 0) - (Number(b.received_quantity) || 0),
       stage: (a: any, b: any) =>
         (a.current_stage || '').localeCompare(b.current_stage || '', 'id'),
     }),
@@ -1524,13 +1567,14 @@ export default function InteractiveSlaDashboard({
                         </th>
                       )}
                       {visibleItemColumns.stock_source !== false && (
-                        <th className="py-3 px-3.5">
+                        <th className="py-3 px-3.5 text-center">
                           <SortableHeader
-                            label="Alokasi Stok"
+                            label="Jumlah yang Diterima"
                             field="stock_source"
                             currentSortField={slaSortField}
                             currentSortDirection={slaSortDirection}
                             onSort={handleSlaSort}
+                            align="center"
                           />
                         </th>
                       )}
@@ -1698,25 +1742,27 @@ export default function InteractiveSlaDashboard({
                             </td>
                           )}
 
-                          {/* Stock Source */}
+                          {/* Jumlah yang Diterima (berdasarkan Pemantauan Distribusi) */}
                           {visibleItemColumns.stock_source !== false && (
-                            <td className="py-3 px-3.5 whitespace-nowrap">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                                it.stock_source === 'GUDANG_SCGA'
-                                  ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
-                                  : it.stock_source === 'PR_VENDOR'
-                                  ? 'bg-purple-50 text-purple-900 border-purple-200'
-                                  : it.stock_source === 'CANCELLED'
-                                  ? 'bg-rose-50 text-rose-900 border-rose-200'
-                                  : 'bg-blue-50 text-blue-900 border-blue-200'
-                              }`}>
-                                {it.stock_source === 'GUDANG_SCGA' ? 'Ready Stock' : it.stock_source === 'PR_VENDOR' ? 'PR Vendor' : it.stock_source === 'CANCELLED' ? 'Dibatalkan' : 'On Proses'}
-                              </span>
-                              {it.pr_vendor_name && (
-                                <div className="text-[10px] text-[#747775] truncate max-w-[120px]" title={it.pr_vendor_name}>
-                                  {it.pr_vendor_name}
-                                </div>
-                              )}
+                            <td className="py-3 px-3.5 whitespace-nowrap text-center">
+                              <div className="inline-flex flex-col items-center gap-0.5">
+                                <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold font-mono border ${
+                                  it.received_quantity >= it.quantity_ordered
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                                    : it.received_quantity > 0
+                                    ? 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-700'
+                                    : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+                                }`}>
+                                  {it.received_quantity} unit
+                                </span>
+                                <span className={`text-[10px] font-medium ${
+                                  it.received_quantity !== it.quantity_ordered && it.received_quantity > 0
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-[#747775] dark:text-[#8e918f]'
+                                }`}>
+                                  dari {it.quantity_ordered} unit
+                                </span>
+                              </div>
                             </td>
                           )}
 
@@ -2043,7 +2089,7 @@ export default function InteractiveSlaDashboard({
                     <th className="py-2.5 px-3">Tgl Target</th>
                     <th className="py-2.5 px-3">Keterlambatan</th>
                     <th className="py-2.5 px-3">Qty</th>
-                    <th className="py-2.5 px-3">Alokasi Stok</th>
+                    <th className="py-2.5 px-3">Jumlah yang Diterima</th>
                     <th className="py-2.5 px-3">Tahap</th>
                   </tr>
                 </thead>
@@ -2057,8 +2103,8 @@ export default function InteractiveSlaDashboard({
                       <td className="py-2.5 px-3 font-black text-rose-700 dark:text-rose-400">+{it.diffDays} Hari</td>
                       <td className="py-2.5 px-3 font-semibold">{it.quantity_fulfilled}/{it.quantity_ordered}</td>
                       <td className="py-2.5 px-3">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-800">
-                          {it.stock_source}
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                          {it.received_quantity} dari {it.quantity_ordered} unit
                         </span>
                       </td>
                       <td className="py-2.5 px-3">
