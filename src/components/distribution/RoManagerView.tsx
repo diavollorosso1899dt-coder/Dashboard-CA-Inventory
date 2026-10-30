@@ -53,6 +53,7 @@ import ColumnVisibilityPicker, { ColumnItem } from '@/components/ui/ColumnVisibi
 import { Toast, ToastMessage } from '@/components/ui/Toast';
 import { formatDateSlash } from '@/lib/utils/date-formatter';
 import { sortOrdersNewestFirst } from '@/lib/utils/ro-sorter';
+import { RoDateField, getRoDateByField, matchesRoDateRange } from '@/lib/distribution/ro-date-filter';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 import { getAllSessionsSync, loadSession } from '@/lib/so-harian/storageService';
 import { SOItem } from '@/lib/so-harian/inventoryEngine';
@@ -203,8 +204,36 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [smartFilter, setSmartFilter] = useState<'ALL' | 'CLEAN' | 'DUPLICATES'>('ALL');
   const [selectedRegion, setSelectedRegion] = useState<'ALL' | 'JABODETABEK' | 'KALBAR'>(initialRegion);
   const [selectedSource, setSelectedSource] = useState<'ALL' | 'KALBAR_SHEET' | 'JABO_SHEET' | 'MANUAL'>('ALL');
+  const [dateField, setDateField] = useState<RoDateField>('order_date');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  const applyDatePreset = (preset: 'today' | '7days' | 'month' | 'clear') => {
+    if (preset === 'clear') {
+      setStartDate('');
+      setEndDate('');
+      return;
+    }
+    const now = new Date();
+    const toYmd = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const todayStr = toYmd(now);
+    if (preset === 'today') {
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (preset === '7days') {
+      const d7 = new Date(now);
+      d7.setDate(now.getDate() - 6);
+      setStartDate(toYmd(d7));
+      setEndDate(todayStr);
+    } else if (preset === 'month') {
+      const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      setStartDate(toYmd(firstOfMonth));
+      setEndDate(todayStr);
+    }
+  };
 
   // SO Harian Stock lookup state
   const [soStockItems, setSoStockItems] = useState<SOItem[]>([]);
@@ -566,8 +595,11 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       }
       list.push(ro);
 
-      // Only increment stage counts if this order belongs to the currently selected region
-      if (matchesRegion(ro.region, selectedRegion)) {
+      // Only increment stage counts if this order belongs to the currently selected region & date range
+      if (
+        matchesRegion(ro.region, selectedRegion) &&
+        matchesRoDateRange(getRoDateByField(ro, dateField), startDate, endDate)
+      ) {
         counts.ALL++;
         const st = getRoStage(ro);
         counts[st] = (counts[st] || 0) + 1;
@@ -611,7 +643,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         MANUAL: manualCount,
       },
     };
-  }, [orders, selectedRegion]);
+  }, [orders, selectedRegion, dateField, startDate, endDate]);
 
   // Filtered orders dengan fast exit & sorting deterministik data terbaru selalu di urutan paling atas
   const filteredOrders = useMemo(() => {
@@ -621,6 +653,8 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       if (isRoAllocatedOutOfMenu(o)) return false;
 
       if (!matchesRegion(o.region, selectedRegion)) return false;
+
+      if (!matchesRoDateRange(getRoDateByField(o, dateField), startDate, endDate)) return false;
 
       if (selectedSource === 'KALBAR_SHEET') {
         if (o.source_type !== 'GOOGLE_SHEET' || normalizeRegion(o.region) !== 'KALBAR') return false;
@@ -653,7 +687,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
     // Selalu urutkan data terbaru di urutan paling atas
     return sortOrdersNewestFirst(result);
-  }, [orders, search, selectedStage, smartFilter, selectedRegion, selectedSource, deduplicationMap]);
+  }, [orders, search, selectedStage, smartFilter, selectedRegion, selectedSource, dateField, startDate, endDate, deduplicationMap]);
 
   const customRoSortFns = useMemo(
     () => ({
@@ -689,7 +723,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   // Reset page to 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, selectedStage, smartFilter, selectedRegion, selectedSource]);
+  }, [search, selectedStage, smartFilter, selectedRegion, selectedSource, dateField, startDate, endDate]);
 
   const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(sortedFilteredOrders.length / pageSize));
   const paginatedOrders = useMemo(() => {
@@ -698,12 +732,33 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     return sortedFilteredOrders.slice(start, start + pageSize);
   }, [sortedFilteredOrders, currentPage, pageSize]);
 
-  // Handler: Sync Google Sheet with Smart Deduplication
+  // Handler: Sync Google Sheet with Smart Deduplication & Optional Date Range Filter
   const handleSyncSheet = async () => {
     try {
       setIsSyncing(true);
-      setSyncFeedback('Menghubungkan ke Google Spreadsheet & menjalankan filter pintar anti-duplikasi...');
-      const res = await fetch('/api/distribution/ro/sync-sheet', { method: 'POST' });
+      const rangeNote =
+        startDate || endDate
+          ? ` (Rentang ${dateField === 'request_date' ? 'Tgl Permintaan' : 'Tgl Order'}: ${startDate ? formatDateSlash(startDate) : 'Awal'} s/d ${endDate ? formatDateSlash(endDate) : 'Akhir'})`
+          : '';
+      setSyncFeedback(`Menghubungkan ke Google Spreadsheet & menarik data RO${rangeNote}...`);
+      const params = new URLSearchParams();
+      if (startDate) params.set('startDate', startDate);
+      if (endDate) params.set('endDate', endDate);
+      if (dateField) params.set('dateField', dateField);
+      const queryStr = params.toString();
+      const syncUrl = queryStr
+        ? `/api/distribution/ro/sync-sheet?${queryStr}`
+        : '/api/distribution/ro/sync-sheet';
+
+      const res = await fetch(syncUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          dateField,
+        }),
+      });
       const json = await res.json();
 
       if (json.success) {
@@ -1414,10 +1469,21 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             <button
               onClick={handleSyncSheet}
               disabled={isSyncing}
+              title={
+                startDate || endDate
+                  ? `Tarik data Spreadsheet RO sesuai rentang tanggal (${startDate || 'Awal'} s/d ${endDate || 'Akhir'})`
+                  : 'Tarik seluruh data Spreadsheet RO terbaru'
+              }
               className="interactive-tap flex items-center gap-1.5 rounded-full border border-emerald-600/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 px-3.5 py-2 text-xs font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors shadow-xs disabled:opacity-50"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'Menyinkronkan...' : 'Tarik Spreadsheet RO'}</span>
+              <span>
+                {isSyncing
+                  ? 'Menyinkronkan...'
+                  : startDate || endDate
+                  ? 'Tarik Spreadsheet RO (Sesuai Tanggal)'
+                  : 'Tarik Spreadsheet RO'}
+              </span>
             </button>
 
             {/* Tarik Data Excel Paste */}
@@ -1456,6 +1522,100 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               <PlusCircle className="h-3.5 w-3.5" />
               <span>Buat RO Baru</span>
             </button>
+          </div>
+        </div>
+
+        {/* Filter Rentang Tanggal (Tampilan Tabel & Tarik Data Spreadsheet) */}
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 pt-2.5 border-t border-[#e0e2ec] dark:border-[#35383a]">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#444746] dark:text-[#c4c7c5]">
+              <Calendar className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+              <span>Filter Rentang Tanggal:</span>
+            </div>
+
+            {/* Selector Acuan Tanggal */}
+            <select
+              value={dateField}
+              onChange={(e) => setDateField(e.target.value as RoDateField)}
+              className="rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] px-2.5 py-1.5 text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+              title="Pilih kolom tanggal yang dijadikan acuan filter & tarik data"
+            >
+              <option value="order_date">Berdasarkan Tgl Order</option>
+              <option value="request_date">Berdasarkan Tgl Permintaan</option>
+            </select>
+
+            {/* Dari Tanggal */}
+            <div className="inline-flex items-center gap-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1 text-xs">
+              <span className="text-[11px] font-medium text-[#747775] dark:text-[#8e918f]">Dari:</span>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="bg-transparent text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] focus:outline-none"
+              />
+            </div>
+
+            <span className="text-xs text-[#747775] dark:text-[#8e918f] font-bold">s/d</span>
+
+            {/* Sampai Tanggal */}
+            <div className="inline-flex items-center gap-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1 text-xs">
+              <span className="text-[11px] font-medium text-[#747775] dark:text-[#8e918f]">Sampai:</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="bg-transparent text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] focus:outline-none"
+              />
+            </div>
+
+            {/* Quick Presets */}
+            <div className="inline-flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => applyDatePreset('today')}
+                className="rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#282a2c] px-2.5 py-1 text-[11px] font-semibold text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#35383a] transition-colors"
+              >
+                Hari Ini
+              </button>
+              <button
+                type="button"
+                onClick={() => applyDatePreset('7days')}
+                className="rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#282a2c] px-2.5 py-1 text-[11px] font-semibold text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#35383a] transition-colors"
+              >
+                7 Hari
+              </button>
+              <button
+                type="button"
+                onClick={() => applyDatePreset('month')}
+                className="rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#282a2c] px-2.5 py-1 text-[11px] font-semibold text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#35383a] transition-colors"
+              >
+                Bulan Ini
+              </button>
+              {(startDate || endDate) && (
+                <button
+                  type="button"
+                  onClick={() => applyDatePreset('clear')}
+                  className="inline-flex items-center gap-1 rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 text-[11px] font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-100 transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                  <span>Reset Tanggal</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Info Status Rentang Tanggal */}
+          <div className="flex items-center gap-2 text-[11px] text-[#747775] dark:text-[#8e918f]">
+            {startDate || endDate ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 px-3 py-1 font-semibold text-[#0b57d0] dark:text-[#a8c7fa]">
+                <span>
+                  Menampilkan <strong>{filteredOrders.length}</strong> RO ({dateField === 'request_date' ? 'Tgl Permintaan' : 'Tgl Order'}:{' '}
+                  {startDate ? formatDateSlash(startDate) : 'Awal'} – {endDate ? formatDateSlash(endDate) : 'Akhir'})
+                </span>
+              </span>
+            ) : (
+              <span>Menampilkan semua tanggal ({filteredOrders.length} RO aktif)</span>
+            )}
           </div>
         </div>
 

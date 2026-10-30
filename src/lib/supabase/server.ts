@@ -26,6 +26,7 @@ import {
   sanitizeAssetRequestDbPayload,
 } from '../procurement/pr-history';
 import { encodeBranchAndRegion, parseBranchAndRegion } from '../access/app-feature';
+import { matchesRoDateRange, RoDateField } from '../distribution/ro-date-filter';
 export { sortOrdersNewestFirst };
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -2284,7 +2285,14 @@ function isRoRowChanged(existing: any, next: any): boolean {
   return RO_COMPARE_FIELDS.some((f) => stableStringify(existing[f] ?? null) !== stableStringify(next[f] ?? null));
 }
 
-export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: boolean } = {}): Promise<RoSyncResult> {
+export async function syncRequestOrdersFromSheet(
+  options: {
+    clearOldSheetData?: boolean;
+    startDate?: string | null;
+    endDate?: string | null;
+    dateField?: RoDateField;
+  } = {}
+): Promise<RoSyncResult> {
   try {
     const admin = getAdminClient();
     if (options.clearOldSheetData && admin) {
@@ -2367,6 +2375,16 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
 
           const parsedRequestDate = parseIndoDate(inputDate || reqDate) || new Date().toISOString().split('T')[0];
           const parsedTargetDate = parseIndoDate(reqDate || inputDate, true);
+
+          if (options.startDate || options.endDate) {
+            const targetDateForFilter =
+              options.dateField === 'request_date'
+                ? parsedTargetDate || parsedRequestDate
+                : parsedRequestDate;
+            if (!matchesRoDateRange(targetDateForFilter, options.startDate, options.endDate)) {
+              continue;
+            }
+          }
 
           if (!groupedOrders.has(roNumber)) {
             groupedOrders.set(roNumber, {
@@ -2542,14 +2560,23 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
         dbRowsWritten = written;
       }
 
-      const sortedMerged = sortOrdersNewestFirst(deduplicateOrderItems(mergedOrders as RequestOrder[]));
-      cache.requestOrders = sortedMerged;
-      global.__RO_CACHE__ = { items: sortedMerged, timestamp: Date.now() };
-    } else {
+      if (options.startDate || options.endDate) {
+        invalidateRoCache();
+      } else {
+        const sortedMerged = sortOrdersNewestFirst(deduplicateOrderItems(mergedOrders as RequestOrder[]));
+        cache.requestOrders = sortedMerged;
+        global.__RO_CACHE__ = { items: sortedMerged, timestamp: Date.now() };
+      }
+    } else if (!options.startDate && !options.endDate) {
       const sortedUnique = sortOrdersNewestFirst(deduplicateOrderItems(uniqueOrders));
       cache.requestOrders = sortedUnique;
       global.__RO_CACHE__ = { items: sortedUnique, timestamp: Date.now() };
     }
+
+    const rangeLabel =
+      options.startDate || options.endDate
+        ? ` [Filter ${options.dateField === 'request_date' ? 'Tgl Permintaan' : 'Tgl Order'}: ${options.startDate || 'Awal'} s/d ${options.endDate || 'Akhir'}]`
+        : '';
 
     return {
       success: true,
@@ -2559,7 +2586,7 @@ export async function syncRequestOrdersFromSheet(options: { clearOldSheetData?: 
       newOrdersAdded: totalItems,
       existingOrdersUpdated: 0,
       changed: dbRowsWritten > 0,
-      message: `Sinkronisasi Multiregion (${syncedSources.join(' & ') || 'RO Sheet'}) Berhasil! ${totalRowsScanned} baris dipindai, ${duplicateRowsFiltered} duplikat disaring. Total ${totalItems} item unik dalam ${uniqueOrders.length} dokumen RO.`,
+      message: `Sinkronisasi Multiregion (${syncedSources.join(' & ') || 'RO Sheet'})${rangeLabel} Berhasil! ${totalRowsScanned} baris dipindai, ${duplicateRowsFiltered} duplikat disaring. Ditemukan ${totalItems} item unik dalam ${uniqueOrders.length} dokumen RO.`,
     };
   } catch (err: any) {
     console.error('Error syncing Request Orders from sheet:', err);
