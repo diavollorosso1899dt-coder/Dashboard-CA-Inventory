@@ -51,10 +51,13 @@ export default function UploadSection({
   previousSessionStock = new Map(),
   previousSessionDate = null,
 }: UploadSectionProps) {
-  // Input Modes: 'MONITORING_SLA' | 'INTERNAL_SJ' | 'FILE' | 'LINK' - Default to MONITORING_SLA for RO!
-  const [inputModes, setInputModes] = useState<Record<string, 'MONITORING_SLA' | 'INTERNAL_SJ' | 'FILE' | 'LINK'>>({
+  // Input Modes: 'MONITORING_SLA' | 'PR_READY_STOCK' | 'INTERNAL_SJ' | 'FILE' | 'LINK'
+  // Default to MONITORING_SLA for RO and PR_READY_STOCK for PENERIMAAN!
+  const [inputModes, setInputModes] = useState<
+    Record<string, 'MONITORING_SLA' | 'PR_READY_STOCK' | 'INTERNAL_SJ' | 'FILE' | 'LINK'>
+  >({
     RO: 'MONITORING_SLA',
-    PENERIMAAN: 'LINK',
+    PENERIMAAN: 'PR_READY_STOCK',
     PERALATAN: 'LINK',
     PERLENGKAPAN: 'LINK',
   });
@@ -62,6 +65,7 @@ export default function UploadSection({
   // Monitoring SLA Filter Options (Jumlah QTY Monitoring SLA sebagai sumber RO)
   const [slaFilterMode, setSlaFilterMode] = useState<'fulfilled' | 'received' | 'all'>('fulfilled');
   const [isSlaLoading, setIsSlaLoading] = useState(false);
+  const [isPrReadyLoading, setIsPrReadyLoading] = useState(false);
 
   // Surat Jalan Filter Options
   const [sjFilterStatus, setSjFilterStatus] = useState<'DELIVERED' | 'ALL_OUT'>('DELIVERED');
@@ -139,7 +143,10 @@ export default function UploadSection({
   const peralatanInputRef = useRef<HTMLInputElement>(null);
   const perlengkapanInputRef = useRef<HTMLInputElement>(null);
 
-  const setMode = (type: string, mode: 'MONITORING_SLA' | 'INTERNAL_SJ' | 'FILE' | 'LINK') => {
+  const setMode = (
+    type: string,
+    mode: 'MONITORING_SLA' | 'PR_READY_STOCK' | 'INTERNAL_SJ' | 'FILE' | 'LINK'
+  ) => {
     setInputModes((prev) => ({ ...prev, [type]: mode }));
   };
 
@@ -418,10 +425,42 @@ export default function UploadSection({
     }
   };
 
-  // Auto-fetch SLA monitoring items on initial load if RO data is empty
+  const handleFetchFromPrReadyStock = async () => {
+    setErrorMessage('');
+    setIsPrReadyLoading(true);
+
+    try {
+      const res = await fetch('/api/stock-opname/pr-ready-items', { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok || !json.data) {
+        throw new Error(json.error || 'Gagal mengambil data PR yang sudah Ready Stock');
+      }
+
+      const items: any[] = json.data;
+      if (items.length === 0) {
+        throw new Error('Belum ada item PR yang berstatus Selesai / Ready Stock.');
+      }
+
+      const mockFile = {
+        name: `[PR Ready Stock] ${items.length} item (Total Qty PR: ${json.totalQty})`,
+      } as File;
+
+      setPenerimaanFile(mockFile);
+      setPenerimaanData(items);
+    } catch (err: any) {
+      setErrorMessage(`Gagal memuat data PR Ready Stock: ${err.message}`);
+    } finally {
+      setIsPrReadyLoading(false);
+    }
+  };
+
+  // Auto-fetch SLA monitoring items & PR Ready Stock items on initial load
   React.useEffect(() => {
     if (inputModes.RO === 'MONITORING_SLA' && roData.length === 0) {
       handleFetchFromMonitoringSla('fulfilled');
+    }
+    if (inputModes.PENERIMAAN === 'PR_READY_STOCK' && penerimaanData.length === 0) {
+      handleFetchFromPrReadyStock();
     }
   }, []);
 
@@ -918,34 +957,85 @@ export default function UploadSection({
               </div>
 
               {/* Source Mode Switcher */}
-              <div className="flex bg-slate-100 dark:bg-slate-900/60 p-0.5 rounded-lg mb-3 text-[11px] font-bold">
+              <div className="grid grid-cols-3 bg-slate-100 dark:bg-slate-900/60 p-0.5 rounded-lg mb-3 text-[10px] md:text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setMode('PENERIMAAN', 'PR_READY_STOCK')}
+                  className={`py-1 rounded-md transition-all flex items-center justify-center space-x-1 ${
+                    inputModes.PENERIMAAN === 'PR_READY_STOCK'
+                      ? 'bg-emerald-600 text-white shadow-xs font-black'
+                      : 'text-slate-500 hover:text-emerald-600'
+                  }`}
+                >
+                  <Sparkles className="w-3 h-3 text-amber-300" />
+                  <span className="truncate">PR Ready Stock</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setMode('PENERIMAAN', 'FILE')}
-                  className={`flex-1 py-1 rounded-md transition-all flex items-center justify-center space-x-1 ${
+                  className={`py-1 rounded-md transition-all flex items-center justify-center space-x-1 ${
                     inputModes.PENERIMAAN === 'FILE'
                       ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-xs'
                       : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
                   }`}
                 >
                   <Upload className="w-3 h-3" />
-                  <span>Upload File</span>
+                  <span className="truncate">File Excel</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setMode('PENERIMAAN', 'LINK')}
-                  className={`flex-1 py-1 rounded-md transition-all flex items-center justify-center space-x-1 ${
+                  className={`py-1 rounded-md transition-all flex items-center justify-center space-x-1 ${
                     inputModes.PENERIMAAN === 'LINK'
-                      ? 'bg-emerald-600 text-white shadow-xs'
+                      ? 'bg-emerald-600 text-white shadow-xs font-black'
                       : 'text-slate-500 hover:text-emerald-600'
                   }`}
                 >
                   <LinkIcon className="w-3 h-3" />
-                  <span>Tautkan Link Spreadsheet</span>
+                  <span className="truncate">Link Sheet</span>
                 </button>
               </div>
 
-              {inputModes.PENERIMAAN === 'FILE' ? (
+              {inputModes.PENERIMAAN === 'PR_READY_STOCK' ? (
+                <div className="space-y-3 p-3.5 bg-gradient-to-br from-emerald-50/70 to-teal-50/40 dark:from-emerald-950/30 dark:to-teal-950/20 border border-emerald-200/90 dark:border-emerald-900/50 rounded-xl">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-emerald-950 dark:text-emerald-200 flex items-center space-x-1.5">
+                      <Sparkles className="w-4 h-4 text-emerald-600" />
+                      <span>Sumber: Fitur PR (QTY PR Ready Stock)</span>
+                    </span>
+                    <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/70 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-bold">
+                      Data Realtime PR
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-white/90 dark:bg-slate-800/80 border border-emerald-200/80 dark:border-emerald-800/60 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                    <span className="font-bold text-emerald-700 dark:text-emerald-400 block mb-0.5">
+                      ✓ Jumlah Quantity PR yang Sudah Ready Stock
+                    </span>
+                    <span>
+                      Mengambil kolom <strong>QTY PR</strong> dari seluruh item pengadaan PR yang telah berstatus{' '}
+                      <strong>Selesai / Ready Stock</strong> sebagai penambah stok gudang (+).
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleFetchFromPrReadyStock}
+                    disabled={isPrReadyLoading}
+                    className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center space-x-2 active:scale-98 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isPrReadyLoading ? 'animate-spin' : ''}`} />
+                    <span>
+                      {isPrReadyLoading ? 'Menarik Data PR Ready Stock...' : 'Tarik Jumlah QTY dari PR Ready Stock'}
+                    </span>
+                  </button>
+
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center justify-between px-1">
+                    <span>💡 Otomatis terhubung dengan fitur PR &amp; Riwayat PR</span>
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">Sync Otomatis</span>
+                  </div>
+                </div>
+              ) : inputModes.PENERIMAAN === 'FILE' ? (
                 <>
                   <input
                     ref={penerimaanInputRef}

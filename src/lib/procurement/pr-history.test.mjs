@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  extractPrReadyStockItemsForSo,
   filterPurchaseRequirementHistory,
   matchesPurchaseRequirementFilter,
   mergeManualAssetEdit,
@@ -107,4 +108,60 @@ test('mergeManualAssetEdit mempertahankan procurement_status dan tanggal PR saat
   assert.equal(merged.notes, 'Follow up vendor');
   assert.equal(merged.is_manually_edited, true);
 });
+
+test('extractPrReadyStockItemsForSo mengambil jumlah quantity PR dari item yang sudah ready stock', () => {
+  const sampleItems = [
+    {
+      id: 'pr-1',
+      item_name: 'Kasur Karyawan',
+      classification: 'General',
+      rab_number: '073-3B',
+      branch_name: 'Ayam Goreng Makmur Serang',
+      region: 'JABODETABEK',
+      quantity_pr: 8,
+      quantity_needed: 8,
+      procurement_status: 'selesai',
+      item_delivery_status: 'Ready Antar',
+      stock_status: 'Ready Stock (Gudang SCGA)',
+      received_date: '2026-10-28',
+    },
+    {
+      id: 'pr-2',
+      item_name: 'Keset karet mie',
+      classification: 'PLK-Parabot',
+      rab_number: '079-3B',
+      branch_name: 'Warung Nini Kisamaun',
+      region: 'JABODETABEK',
+      quantity_pr: 0,
+      quantity_needed: 3,
+      procurement_status: 'selesai',
+      item_delivery_status: 'Terima Outlet',
+      stock_status: 'Ready Stock (Gudang SCGA)',
+      received_date: '2026-10-28',
+    },
+    {
+      id: 'pr-3',
+      item_name: 'Meja Stainless',
+      classification: 'Peralatan',
+      rab_number: '080-3B',
+      branch_name: 'Sop Mak Garang',
+      region: 'KALBAR',
+      quantity_pr: 5,
+      quantity_needed: 5,
+      procurement_status: 'proses',
+      item_delivery_status: 'On Proses',
+      stock_status: 'Not Ready',
+    },
+  ];
+
+  const { items, totalQty } = extractPrReadyStockItemsForSo(sampleItems);
+
+  assert.equal(items.length, 2);
+  assert.equal(totalQty, 11);
+  assert.equal(items[0].nama_barang, 'Kasur Karyawan');
+  assert.equal(items[0].qty, 8);
+  assert.equal(items[1].nama_barang, 'Keset karet mie');
+  assert.equal(items[1].qty, 3);
+});
+
 
