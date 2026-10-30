@@ -24,11 +24,15 @@ import {
   CheckSquare,
   Square,
   Sparkles,
-  Layers
+  Layers,
+  MapPin,
+  Globe
 } from 'lucide-react';
 
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/auth/AuthContext';
+import { AllowedRegion, parseBranchAndRegion } from '@/lib/access/app-feature';
+import { normalizeRegion } from '@/lib/utils/region-helper';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 
@@ -48,6 +52,7 @@ export const DEFAULT_TRASH_FEATURES = DEFAULT_ADMIN_FEATURES;
 const USER_COLUMNS: ColumnItem[] = [
   { id: 'user_info', label: 'Nama Lengkap & Username', defaultVisible: true, alwaysVisible: true },
   { id: 'role', label: 'Peran (Role)', defaultVisible: true },
+  { id: 'region', label: 'Pemisah Region', defaultVisible: true },
   { id: 'features', label: 'Hak Akses Fitur', defaultVisible: true },
   { id: 'outlet', label: 'Penugasan Outlet', defaultVisible: true },
   { id: 'status', label: 'Status Akun', defaultVisible: true },
@@ -64,6 +69,7 @@ export default function UserManagerView() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>(initialRole);
+  const [regionFilter, setRegionFilter] = useState<AllowedRegion>('ALL');
 
   // Column Visibility
   const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
@@ -88,6 +94,7 @@ export default function UserManagerView() {
     password?: string;
     full_name: string;
     role: UserRole;
+    allowed_region: AllowedRegion;
     outlet_assigned: string;
     allowed_features: string[];
   }>({
@@ -96,6 +103,7 @@ export default function UserManagerView() {
     password: '',
     full_name: '',
     role: 'User',
+    allowed_region: 'ALL',
     outlet_assigned: '',
     allowed_features: DEFAULT_LOGISTICS_FEATURES,
   });
@@ -151,6 +159,7 @@ export default function UserManagerView() {
     setFormData((prev) => ({
       ...prev,
       role: newRole,
+      allowed_region: newRole === 'Super User' ? 'ALL' : prev.allowed_region,
       allowed_features: newFeatures,
     }));
   };
@@ -249,6 +258,15 @@ export default function UserManagerView() {
   };
 
 
+  const getUserRegion = (u: UserProfile): AllowedRegion => {
+    const { allowedRegion } = parseBranchAndRegion(
+      u.branch_name || u.outlet_assigned,
+      u.allowed_region,
+      u.role
+    );
+    return allowedRegion;
+  };
+
   const filteredUsers = users.filter(u => {
     if (roleFilter !== 'ALL') {
       if (roleFilter === 'Admin') {
@@ -257,6 +275,12 @@ export default function UserManagerView() {
           return false;
         }
       } else if (u.role !== roleFilter) {
+        return false;
+      }
+    }
+    if (regionFilter !== 'ALL') {
+      const uRegion = getUserRegion(u);
+      if (uRegion !== regionFilter) {
         return false;
       }
     }
@@ -275,6 +299,8 @@ export default function UserManagerView() {
         (a.full_name || a.username || '').localeCompare(b.full_name || b.username || '', 'id', { sensitivity: 'base' }),
       role: (a: UserProfile, b: UserProfile) =>
         (a.role || '').localeCompare(b.role || '', 'id'),
+      region: (a: UserProfile, b: UserProfile) =>
+        getUserRegion(a).localeCompare(getUserRegion(b), 'id'),
       outlet: (a: UserProfile, b: UserProfile) =>
         (a.outlet_assigned || '').localeCompare(b.outlet_assigned || '', 'id'),
       status: (a: UserProfile, b: UserProfile) =>
@@ -355,6 +381,7 @@ export default function UserManagerView() {
                 password: '',
                 full_name: '',
                 role: 'Admin',
+                allowed_region: 'ALL',
                 outlet_assigned: '',
                 allowed_features: DEFAULT_ADMIN_FEATURES,
               });
@@ -420,7 +447,35 @@ export default function UserManagerView() {
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
+          {/* Pemisah Region Filter */}
+          <div className="inline-flex items-center rounded-xl bg-slate-100 dark:bg-slate-800 p-1 text-xs border border-slate-200 dark:border-slate-700">
+            <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-slate-500 dark:text-slate-400">
+              <MapPin className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+              Region:
+            </span>
+            {(
+              [
+                { id: 'ALL', label: 'Semua Region' },
+                { id: 'JABODETABEK', label: 'JABO' },
+                { id: 'KALBAR', label: 'KALBAR' },
+              ] as const
+            ).map((reg) => (
+              <button
+                key={reg.id}
+                type="button"
+                onClick={() => setRegionFilter(reg.id)}
+                className={`px-2.5 py-1 rounded-lg font-semibold whitespace-nowrap transition-all ${
+                  regionFilter === reg.id
+                    ? 'bg-purple-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-700'
+                }`}
+              >
+                {reg.label}
+              </button>
+            ))}
+          </div>
+
           <ColumnVisibilityPicker
             columns={USER_COLUMNS}
             visibleColumns={visibleColumns}
@@ -470,6 +525,22 @@ export default function UserManagerView() {
                       currentSortDirection={userSortDirection}
                       onSort={handleUserSort}
                     />
+                  </th>
+                )}
+                {isVisible('region') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    <SortableHeader
+                      label="Pemisah Region"
+                      field="region"
+                      currentSortField={userSortField}
+                      currentSortDirection={userSortDirection}
+                      onSort={handleUserSort}
+                    />
+                  </th>
+                )}
+                {isVisible('features') && (
+                  <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">
+                    Hak Akses Fitur
                   </th>
                 )}
                 {isVisible('outlet') && (
@@ -534,6 +605,36 @@ export default function UserManagerView() {
                         </td>
                       )}
 
+                      {isVisible('region') && (
+                        <td className="py-3.5 px-4">
+                          {(() => {
+                            const uRegion = getUserRegion(u);
+                            if (uRegion === 'JABODETABEK') {
+                              return (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                                  <MapPin className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                                  <span>Khusus JABODETABEK</span>
+                                </span>
+                              );
+                            }
+                            if (uRegion === 'KALBAR') {
+                              return (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                                  <MapPin className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+                                  <span>Khusus KALBAR</span>
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                <Globe className="w-3.5 h-3.5 text-purple-500" />
+                                <span>Semua Region (JABO &amp; KALBAR)</span>
+                              </span>
+                            );
+                          })()}
+                        </td>
+                      )}
+
                       {isVisible('features') && (
                         <td className="py-3.5 px-4">
                           {u.role === 'Super User' || u.role === 'super_user' ? (
@@ -595,6 +696,11 @@ export default function UserManagerView() {
                               const uFeatures = Array.isArray(u.allowed_features) && u.allowed_features.length > 0
                                 ? u.allowed_features
                                 : (u.role === 'Super User' || u.role === 'super_user' ? ALL_FEATURE_IDS : DEFAULT_LOGISTICS_FEATURES);
+                              const { branchName, allowedRegion } = parseBranchAndRegion(
+                                u.branch_name || u.outlet_assigned,
+                                u.allowed_region,
+                                u.role
+                              );
                               setFormData({
                                 id: u.id,
                                 username: u.username || u.email,
@@ -602,7 +708,8 @@ export default function UserManagerView() {
                                 password: '',
                                 full_name: u.full_name,
                                 role: u.role,
-                                outlet_assigned: u.outlet_assigned || '',
+                                allowed_region: allowedRegion,
+                                outlet_assigned: branchName || '',
                                 allowed_features: uFeatures,
                               });
                               setIsModalOpen(true);
@@ -721,6 +828,75 @@ export default function UserManagerView() {
                 </div>
               </div>
 
+              {/* Pemisah Region (Akses Wilayah) */}
+              <div className="p-3.5 rounded-xl border border-purple-200/80 dark:border-purple-900/60 bg-purple-50/40 dark:bg-purple-950/20 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                    <span>Pemisah Region (Akses Wilayah)</span>
+                  </label>
+                  {formData.role === 'Super User' && (
+                    <span className="text-[10px] font-bold text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/60 px-2 py-0.5 rounded-full">
+                      Super User otomatis Semua Region
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {(
+                    [
+                      {
+                        id: 'ALL',
+                        title: 'Semua Region',
+                        subtitle: 'Bisa pilih Semua, JABO & KALBAR',
+                      },
+                      {
+                        id: 'JABODETABEK',
+                        title: 'Khusus JABODETABEK',
+                        subtitle: 'Dikunci hanya area JABO',
+                      },
+                      {
+                        id: 'KALBAR',
+                        title: 'Khusus KALBAR',
+                        subtitle: 'Dikunci hanya area KALBAR',
+                      },
+                    ] as const
+                  ).map((opt) => {
+                    const isSelected = (formData.role === 'Super User' ? 'ALL' : formData.allowed_region) === opt.id;
+                    const isDisabled = formData.role === 'Super User' && opt.id !== 'ALL';
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        disabled={isDisabled}
+                        onClick={() =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            allowed_region: opt.id,
+                          }))
+                        }
+                        className={`text-left p-2.5 rounded-xl border transition-all ${
+                          isSelected
+                            ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-purple-400'
+                        } ${isDisabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                      >
+                        <div className="text-xs font-bold flex items-center justify-between">
+                          <span>{opt.title}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 shrink-0" />}
+                        </div>
+                        <div
+                          className={`text-[10px] mt-0.5 ${
+                            isSelected ? 'text-purple-100' : 'text-slate-400 dark:text-slate-400'
+                          }`}
+                        >
+                          {opt.subtitle}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               {formData.role === 'User Outlet Manager' && (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
@@ -733,11 +909,16 @@ export default function UserManagerView() {
                     className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                   >
                     <option value="">-- Pilih Outlet Cabang --</option>
-                    {outlets.map((o) => (
-                      <option key={o.id || o.nama} value={o.nama}>
-                        {o.nama} ({o.region || 'Cabang'})
-                      </option>
-                    ))}
+                    {outlets
+                      .filter((o) => {
+                        if (formData.allowed_region === 'ALL') return true;
+                        return normalizeRegion(o.region) === formData.allowed_region;
+                      })
+                      .map((o) => (
+                        <option key={o.id || o.nama} value={o.nama}>
+                          {o.nama} ({o.region || 'Cabang'})
+                        </option>
+                      ))}
                   </select>
                 </div>
               )}

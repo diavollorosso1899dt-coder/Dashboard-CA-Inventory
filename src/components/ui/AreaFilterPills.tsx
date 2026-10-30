@@ -1,9 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { normalizeRegion, StandardRegion } from '@/lib/utils/region-helper';
-import { MapPin } from 'lucide-react';
+import { resolveEffectiveRegion } from '@/lib/access/app-feature';
+import { useAuth } from '@/components/auth/AuthContext';
+import { MapPin, Lock } from 'lucide-react';
 
 interface AreaFilterPillsProps {
   value?: string;
@@ -25,28 +27,67 @@ export default function AreaFilterPills({
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
+  const { isSuperUser, allowedRegion, isRegionLocked } = useAuth();
 
   // If value is not provided via prop, read directly from URL searchParams
   const urlRegion = searchParams ? searchParams.get('region') : null;
-  const currentRegion: StandardRegion = normalizeRegion(value !== undefined ? value : urlRegion);
+  const rawRegion: StandardRegion = normalizeRegion(value !== undefined ? value : urlRegion);
+  const currentRegion: StandardRegion = isRegionLocked
+    ? (resolveEffectiveRegion(rawRegion, allowedRegion, isSuperUser) as StandardRegion)
+    : rawRegion;
+
+  useEffect(() => {
+    if (!isRegionLocked) return;
+    if (value !== undefined && normalizeRegion(value) !== allowedRegion && onChange) {
+      onChange(allowedRegion as StandardRegion);
+    }
+    if (syncUrl && router && pathname && normalizeRegion(urlRegion) !== allowedRegion) {
+      const params = new URLSearchParams(searchParams ? searchParams.toString() : '');
+      params.set('region', allowedRegion);
+      router.replace(`${pathname}?${params.toString()}`);
+    }
+  }, [isRegionLocked, allowedRegion, value, urlRegion, syncUrl, router, pathname, searchParams, onChange]);
 
   const handleSelect = (selected: StandardRegion) => {
+    const effective = isRegionLocked ? (allowedRegion as StandardRegion) : selected;
     if (onChange) {
-      onChange(selected);
+      onChange(effective);
     }
 
     if (syncUrl && router && pathname) {
       const params = new URLSearchParams(searchParams ? searchParams.toString() : '');
-      if (selected === 'ALL') {
+      if (effective === 'ALL') {
         params.delete('region');
       } else {
-        params.set('region', selected);
+        params.set('region', effective);
       }
       const newQuery = params.toString();
       const targetUrl = newQuery ? `${pathname}?${newQuery}` : pathname;
       router.push(targetUrl);
     }
   };
+
+  if (isRegionLocked) {
+    return (
+      <div className={`inline-flex items-center gap-1.5 ${className}`}>
+        {label && (
+          <span className="text-xs font-semibold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1 select-none">
+            {showIcon && <MapPin className="w-3.5 h-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />}
+            {label}
+          </span>
+        )}
+        <div
+          className="inline-flex items-center rounded-full bg-[#e9eef6] dark:bg-[#282a2c] p-1 text-xs"
+          title={`Akses akun dikunci khusus area ${allowedRegion === 'JABODETABEK' ? 'JABODETABEK' : 'KALBAR'}`}
+        >
+          <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-semibold bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]">
+            <Lock className="w-3 h-3 opacity-80" />
+            <span>{allowedRegion === 'JABODETABEK' ? 'JABO' : 'KALBAR'}</span>
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`inline-flex items-center gap-1.5 ${className}`}>

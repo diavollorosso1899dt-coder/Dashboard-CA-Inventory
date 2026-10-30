@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findFeatureByIdOrHref } from './app-feature.ts';
+import {
+  encodeBranchAndRegion,
+  findFeatureByIdOrHref,
+  parseBranchAndRegion,
+  resolveEffectiveRegion,
+} from './app-feature.ts';
 import { APP_FEATURES } from '../supabase/types.ts';
 
 test('rute Riwayat PR memakai fitur riwayat_pr, bukan fitur PR induk', () => {
@@ -23,3 +28,33 @@ test('prefix rute yang mirip tidak dianggap sebagai fitur PR', () => {
     undefined
   );
 });
+
+test('encodeBranchAndRegion dan parseBranchAndRegion menyimpan dan membaca pemisah region dengan benar', () => {
+  const encodedJaboOnly = encodeBranchAndRegion('', 'JABODETABEK');
+  assert.equal(encodedJaboOnly, '[REGION:JABODETABEK]');
+
+  const parsedJaboOnly = parseBranchAndRegion(encodedJaboOnly, undefined, 'Admin');
+  assert.equal(parsedJaboOnly.branchName, '');
+  assert.equal(parsedJaboOnly.allowedRegion, 'JABODETABEK');
+
+  const encodedWithOutlet = encodeBranchAndRegion('Sop Mak Garang Singkawang', 'KALBAR');
+  assert.equal(encodedWithOutlet, '[REGION:KALBAR] Sop Mak Garang Singkawang');
+
+  const parsedWithOutlet = parseBranchAndRegion(encodedWithOutlet, undefined, 'User Outlet Manager');
+  assert.equal(parsedWithOutlet.branchName, 'Sop Mak Garang Singkawang');
+  assert.equal(parsedWithOutlet.allowedRegion, 'KALBAR');
+});
+
+test('Super User selalu mendapat akses region ALL', () => {
+  const parsedSuper = parseBranchAndRegion('[REGION:JABODETABEK]', 'JABODETABEK', 'Super User');
+  assert.equal(parsedSuper.allowedRegion, 'ALL');
+  assert.equal(resolveEffectiveRegion('KALBAR', 'JABODETABEK', true), 'KALBAR');
+});
+
+test('resolveEffectiveRegion mengunci region untuk pengguna dengan pembatasan JABODETABEK atau KALBAR', () => {
+  assert.equal(resolveEffectiveRegion('ALL', 'JABODETABEK', false), 'JABODETABEK');
+  assert.equal(resolveEffectiveRegion('KALBAR', 'JABODETABEK', false), 'JABODETABEK');
+  assert.equal(resolveEffectiveRegion('JABODETABEK', 'KALBAR', false), 'KALBAR');
+  assert.equal(resolveEffectiveRegion('KALBAR', 'ALL', false), 'KALBAR');
+});
+

@@ -199,6 +199,7 @@ export interface UserProfile {
   role: UserRole;
   branch_name?: string;
   outlet_assigned?: string;
+  allowed_region?: 'ALL' | 'JABODETABEK' | 'KALBAR';
   phone?: string;
   is_active?: boolean;
   allowed_features?: string[];

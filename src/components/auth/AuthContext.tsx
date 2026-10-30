@@ -3,13 +3,19 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { UserProfile, UserRole, APP_FEATURES, ALL_FEATURE_IDS } from '@/lib/supabase/types';
-import { findFeatureByIdOrHref } from '@/lib/access/app-feature';
+import {
+  AllowedRegion,
+  findFeatureByIdOrHref,
+  parseBranchAndRegion,
+} from '@/lib/access/app-feature';
 
 interface AuthContextType {
   user: UserProfile | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   isSuperUser: boolean;
+  allowedRegion: AllowedRegion;
+  isRegionLocked: boolean;
   canAccessFeature: (featureIdOrHref: string) => boolean;
   login: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
@@ -27,6 +33,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const isSuperUser = Boolean(
     user && (user.role === 'Super User' || user.role === 'super_user')
+  );
+
+  const { allowedRegion } = parseBranchAndRegion(
+    user?.branch_name || user?.outlet_assigned,
+    user?.allowed_region,
+    user?.role
+  );
+
+  const isRegionLocked = Boolean(
+    user && !isSuperUser && (allowedRegion === 'JABODETABEK' || allowedRegion === 'KALBAR')
   );
 
   const canAccessFeature = (featureIdOrHref: string): boolean => {
@@ -154,6 +170,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         isAuthenticated: Boolean(user),
         isSuperUser,
+        allowedRegion,
+        isRegionLocked,
         canAccessFeature,
         login,
         logout,

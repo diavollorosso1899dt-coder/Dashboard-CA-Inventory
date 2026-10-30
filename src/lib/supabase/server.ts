@@ -25,6 +25,7 @@ import {
   mergeManualAssetEdit,
   sanitizeAssetRequestDbPayload,
 } from '../procurement/pr-history';
+import { encodeBranchAndRegion, parseBranchAndRegion } from '../access/app-feature';
 export { sortOrdersNewestFirst };
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -1294,10 +1295,18 @@ export async function getUserProfiles(): Promise<UserProfile[]> {
           if (!Array.isArray(allowed) && isSuper) {
             allowed = ALL_FEATURE_IDS;
           }
+          const { branchName, allowedRegion } = parseBranchAndRegion(
+            u.branch_name || u.outlet_assigned,
+            u.allowed_region || cachedUser?.allowed_region,
+            u.role
+          );
           return {
             ...u,
             username: u.username || u.email,
             password: u.password || u.phone || '',
+            branch_name: branchName || undefined,
+            outlet_assigned: branchName || undefined,
+            allowed_region: allowedRegion,
             allowed_features: allowed || undefined,
           };
         }) as UserProfile[];
@@ -1307,18 +1316,33 @@ export async function getUserProfiles(): Promise<UserProfile[]> {
       console.error('[Supabase getUserProfiles exception]:', err.message);
     }
   }
-  return (cache.users || []).map((u) => ({
-    ...u,
-    username: u.username || u.email,
-    password: u.password || u.phone || '',
-    allowed_features: u.allowed_features || (u.role === 'Super User' || u.role === 'super_user' ? ALL_FEATURE_IDS : undefined),
-  }));
+  return (cache.users || []).map((u) => {
+    const { branchName, allowedRegion } = parseBranchAndRegion(
+      u.branch_name || u.outlet_assigned,
+      u.allowed_region,
+      u.role
+    );
+    return {
+      ...u,
+      username: u.username || u.email,
+      password: u.password || u.phone || '',
+      branch_name: branchName || undefined,
+      outlet_assigned: branchName || undefined,
+      allowed_region: allowedRegion,
+      allowed_features: u.allowed_features || (u.role === 'Super User' || u.role === 'super_user' ? ALL_FEATURE_IDS : undefined),
+    };
+  });
 }
 
 export async function saveUserProfile(userData: Partial<UserProfile>): Promise<UserProfile> {
   const admin = getAdminClient();
   const userId = ensureUuid(userData.id);
-  const branch = userData.branch_name || userData.outlet_assigned || null;
+  const { branchName, allowedRegion } = parseBranchAndRegion(
+    userData.branch_name || userData.outlet_assigned,
+    userData.allowed_region,
+    userData.role
+  );
+  const encodedBranch = encodeBranchAndRegion(branchName, allowedRegion);
   const username = (userData.username || userData.email || '').trim().toLowerCase();
   const password = userData.password || userData.phone || '';
   const isSuper = userData.role === 'Super User' || userData.role === 'super_user';
@@ -1335,8 +1359,9 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
     password,
     full_name: userData.full_name || 'User',
     role: userData.role || 'user',
-    branch_name: branch || undefined,
-    outlet_assigned: branch || undefined,
+    branch_name: branchName || undefined,
+    outlet_assigned: branchName || undefined,
+    allowed_region: allowedRegion,
     phone: password || userData.phone || undefined,
     is_active: userData.is_active ?? true,
     allowed_features: allowedFeatures,
@@ -1350,7 +1375,7 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
         email: user.email,
         full_name: user.full_name,
         role: user.role,
-        branch_name: branch,
+        branch_name: encodedBranch,
         phone: user.phone || null,
         is_active: user.is_active,
         allowed_features: user.allowed_features || null,
@@ -1373,6 +1398,9 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
           ...res.data,
           username: (res.data as any).username || res.data.email,
           password: (res.data as any).password || (res.data as any).phone || password,
+          branch_name: branchName || undefined,
+          outlet_assigned: branchName || undefined,
+          allowed_region: allowedRegion,
           allowed_features: (res.data as any).allowed_features || user.allowed_features,
         } as UserProfile;
         
