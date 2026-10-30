@@ -107,3 +107,4 @@ export function resolveReceivedQuantity({
 
   return toFiniteNonNegative(itemFulfilledQty) ?? 0;
 }
+
