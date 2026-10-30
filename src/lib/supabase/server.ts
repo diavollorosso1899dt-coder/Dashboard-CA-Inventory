@@ -1293,22 +1293,21 @@ export async function getUserProfiles(): Promise<UserProfile[]> {
           if (!Array.isArray(allowed) && cachedUser?.allowed_features) {
             allowed = cachedUser.allowed_features;
           }
-          if (!Array.isArray(allowed) && isSuper) {
-            allowed = ALL_FEATURE_IDS;
-          }
-          const { branchName, allowedRegion } = parseBranchAndRegion(
+          const { branchName, allowedRegion, allowedFeatures } = parseBranchAndRegion(
             u.branch_name || u.outlet_assigned,
             u.allowed_region || cachedUser?.allowed_region,
-            u.role
+            u.role,
+            Array.isArray(allowed) ? allowed : undefined
           );
+          const effectiveFeatures = isSuper ? ALL_FEATURE_IDS : allowedFeatures;
           return {
             ...u,
             username: u.username || u.email,
-            password: u.password || u.phone || '',
+            password: u.password || u.phone || cachedUser?.password || '',
             branch_name: branchName || undefined,
             outlet_assigned: branchName || undefined,
             allowed_region: allowedRegion,
-            allowed_features: allowed || undefined,
+            allowed_features: effectiveFeatures,
           };
         }) as UserProfile[];
       }
@@ -1318,10 +1317,12 @@ export async function getUserProfiles(): Promise<UserProfile[]> {
     }
   }
   return (cache.users || []).map((u) => {
-    const { branchName, allowedRegion } = parseBranchAndRegion(
+    const isSuper = u.role === 'Super User' || u.role === 'super_user';
+    const { branchName, allowedRegion, allowedFeatures } = parseBranchAndRegion(
       u.branch_name || u.outlet_assigned,
       u.allowed_region,
-      u.role
+      u.role,
+      u.allowed_features
     );
     return {
       ...u,
@@ -1330,43 +1331,85 @@ export async function getUserProfiles(): Promise<UserProfile[]> {
       branch_name: branchName || undefined,
       outlet_assigned: branchName || undefined,
       allowed_region: allowedRegion,
-      allowed_features: u.allowed_features || (u.role === 'Super User' || u.role === 'super_user' ? ALL_FEATURE_IDS : undefined),
+      allowed_features: isSuper ? ALL_FEATURE_IDS : allowedFeatures,
     };
   });
 }
 
 export async function saveUserProfile(userData: Partial<UserProfile>): Promise<UserProfile> {
   const admin = getAdminClient();
-  const userId = ensureUuid(userData.id);
-  const { branchName, allowedRegion } = parseBranchAndRegion(
-    userData.branch_name || userData.outlet_assigned,
-    userData.allowed_region,
-    userData.role
-  );
-  const encodedBranch = encodeBranchAndRegion(branchName, allowedRegion);
   const username = (userData.username || userData.email || '').trim().toLowerCase();
-  const password = userData.password || userData.phone || '';
   const isSuper = userData.role === 'Super User' || userData.role === 'super_user';
+
+  // Cari data user sebelumnya agar edit tanpa isi password tidak menghapus password lama
+  let existingUser: any = cache.users?.find(
+    (u) =>
+      (userData.id && u.id === userData.id) ||
+      (u.email && u.email.toLowerCase() === username) ||
+      (u.username && u.username.toLowerCase() === username)
+  );
+
+  if (admin && !existingUser && (userData.id || username)) {
+    try {
+      const { data: foundRows } = await admin
+        .from('user_profiles')
+        .select('*')
+        .or(userData.id && isUuid(userData.id) ? `id.eq.${userData.id},email.eq.${username}` : `email.eq.${username}`)
+        .limit(1);
+      if (foundRows && foundRows.length > 0) {
+        existingUser = foundRows[0];
+      }
+    } catch {}
+  }
+
+  const existingParsed = existingUser
+    ? parseBranchAndRegion(
+        existingUser.branch_name || existingUser.outlet_assigned,
+        existingUser.allowed_region,
+        existingUser.role,
+        existingUser.allowed_features
+      )
+    : null;
+
+  const userId = ensureUuid(userData.id || existingUser?.id);
+  const { branchName, allowedRegion } = parseBranchAndRegion(
+    userData.branch_name !== undefined || userData.outlet_assigned !== undefined
+      ? userData.branch_name || userData.outlet_assigned
+      : existingParsed?.branchName,
+    userData.allowed_region ?? existingParsed?.allowedRegion,
+    userData.role || existingUser?.role
+  );
+
   const allowedFeatures = isSuper
     ? ALL_FEATURE_IDS
     : Array.isArray(userData.allowed_features)
     ? userData.allowed_features
-    : undefined;
+    : existingParsed?.allowedFeatures;
+
+  const encodedBranch = encodeBranchAndRegion(
+    branchName,
+    allowedRegion,
+    isSuper ? undefined : allowedFeatures
+  );
+
+  const inputPassword = (userData.password || userData.phone || '').trim();
+  const effectivePassword =
+    inputPassword || existingUser?.password || existingUser?.phone || 'password123';
 
   const user: UserProfile = {
     id: userId,
     username,
     email: username,
-    password,
-    full_name: userData.full_name || 'User',
-    role: userData.role || 'user',
+    password: effectivePassword,
+    full_name: userData.full_name || existingUser?.full_name || 'User',
+    role: userData.role || existingUser?.role || 'User',
     branch_name: branchName || undefined,
     outlet_assigned: branchName || undefined,
     allowed_region: allowedRegion,
-    phone: password || userData.phone || undefined,
-    is_active: userData.is_active ?? true,
+    phone: effectivePassword,
+    is_active: userData.is_active ?? existingUser?.is_active ?? true,
     allowed_features: allowedFeatures,
-    created_at: userData.created_at || new Date().toISOString(),
+    created_at: userData.created_at || existingUser?.created_at || new Date().toISOString(),
   };
 
   if (admin) {
@@ -1377,19 +1420,26 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
         full_name: user.full_name,
         role: user.role,
         branch_name: encodedBranch,
-        phone: user.phone || null,
+        password: effectivePassword,
+        phone: effectivePassword,
         is_active: user.is_active,
-        allowed_features: user.allowed_features || null,
         created_at: user.created_at,
         updated_at: new Date().toISOString(),
       };
-      
-      let res = await admin.from('user_profiles').upsert(dbPayload, { onConflict: 'email' }).select().single();
-      
-      // If allowed_features column doesn't exist yet in Supabase schema, retry without it
-      if (res.error && res.error.message?.includes('allowed_features')) {
-        delete dbPayload.allowed_features;
-        res = await admin.from('user_profiles').upsert(dbPayload, { onConflict: 'email' }).select().single();
+
+      let res = await admin
+        .from('user_profiles')
+        .upsert(dbPayload, { onConflict: 'email' })
+        .select()
+        .single();
+
+      if (res.error && res.error.message?.includes('password')) {
+        delete dbPayload.password;
+        res = await admin
+          .from('user_profiles')
+          .upsert(dbPayload, { onConflict: 'email' })
+          .select()
+          .single();
       }
 
       if (res.error) {
@@ -1398,14 +1448,13 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
         const result = {
           ...res.data,
           username: (res.data as any).username || res.data.email,
-          password: (res.data as any).password || (res.data as any).phone || password,
+          password: (res.data as any).password || (res.data as any).phone || effectivePassword,
           branch_name: branchName || undefined,
           outlet_assigned: branchName || undefined,
           allowed_region: allowedRegion,
-          allowed_features: (res.data as any).allowed_features || user.allowed_features,
+          allowed_features: user.allowed_features,
         } as UserProfile;
-        
-        // Sync to cache
+
         syncUserToCache(result);
         return result;
       }

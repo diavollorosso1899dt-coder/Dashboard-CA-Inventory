@@ -5,7 +5,9 @@ export interface FeatureRoute {
 
 export type AllowedRegion = 'ALL' | 'JABODETABEK' | 'KALBAR';
 
-const REGION_PREFIX_REGEX = /^\[REGION:(ALL|JABODETABEK|JABO|KALBAR)\]\s*/i;
+const REGION_TAG_REGEX = /\[REGION:(ALL|JABODETABEK|JABO|KALBAR)\]/i;
+const FEATURES_TAG_REGEX = /\[FEATURES:([^\]]*)\]/i;
+const LEADING_TAGS_REGEX = /^(?:\s*\[(?:REGION|FEATURES):[^\]]*\]\s*)+/i;
 
 /**
  * Resolve a feature by ID, exact route, or the most specific route prefix.
@@ -40,37 +42,65 @@ export function normalizeAllowedRegion(raw?: string | null): AllowedRegion {
 
 export function encodeBranchAndRegion(
   branchName?: string | null,
-  allowedRegion?: string | null
+  allowedRegion?: string | null,
+  allowedFeatures?: string[] | null
 ): string | null {
-  const cleanBranch = (branchName || '').replace(REGION_PREFIX_REGEX, '').trim();
+  const cleanBranch = (branchName || '').replace(LEADING_TAGS_REGEX, '').trim();
   const region = normalizeAllowedRegion(allowedRegion);
 
-  if (region === 'ALL') {
+  let prefix = '';
+  if (region !== 'ALL') {
+    prefix += `[REGION:${region}]`;
+  }
+  if (Array.isArray(allowedFeatures)) {
+    const cleanFeatures = allowedFeatures
+      .map((f) => String(f || '').trim())
+      .filter(Boolean);
+    prefix += `[FEATURES:${cleanFeatures.join(',')}]`;
+  }
+
+  if (!prefix) {
     return cleanBranch || null;
   }
-  return cleanBranch ? `[REGION:${region}] ${cleanBranch}` : `[REGION:${region}]`;
+  return cleanBranch ? `${prefix} ${cleanBranch}` : prefix;
 }
 
 export function parseBranchAndRegion(
   rawBranch?: string | null,
   explicitRegion?: string | null,
-  role?: string | null
-): { branchName: string; allowedRegion: AllowedRegion } {
+  role?: string | null,
+  explicitFeatures?: string[] | null
+): { branchName: string; allowedRegion: AllowedRegion; allowedFeatures?: string[] } {
   const isSuper = role === 'Super User' || role === 'super_user';
   const raw = (rawBranch || '').trim();
-  const match = raw.match(REGION_PREFIX_REGEX);
-  const cleanBranch = raw.replace(REGION_PREFIX_REGEX, '').trim();
+  const regionMatch = raw.match(REGION_TAG_REGEX);
+  const featuresMatch = raw.match(FEATURES_TAG_REGEX);
+  const cleanBranch = raw.replace(LEADING_TAGS_REGEX, '').trim();
 
   if (isSuper) {
-    return { branchName: cleanBranch, allowedRegion: 'ALL' };
+    return { branchName: cleanBranch, allowedRegion: 'ALL', allowedFeatures: undefined };
   }
 
-  const parsedFromBranch = match ? normalizeAllowedRegion(match[1]) : 'ALL';
+  const parsedFromBranch = regionMatch ? normalizeAllowedRegion(regionMatch[1]) : 'ALL';
   const parsedExplicit = explicitRegion ? normalizeAllowedRegion(explicitRegion) : null;
+
+  let parsedFeatures: string[] | undefined = undefined;
+  if (Array.isArray(explicitFeatures)) {
+    parsedFeatures = explicitFeatures;
+  } else if (featuresMatch) {
+    const rawList = featuresMatch[1].trim();
+    parsedFeatures = rawList
+      ? rawList
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+  }
 
   return {
     branchName: cleanBranch,
     allowedRegion: parsedExplicit ?? parsedFromBranch,
+    allowedFeatures: parsedFeatures,
   };
 }
 
@@ -88,3 +118,31 @@ export function resolveEffectiveRegion(
   return normalizeAllowedRegion(requestedRegion);
 }
 
+export function matchesLoginIdentifier(
+  profile: {
+    username?: string | null;
+    email?: string | null;
+    full_name?: string | null;
+  },
+  rawLoginId: string
+): boolean {
+  const cleanInput = (rawLoginId || '').trim().toLowerCase().replace(/^@/, '');
+  if (!cleanInput) return false;
+  const compactInput = cleanInput.replace(/\s+/g, '');
+
+  const uName = (profile.username || '').trim().toLowerCase().replace(/^@/, '');
+  const uEmail = (profile.email || '').trim().toLowerCase().replace(/^@/, '');
+  const emailPrefix = uEmail.includes('@') ? uEmail.split('@')[0] : uEmail;
+  const fullName = (profile.full_name || '').trim().toLowerCase();
+  const compactFullName = fullName.replace(/\s+/g, '');
+
+  return (
+    uName === cleanInput ||
+    uName === compactInput ||
+    uEmail === cleanInput ||
+    uEmail === compactInput ||
+    (Boolean(emailPrefix) && emailPrefix === cleanInput) ||
+    fullName === cleanInput ||
+    (Boolean(compactFullName) && compactFullName === compactInput)
+  );
+}

@@ -31,6 +31,7 @@ export async function POST(req: Request) {
       full_name,
       role,
       outlet_assigned: outlet_assigned || null,
+      allowed_region: body.allowed_region || 'ALL',
       allowed_features: Array.isArray(body.allowed_features) ? body.allowed_features : undefined,
     });
 

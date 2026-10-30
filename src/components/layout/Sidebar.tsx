@@ -49,11 +49,16 @@ export function Sidebar() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isMobileOpen, closeMobile } = useNavigation();
-  const { user, logout, isSuperUser, canAccessFeature } = useAuth();
-  const currentRegion = searchParams.get('region') || 'ALL';
-  const regionQuery = searchParams.get('region') ? `?region=${searchParams.get('region')}` : '';
+  const { user, logout, isSuperUser, allowedRegion, isRegionLocked, canAccessFeature } = useAuth();
+  const currentRegion = isRegionLocked ? allowedRegion : (searchParams.get('region') || 'ALL');
+  const regionQuery = isRegionLocked
+    ? `?region=${allowedRegion}`
+    : searchParams.get('region')
+      ? `?region=${searchParams.get('region')}`
+      : '';
 
   const handleRegionChange = (region: string) => {
+    if (isRegionLocked && region !== allowedRegion) return;
     const params = new URLSearchParams(searchParams.toString());
     if (region === 'ALL') {
       params.delete('region');
@@ -172,20 +177,22 @@ export function Sidebar() {
                 { value: 'ALL', label: 'Semua' },
                 { value: 'JABODETABEK', label: 'JABO' },
                 { value: 'KALBAR', label: 'KALBAR' },
-              ].map((region) => (
-                <button
-                  key={region.value}
-                  type="button"
-                  onClick={() => handleRegionChange(region.value)}
-                  className={`min-h-[36px] rounded-xl px-2 py-1 text-[11px] font-semibold transition-colors ${
-                    currentRegion === region.value
-                      ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
-                      : 'bg-[#f0f4f9] text-[#444746] hover:bg-[#e9eef6] dark:bg-[#282a2c] dark:text-[#c4c7c5] dark:hover:bg-[#333537]'
-                  }`}
-                >
-                  {region.label}
-                </button>
-              ))}
+              ]
+                .filter((region) => !isRegionLocked || region.value === allowedRegion)
+                .map((region) => (
+                  <button
+                    key={region.value}
+                    type="button"
+                    onClick={() => handleRegionChange(region.value)}
+                    className={`min-h-[36px] rounded-xl px-2 py-1 text-[11px] font-semibold transition-colors ${
+                      currentRegion === region.value
+                        ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
+                        : 'bg-[#f0f4f9] text-[#444746] hover:bg-[#e9eef6] dark:bg-[#282a2c] dark:text-[#c4c7c5] dark:hover:bg-[#333537]'
+                    }`}
+                  >
+                    {region.label}
+                  </button>
+                ))}
             </div>
           </div>
 

@@ -49,6 +49,25 @@ export const DEFAULT_LOGISTICS_FEATURES = [
 export const DEFAULT_OUTLET_FEATURES = ['dashboard', 'assets_tracking', 'kelola_ro'];
 export const DEFAULT_TRASH_FEATURES = DEFAULT_ADMIN_FEATURES;
 
+function getEffectiveUserFeatures(u: UserProfile): string[] {
+  const { allowedFeatures } = parseBranchAndRegion(
+    u.branch_name || u.outlet_assigned,
+    u.allowed_region,
+    u.role,
+    u.allowed_features
+  );
+  if (Array.isArray(allowedFeatures)) {
+    return allowedFeatures;
+  }
+  const role = (u.role || '').toLowerCase();
+  if (role === 'super user' || role === 'super_user') return ALL_FEATURE_IDS;
+  if (role === 'admin' || role.includes('admin') || role.includes('sampah') || role.includes('trash')) {
+    return DEFAULT_ADMIN_FEATURES;
+  }
+  if (role.includes('outlet')) return DEFAULT_OUTLET_FEATURES;
+  return DEFAULT_LOGISTICS_FEATURES;
+}
+
 const USER_COLUMNS: ColumnItem[] = [
   { id: 'user_info', label: 'Nama Lengkap & Username', defaultVisible: true, alwaysVisible: true },
   { id: 'role', label: 'Peran (Role)', defaultVisible: true },
@@ -643,27 +662,32 @@ export default function UserManagerView() {
                               <span>Akses Semua ({APP_FEATURES.length} Fitur)</span>
                             </span>
                           ) : (
-                            <div className="flex flex-col gap-1">
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 w-fit">
-                                <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
-                                <span>{(u.allowed_features?.length || 0)}/{APP_FEATURES.length} Fitur Dibuka</span>
-                              </span>
-                              <div className="flex flex-wrap gap-1 max-w-xs">
-                                {(u.allowed_features || []).slice(0, 3).map((fId) => {
-                                  const feat = APP_FEATURES.find((f) => f.id === fId);
-                                  return (
-                                    <span key={fId} className="text-[10px] px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-slate-600 dark:text-slate-400">
-                                      {feat?.name || fId}
-                                    </span>
-                                  );
-                                })}
-                                {(u.allowed_features?.length || 0) > 3 && (
-                                  <span className="text-[10px] px-1.5 py-0.5 bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 font-semibold rounded">
-                                    +{(u.allowed_features?.length || 0) - 3} lainnya
+                            (() => {
+                              const effFeatures = getEffectiveUserFeatures(u);
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 w-fit">
+                                    <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
+                                    <span>{effFeatures.length}/{APP_FEATURES.length} Fitur Dibuka</span>
                                   </span>
-                                )}
-                              </div>
-                            </div>
+                                  <div className="flex flex-wrap gap-1 max-w-xs">
+                                    {effFeatures.slice(0, 3).map((fId) => {
+                                      const feat = APP_FEATURES.find((f) => f.id === fId);
+                                      return (
+                                        <span key={fId} className="text-[10px] px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-slate-600 dark:text-slate-400">
+                                          {feat?.name || fId}
+                                        </span>
+                                      );
+                                    })}
+                                    {effFeatures.length > 3 && (
+                                      <span className="text-[10px] px-1.5 py-0.5 bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 font-semibold rounded">
+                                        +{effFeatures.length - 3} lainnya
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })()
                           )}
                         </td>
                       )}
@@ -693,9 +717,7 @@ export default function UserManagerView() {
                         <td className="py-3.5 px-4 text-center">
                           <button
                             onClick={() => {
-                              const uFeatures = Array.isArray(u.allowed_features) && u.allowed_features.length > 0
-                                ? u.allowed_features
-                                : (u.role === 'Super User' || u.role === 'super_user' ? ALL_FEATURE_IDS : DEFAULT_LOGISTICS_FEATURES);
+                              const uFeatures = getEffectiveUserFeatures(u);
                               const { branchName, allowedRegion } = parseBranchAndRegion(
                                 u.branch_name || u.outlet_assigned,
                                 u.allowed_region,

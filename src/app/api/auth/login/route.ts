@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getUserProfiles } from '@/lib/supabase/server';
+import { matchesLoginIdentifier } from '@/lib/access/app-feature';
+import { ALL_FEATURE_IDS } from '@/lib/supabase/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,10 +28,13 @@ export async function POST(req: Request) {
         success: true,
         data: {
           id: 'usr-superuser',
+          username: 'superuser',
           email: 'superuser@coffee-arabica.co.id',
           full_name: 'Super User (Administrator)',
           role: 'Super User',
           outlet_assigned: null,
+          allowed_region: 'ALL',
+          allowed_features: ALL_FEATURE_IDS,
           phone: '081122334455',
           is_active: true,
         },
@@ -37,13 +42,9 @@ export async function POST(req: Request) {
       });
     }
 
-    // 2. Check other registered user profiles
+    // 2. Check registered user profiles
     const profiles = await getUserProfiles();
-    const user = profiles.find((p) => 
-      (p.username && p.username.toLowerCase() === loginId) ||
-      p.email.toLowerCase() === loginId || 
-      (p.full_name && p.full_name.toLowerCase().replace(/\s+/g, '') === loginId)
-    );
+    const user = profiles.find((p) => matchesLoginIdentifier(p, loginId));
 
     if (!user) {
       return NextResponse.json(
@@ -59,8 +60,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const expectedPassword = user.password || user.phone || 'password123';
-    if (expectedPassword && password !== expectedPassword && password !== 'admin123' && password !== 'password123') {
+    const expectedPassword = (user.password || user.phone || '').trim();
+    if (
+      expectedPassword &&
+      password !== expectedPassword &&
+      password !== 'admin123' &&
+      password !== 'password123'
+    ) {
       return NextResponse.json(
         { success: false, error: 'Kata sandi salah. Masukkan kata sandi yang sesuai.' },
         { status: 401 }
@@ -71,10 +77,14 @@ export async function POST(req: Request) {
       success: true,
       data: {
         id: user.id,
+        username: user.username || user.email,
         email: user.email,
         full_name: user.full_name,
         role: user.role,
+        branch_name: user.branch_name || user.outlet_assigned || null,
         outlet_assigned: user.outlet_assigned || user.branch_name || null,
+        allowed_region: user.allowed_region || 'ALL',
+        allowed_features: Array.isArray(user.allowed_features) ? user.allowed_features : undefined,
         phone: user.phone || null,
         is_active: user.is_active ?? true,
       },

@@ -4,21 +4,24 @@ import { useAuth } from './AuthContext';
 import { Loader2, ShieldAlert, ArrowLeft } from 'lucide-react';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, isAuthenticated, canAccessFeature } = useAuth();
+  const { user, isLoading, isAuthenticated, firstAllowedHref, canAccessFeature } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
 
   const isLoginPage = pathname === '/login';
+  const hasAccess = isAuthenticated ? canAccessFeature(pathname) : false;
 
   useEffect(() => {
     if (!isLoading) {
       if (!isAuthenticated && !isLoginPage) {
         router.push('/login');
       } else if (isAuthenticated && isLoginPage) {
-        router.push('/');
+        router.push(firstAllowedHref || '/');
+      } else if (isAuthenticated && !hasAccess && pathname === '/' && firstAllowedHref && firstAllowedHref !== '/') {
+        router.replace(firstAllowedHref);
       }
     }
-  }, [isLoading, isAuthenticated, isLoginPage, router]);
+  }, [isLoading, isAuthenticated, isLoginPage, hasAccess, pathname, firstAllowedHref, router]);
 
   // If loading session, show animated splash
   if (isLoading) {
@@ -47,7 +50,6 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   // Check if current user is permitted to access this feature/route
-  const hasAccess = canAccessFeature(pathname);
   if (!hasAccess) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[65vh] p-6 text-center animate-fade-in">
@@ -62,11 +64,11 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
           Silakan gunakan menu fitur yang aktif di Sidebar atau hubungi Super User/Administrator untuk membuka akses fitur ini.
         </p>
         <button
-          onClick={() => router.push('/')}
+          onClick={() => router.push(firstAllowedHref || '/')}
           className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl text-xs font-bold hover:opacity-90 transition shadow-md"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Kembali ke Halaman Utama</span>
+          <span>Kembali ke Fitur Aktif</span>
         </button>
       </div>
     );

@@ -28,15 +28,25 @@ export function Navbar() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const currentRegion = searchParams.get('region') || 'ALL';
   const { theme, toggleTheme } = useTheme();
   const { isMobileOpen, toggleMobile, openTutorial } = useNavigation();
-  const { user, logout } = useAuth();
+  const { user, logout, allowedRegion, isRegionLocked } = useAuth();
+  const currentRegion = isRegionLocked ? allowedRegion : (searchParams.get('region') || 'ALL');
 
   const [currentTime, setCurrentTime] = useState<string>('');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const isSyncingRef = useRef(false);
+
+  // Lock URL ?region= parameter if user has a locked region
+  useEffect(() => {
+    if (!isRegionLocked) return;
+    if (searchParams.get('region') !== allowedRegion) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('region', allowedRegion);
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    }
+  }, [isRegionLocked, allowedRegion, pathname, router, searchParams]);
 
   // Close profile dropdown on click outside
   useEffect(() => {
@@ -102,6 +112,7 @@ export function Navbar() {
   };
 
   const handleRegionChange = (newRegion: string) => {
+    if (isRegionLocked && newRegion !== allowedRegion) return;
     const params = new URLSearchParams(searchParams.toString());
     if (newRegion === 'ALL') {
       params.delete('region');
@@ -170,36 +181,42 @@ export function Navbar() {
 
         {/* Google Material 3 Segmented Button for Region (desktop) */}
         <div className="hidden items-center rounded-full bg-[#e9eef6] dark:bg-[#282a2c] p-1 text-xs sm:flex">
-          <button
-            onClick={() => handleRegionChange('ALL')}
-            className={`rounded-full px-3 py-1 font-medium transition-all ${
-              currentRegion === 'ALL'
-                ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
-                : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
-            }`}
-          >
-            Semua
-          </button>
-          <button
-            onClick={() => handleRegionChange('JABODETABEK')}
-            className={`rounded-full px-3 py-1 font-medium transition-all ${
-              currentRegion === 'JABODETABEK'
-                ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
-                : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
-            }`}
-          >
-            JABO
-          </button>
-          <button
-            onClick={() => handleRegionChange('KALBAR')}
-            className={`rounded-full px-3 py-1 font-medium transition-all ${
-              currentRegion === 'KALBAR'
-                ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
-                : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
-            }`}
-          >
-            KALBAR
-          </button>
+          {!isRegionLocked && (
+            <button
+              onClick={() => handleRegionChange('ALL')}
+              className={`rounded-full px-3 py-1 font-medium transition-all ${
+                currentRegion === 'ALL'
+                  ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
+                  : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
+              }`}
+            >
+              Semua
+            </button>
+          )}
+          {(!isRegionLocked || allowedRegion === 'JABODETABEK') && (
+            <button
+              onClick={() => handleRegionChange('JABODETABEK')}
+              className={`rounded-full px-3 py-1 font-medium transition-all ${
+                currentRegion === 'JABODETABEK'
+                  ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
+                  : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
+              }`}
+            >
+              JABO
+            </button>
+          )}
+          {(!isRegionLocked || allowedRegion === 'KALBAR') && (
+            <button
+              onClick={() => handleRegionChange('KALBAR')}
+              className={`rounded-full px-3 py-1 font-medium transition-all ${
+                currentRegion === 'KALBAR'
+                  ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
+                  : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
+              }`}
+            >
+              KALBAR
+            </button>
+          )}
         </div>
 
         {/* Region selection on phones lives in the mobile sidebar */}

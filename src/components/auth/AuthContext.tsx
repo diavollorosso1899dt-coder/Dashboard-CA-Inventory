@@ -6,6 +6,7 @@ import { UserProfile, UserRole, APP_FEATURES, ALL_FEATURE_IDS } from '@/lib/supa
 import {
   AllowedRegion,
   findFeatureByIdOrHref,
+  matchesLoginIdentifier,
   parseBranchAndRegion,
 } from '@/lib/access/app-feature';
 
@@ -16,6 +17,7 @@ interface AuthContextType {
   isSuperUser: boolean;
   allowedRegion: AllowedRegion;
   isRegionLocked: boolean;
+  firstAllowedHref: string;
   canAccessFeature: (featureIdOrHref: string) => boolean;
   login: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
@@ -35,10 +37,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user && (user.role === 'Super User' || user.role === 'super_user')
   );
 
-  const { allowedRegion } = parseBranchAndRegion(
+  const { allowedRegion, allowedFeatures } = parseBranchAndRegion(
     user?.branch_name || user?.outlet_assigned,
     user?.allowed_region,
-    user?.role
+    user?.role,
+    user?.allowed_features
   );
 
   const isRegionLocked = Boolean(
@@ -58,8 +61,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const featureId = feat ? feat.id : featureIdOrHref;
 
     // If super user explicitly set allowed_features for this user
-    if (Array.isArray(user.allowed_features)) {
-      return user.allowed_features.includes(featureId) || (feat ? user.allowed_features.includes(feat.href) : false);
+    const effectiveFeatures = Array.isArray(user.allowed_features)
+      ? user.allowed_features
+      : allowedFeatures;
+    if (Array.isArray(effectiveFeatures)) {
+      return (
+        effectiveFeatures.includes(featureId) ||
+        (feat ? effectiveFeatures.includes(feat.href) : false)
+      );
     }
 
     // Role-based defaults if not yet customized
@@ -98,22 +107,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ].includes(featureId);
   };
 
-  // Restore session from localStorage on initial load
+  const firstAllowedHref = React.useMemo(() => {
+    if (!user || isSuperUser) return '/';
+    const firstFeat = APP_FEATURES.find((f) => canAccessFeature(f.id));
+    return firstFeat?.href || '/';
+  }, [user, isSuperUser, allowedFeatures]);
+
+  // Restore session from localStorage on initial load and sync latest profile from server
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed && parsed.email) {
-          setUser(parsed);
-          document.cookie = `ca_auth=true; path=/; max-age=604800; SameSite=Lax`;
+    let active = true;
+    async function restoreAndSyncSession() {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && (parsed.email || parsed.username)) {
+            setUser(parsed);
+            document.cookie = `ca_auth=true; path=/; max-age=604800; SameSite=Lax`;
+
+            // Refresh latest user permissions from /api/users so role/feature updates apply immediately
+            try {
+              const res = await fetch('/api/users', { cache: 'no-store' });
+              const json = await res.json();
+              if (active && json?.success && Array.isArray(json.data)) {
+                const fresh = json.data.find(
+                  (p: UserProfile) =>
+                    (parsed.id && p.id === parsed.id) ||
+                    matchesLoginIdentifier(p, parsed.username || parsed.email || '')
+                );
+                if (fresh) {
+                  const merged: UserProfile = {
+                    ...parsed,
+                    ...fresh,
+                  };
+                  setUser(merged);
+                  localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+                }
+              }
+            } catch {
+              // Ignore network error during background profile refresh
+            }
+          }
         }
+      } catch (e) {
+        console.error('Failed to load session from storage', e);
+      } finally {
+        if (active) setIsLoading(false);
       }
-    } catch (e) {
-      console.error('Failed to load session from storage', e);
-    } finally {
-      setIsLoading(false);
     }
+
+    restoreAndSyncSession();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const login = async (email: string, password?: string) => {
@@ -172,6 +218,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isSuperUser,
         allowedRegion,
         isRegionLocked,
+        firstAllowedHref,
         canAccessFeature,
         login,
         logout,
