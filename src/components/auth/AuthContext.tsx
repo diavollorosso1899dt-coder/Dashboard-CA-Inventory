@@ -123,9 +123,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const parsed = JSON.parse(stored);
           if (parsed && (parsed.email || parsed.username)) {
             setUser(parsed);
+            if (active) setIsLoading(false);
             document.cookie = `ca_auth=true; path=/; max-age=604800; SameSite=Lax`;
 
-            // Refresh latest user permissions from /api/users so role/feature updates apply immediately
+            // Refresh latest user permissions from /api/users in background without blocking UI render
             try {
               const res = await fetch('/api/users', { cache: 'no-store' });
               const json = await res.json();
@@ -136,6 +137,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     matchesLoginIdentifier(p, parsed.username || parsed.email || '')
                 );
                 if (fresh) {
+                  if (fresh.is_active === false) {
+                    // Akun dinonaktifkan setelah sesi tersimpan: paksa logout
+                    // agar user tidak tetap memakai permission lama.
+                    try {
+                      localStorage.removeItem(STORAGE_KEY);
+                      document.cookie = 'ca_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+                    } catch {}
+                    if (active) {
+                      setUser(null);
+                      router.replace('/login');
+                    }
+                    return;
+                  }
                   const merged: UserProfile = {
                     ...parsed,
                     ...fresh,

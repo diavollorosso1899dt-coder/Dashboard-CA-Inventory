@@ -11,7 +11,7 @@ import {
   User, 
   FileText, 
   RotateCcw,
-  Store,
+  Boxes,
   AlertCircle
 } from 'lucide-react';
 import { SuratJalan } from '@/lib/supabase/types';
@@ -41,9 +41,15 @@ export default function DeliveryProofModal({
   const [hasSignature, setHasSignature] = useState(false);
   const [receiverName, setReceiverName] = useState(defaultReceiverName || suratJalan.receiver_name || suratJalan.penerima_nama || '');
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  const [notes, setNotes] = useState('Barang diterima lengkap dan dalam kondisi baik.');
+  const [notes, setNotes] = useState('Seluruh item barang diterima lengkap dan dalam kondisi baik.');
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  const items = suratJalan.items || [];
+  const totalUnits = items.reduce(
+    (acc: number, it: any) => acc + (Number(it.received_quantity ?? it.quantity ?? it.qty ?? 1) || 1),
+    0
+  );
 
   // Setup canvas resolution and styling
   useEffect(() => {
@@ -191,7 +197,7 @@ export default function DeliveryProofModal({
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Bukti Serah Terima Surat Jalan
+                Konfirmasi Seluruh Item Surat Jalan
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {suratJalan.nomor_sj || suratJalan.sj_number || 'SJ-PENGIRIMAN'} &bull; {suratJalan.tujuan_outlet_nama || suratJalan.branch_name || 'Outlet'}
@@ -212,6 +218,41 @@ export default function DeliveryProofModal({
             <div className="flex items-center gap-2 p-3 text-xs rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {/* Ringkasan Seluruh Item dalam Surat Jalan */}
+          {items.length > 0 && (
+            <div className="p-3 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                  <Boxes className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Diselesaikan Sekaligus: {items.length} Item ({totalUnits} Unit)</span>
+                </span>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200">
+                  1x Konfirmasi Semua Item
+                </span>
+              </div>
+              <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                {items.map((it: any, idx: number) => {
+                  const name = it.item_name || it.nama_barang || it.name || 'Barang';
+                  const qty = it.received_quantity ?? it.quantity ?? it.qty ?? 1;
+                  const unit = it.unit || it.satuan || 'Unit';
+                  return (
+                    <div
+                      key={it.id || idx}
+                      className="flex items-center justify-between text-[11px] bg-white/80 dark:bg-slate-900/60 px-2.5 py-1 rounded-lg border border-emerald-100 dark:border-emerald-900/50"
+                    >
+                      <span className="font-medium text-slate-700 dark:text-slate-200 truncate pr-2">
+                        {idx + 1}. {name}
+                      </span>
+                      <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300 shrink-0">
+                        {qty} {unit}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -314,7 +355,7 @@ export default function DeliveryProofModal({
             </label>
             <input
               type="text"
-              placeholder="Contoh: Barang lengkap 12 unit, packing aman"
+              placeholder="Contoh: Barang lengkap, packing aman"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
@@ -337,7 +378,7 @@ export default function DeliveryProofModal({
               className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-md shadow-emerald-600/20 transition flex items-center gap-1.5 disabled:opacity-50 active:scale-95 cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{submitting ? 'Menyimpan...' : 'Simpan Bukti & Selesaikan'}</span>
+              <span>{submitting ? 'Menyimpan...' : `Selesaikan Semua (${items.length || 1} Item)`}</span>
             </button>
           </div>
         </form>

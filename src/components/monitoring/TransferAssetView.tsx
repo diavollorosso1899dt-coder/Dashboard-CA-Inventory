@@ -39,6 +39,8 @@ import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/compo
 import AreaFilterPills from '@/components/ui/AreaFilterPills';
 import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
 import { useAuth } from '@/components/auth/AuthContext';
+import { applyConfirmedItemsToRequestOrders } from '@/lib/distribution/confirm-surat-jalan';
+import { resolveTransferRegion } from '@/lib/distribution/transfer-sj-sync';
 
 const TRANSFER_COLUMNS: ColumnItem[] = [
   { id: 'doc_number', label: 'No. Dokumen & Surat Jalan', defaultVisible: true, alwaysVisible: true },
@@ -361,20 +363,42 @@ export function TransferAssetView({
       }
     };
 
-    fetchLatestRo();
-    fetchLatestAssets();
-    const interval = setInterval(() => {
+    const fetchLatestTransfers = async () => {
+      try {
+        const res = await fetch('/api/transfers', { cache: 'no-store' });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.data && Array.isArray(json.data) && isMounted) {
+            setTransfers(json.data);
+          }
+        }
+      } catch (err) {
+        // silent fallback
+      }
+    };
+
+    if (!initialRequestOrders || initialRequestOrders.length === 0) {
       fetchLatestRo();
+    }
+    if (!initialAssets || initialAssets.length === 0) {
       fetchLatestAssets();
-    }, 3500);
+    }
+    fetchLatestTransfers();
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchLatestRo();
+      fetchLatestTransfers();
+    }, 15000);
 
     const handleDataUpdated = () => {
       fetchLatestRo();
       fetchLatestAssets();
+      fetchLatestTransfers();
     };
     window.addEventListener('storage', handleDataUpdated);
     window.addEventListener('ca_ro_updated', handleDataUpdated);
     window.addEventListener('ca_pr_updated', handleDataUpdated);
+    window.addEventListener('ca_sj_updated', handleDataUpdated);
 
     return () => {
       isMounted = false;
@@ -382,18 +406,27 @@ export function TransferAssetView({
       window.removeEventListener('storage', handleDataUpdated);
       window.removeEventListener('ca_ro_updated', handleDataUpdated);
       window.removeEventListener('ca_pr_updated', handleDataUpdated);
+      window.removeEventListener('ca_sj_updated', handleDataUpdated);
     };
   }, []);
 
-  // Outlet Region Map for fast lookup
+  // Outlet Region Map for fast lookup (outlets + requestOrders + monitoringAssets)
   const outletRegionMap = useMemo(() => {
     const map = new Map<string, string>();
     (outlets || []).forEach((o) => {
       const name = ((o as any).name || (o as any).branch_name || (o as any).nama || '').toLowerCase().trim();
-      if (name) map.set(name, (o as any).region);
+      if (name && (o as any).region) map.set(name, (o as any).region);
+    });
+    (requestOrders || []).forEach((ro) => {
+      const name = (ro.branch_name || '').toLowerCase().trim();
+      if (name && ro.region) map.set(name, ro.region);
+    });
+    (monitoringAssets || []).forEach((a) => {
+      const name = (a.branch_name || '').toLowerCase().trim();
+      if (name && a.region) map.set(name, a.region);
     });
     return map;
-  }, [outlets]);
+  }, [outlets, requestOrders, monitoringAssets]);
 
   // Ekstrak item Ready Stock dari Kelola RO secara Real-Time
   const roReadyAssets = useMemo(() => {
@@ -671,6 +704,15 @@ export function TransferAssetView({
       const year = new Date().getFullYear();
       const rand = Math.floor(1000 + Math.random() * 9000);
 
+      const resolvedRegion = resolveTransferRegion({
+        explicitRegion: outletRegionMap.get(toLocation.toLowerCase().trim()),
+        toLocation,
+        outlets,
+        requestOrders,
+        assets: monitoringAssets,
+        fallbackRegion: regionFilter !== 'ALL' ? regionFilter : null,
+      });
+
       const payload: Partial<AssetTransfer> = {
         transfer_number: `DIST/${year}/${rand}`,
         surat_jalan_number: `SJ-DIST/${year}/${rand}`,
@@ -678,6 +720,7 @@ export function TransferAssetView({
         from_location: fromLocation,
         destination_type: destinationType,
         to_location: toLocation,
+        region: resolvedRegion,
         transfer_date: transferDate,
         status: 'IN_TRANSIT',
         sender_pic: senderPic,
@@ -698,6 +741,8 @@ export function TransferAssetView({
       if (json.success && json.data) {
         setTransfers((prev) => [json.data, ...prev]);
         setIsCreateModalOpen(false);
+        window.dispatchEvent(new Event('ca_sj_updated'));
+        window.dispatchEvent(new Event('storage'));
 
         // Record all dispatched items so they disappear from Outlet queue
         const newlyDispatched: string[] = [];
@@ -758,6 +803,15 @@ export function TransferAssetView({
         notes: itemNote || (asset.notes || ''),
       };
 
+      const resolvedRegion = resolveTransferRegion({
+        explicitRegion: asset.region || outletRegionMap.get(branchName.toLowerCase().trim()),
+        toLocation: branchName,
+        outlets,
+        requestOrders,
+        assets: monitoringAssets,
+        fallbackRegion: regionFilter !== 'ALL' ? regionFilter : null,
+      });
+
       const payload: Partial<AssetTransfer> = {
         transfer_number: `DIST/${year}/${rand}`,
         surat_jalan_number: `SJ-DIST/${year}/${rand}`,
@@ -765,6 +819,7 @@ export function TransferAssetView({
         from_location: 'Gudang Pusat SCGA',
         destination_type: 'OUTLET',
         to_location: branchName,
+        region: resolvedRegion,
         transfer_date: new Date().toISOString().split('T')[0],
         status: 'IN_TRANSIT',
         sender_pic: user?.full_name || 'Staff Logistik SCGA',
@@ -784,6 +839,8 @@ export function TransferAssetView({
       const json = await res.json();
       if (json.success && json.data) {
         setTransfers((prev) => [json.data, ...prev]);
+        window.dispatchEvent(new Event('ca_sj_updated'));
+        window.dispatchEvent(new Event('storage'));
 
         const newKeys = Array.from(new Set([
           ...dispatchedKeys,
@@ -962,62 +1019,36 @@ export function TransferAssetView({
         setTransfers((prev) => prev.map((t) => (t.id === selectedTransfer.id ? json.data : t)));
         setIsReceiveModalOpen(false);
 
-        // Sinkronisasi item yang diterima ke Kelola RO untuk pengukuran SLA
+        // Sinkronisasi seluruh item yang diterima ke Kelola RO sekaligus (batch per RO, tanpa saling menimpa)
         try {
-          const destOutlet = (selectedTransfer.to_location || '').toLowerCase().trim();
-          for (const item of updatedItems) {
-            const itName = (item.item_name || '').toLowerCase().trim();
-            const receivedQty = item.received_quantity ?? item.quantity;
-            // Cari dokumen RO yang cocok
-            const targetRo = (requestOrders || []).find((ro) => {
-              if (item.asset_id && (item.asset_id === ro.ro_number || item.asset_id.startsWith(`ro-${ro.id}`))) {
-                return true;
-              }
-              if (item.notes && item.notes.includes(ro.ro_number)) {
-                return true;
-              }
-              const roBranch = (ro.branch_name || '').toLowerCase().trim();
-              if (roBranch === destOutlet && (ro.items || []).some((ri) => (ri.item_name || '').toLowerCase().trim() === itName)) {
-                return true;
-              }
-              return false;
-            });
+          const roPatches = applyConfirmedItemsToRequestOrders(
+            requestOrders || [],
+            updatedItems,
+            selectedTransfer.to_location || '',
+            {
+              receivedDate: receiveDate,
+              receiverName: receivePic.trim(),
+              notes: receiveNotes.trim(),
+              roNumbers: [
+                selectedTransfer.transfer_number || '',
+                selectedTransfer.surat_jalan_number || '',
+              ].filter(Boolean),
+            }
+          );
 
-            if (targetRo) {
-              const updatedRoItems = (targetRo.items || []).map((ri) => {
-                if ((ri.item_name || '').toLowerCase().trim() === itName) {
-                  return {
-                    ...ri,
-                    quantity_fulfilled: receivedQty,
-                    received_qty: receivedQty,
-                    stock_source: 'GUDANG_SCGA',
-                  };
-                }
-                return ri;
-              });
-
-              const allFulfilled = updatedRoItems.every(
-                (ri) => (ri.quantity_fulfilled || 0) >= (ri.quantity_ordered || 1)
-              );
-
-              await fetch('/api/distribution/ro', {
+          await Promise.all(
+            roPatches.map((patch) =>
+              fetch('/api/distribution/ro', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  id: targetRo.id,
-                  updates: {
-                    items: updatedRoItems,
-                    arrival_datetime: receiveDate,
-                    received_date: receiveDate,
-                    pic_receiver: receivePic.trim(),
-                    checklist_notes: receiveNotes.trim(),
-                    current_stage: allFulfilled ? 'SELESAI' : 'ASET_SAMPAI',
-                    status: allFulfilled ? 'COMPLETED' : targetRo.status,
-                  },
+                  id: patch.id,
+                  updates: patch.updates,
                 }),
-              });
-            }
-          }
+              })
+            )
+          );
+
           window.dispatchEvent(new Event('ca_ro_updated'));
           window.dispatchEvent(new Event('storage'));
         } catch (syncErr) {
@@ -1065,19 +1096,31 @@ export function TransferAssetView({
   // Metrics calculation
   const metrics = useMemo(() => {
     const regionMatching = transfers.filter((t) => {
-      const tReg = (t as any).region || outletRegionMap.get((t.to_location || '').toLowerCase().trim()) || (t.to_location.toLowerCase().includes('kalbar') ? 'KALBAR' : 'JABODETABEK');
+      const tReg = resolveTransferRegion({
+        explicitRegion: (t as any).region || outletRegionMap.get((t.to_location || '').toLowerCase().trim()),
+        toLocation: t.to_location,
+        outlets,
+        requestOrders,
+        assets: monitoringAssets,
+      });
       return matchesRegion(tReg, regionFilter);
     });
     const total = regionMatching.length;
     const inTransit = regionMatching.filter((t) => t.status === 'IN_TRANSIT').length;
     const received = regionMatching.filter((t) => t.status === 'RECEIVED' || t.status === 'COMPLETED').length;
     return { total, inTransit, received };
-  }, [transfers, regionFilter, outletRegionMap]);
+  }, [transfers, regionFilter, outletRegionMap, outlets, requestOrders, monitoringAssets]);
 
   // Filtered transfers
   const filteredTransfers = useMemo(() => {
     return transfers.filter((t) => {
-      const tReg = (t as any).region || outletRegionMap.get((t.to_location || '').toLowerCase().trim()) || (t.to_location.toLowerCase().includes('kalbar') ? 'KALBAR' : 'JABODETABEK');
+      const tReg = resolveTransferRegion({
+        explicitRegion: (t as any).region || outletRegionMap.get((t.to_location || '').toLowerCase().trim()),
+        toLocation: t.to_location,
+        outlets,
+        requestOrders,
+        assets: monitoringAssets,
+      });
       if (!matchesRegion(tReg, regionFilter)) return false;
 
       // Status filter logic: Dokumen yang sudah diterima outlet keluar dari daftar aktif
@@ -1102,7 +1145,7 @@ export function TransferAssetView({
       }
       return true;
     });
-  }, [transfers, statusFilter, search, regionFilter, outletRegionMap]);
+  }, [transfers, statusFilter, search, regionFilter, outletRegionMap, outlets, requestOrders, monitoringAssets]);
 
   return (
     <div className="space-y-6">
@@ -1130,7 +1173,11 @@ export function TransferAssetView({
 
         <div className="flex items-center gap-2 self-end md:self-auto flex-wrap">
           <Link
-            href="/distribution/surat-jalan"
+            href={
+              regionFilter !== 'ALL'
+                ? `/distribution/surat-jalan?region=${regionFilter}`
+                : '/distribution/surat-jalan'
+            }
             className="flex items-center gap-1.5 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#1e1f20] px-3.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-xs"
             title="Buka menu Dokumen & Surat Jalan"
           >

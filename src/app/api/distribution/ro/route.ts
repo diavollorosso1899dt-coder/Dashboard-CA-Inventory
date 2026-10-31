@@ -30,8 +30,7 @@ export async function GET(req: NextRequest) {
         return true;
       });
     }
-    const sortedData = sortOrdersNewestFirst(data);
-    return NextResponse.json({ data: sortedData });
+    return NextResponse.json({ data });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

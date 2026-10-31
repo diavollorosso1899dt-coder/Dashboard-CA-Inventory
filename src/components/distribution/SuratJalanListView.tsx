@@ -42,6 +42,11 @@ import { useAuth } from '@/components/auth/AuthContext';
 import DeliveryProofModal from './DeliveryProofModal';
 import SuratJalanTrackingModal from './SuratJalanTrackingModal';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
+import {
+  collectGroupConfirmationTargets,
+  normalizeConfirmedSjItems,
+} from '@/lib/distribution/confirm-surat-jalan';
+import { resolveTransferRegion } from '@/lib/distribution/transfer-sj-sync';
 
 interface SuratJalanListViewProps {
   isHistoryOnly?: boolean;
@@ -87,6 +92,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>(isHistoryOnly ? 'DELIVERED' : 'ACTIVE');
   const [activeTab, setActiveTab] = useState<'active' | 'history'>(isHistoryOnly ? 'history' : 'active');
+  const isHistoryMode = isHistoryOnly || activeTab === 'history';
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -95,9 +101,34 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [groupByOutlet, setGroupByOutlet] = useState<boolean>(true);
   const [detailModalGroup, setDetailModalGroup] = useState<GroupedSuratJalanRow | null>(null);
-  const [deliveryProofTargetSj, setDeliveryProofTargetSj] = useState<SuratJalan | null>(null);
+  const [deliveryProofTargetGroup, setDeliveryProofTargetGroup] = useState<GroupedSuratJalanRow | SuratJalan | null>(null);
   const [trackingModalSj, setTrackingModalSj] = useState<SuratJalan | null>(null);
   const [trackingModalOutlet, setTrackingModalOutlet] = useState<string>('');
+  const [proofPreviewGroup, setProofPreviewGroup] = useState<GroupedSuratJalanRow | null>(null);
+
+  const getGroupProof = (group: GroupedSuratJalanRow) => {
+    const docs = group.docs || [group.primarySj];
+    const items = group.items || [];
+    const receiverName =
+      group.primarySj.receiver_name ||
+      group.primarySj.penerima_nama ||
+      docs.find((d) => d.receiver_name || d.penerima_nama)?.receiver_name ||
+      docs.find((d) => d.penerima_nama)?.penerima_nama ||
+      '';
+    const signatureUrl =
+      group.primarySj.tanda_tangan_url ||
+      docs.find((d) => d.tanda_tangan_url)?.tanda_tangan_url ||
+      items.find((it: any) => it?.tanda_tangan_url || it?.signature_url)?.tanda_tangan_url ||
+      items.find((it: any) => it?.signature_url)?.signature_url ||
+      '';
+    const photoUrl =
+      group.primarySj.foto_bukti_url ||
+      docs.find((d) => d.foto_bukti_url)?.foto_bukti_url ||
+      items.find((it: any) => it?.foto_bukti_url || it?.photo_url)?.foto_bukti_url ||
+      items.find((it: any) => it?.photo_url)?.photo_url ||
+      '';
+    return { receiverName, signatureUrl, photoUrl };
+  };
 
   const activeCount = useMemo(() => {
     return sjList.filter((s) => {
@@ -111,35 +142,76 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   }, [sjList]);
 
   // Column visibility
-  const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
+  const { visibleColumns, setVisibleColumns, isVisible: baseIsVisible } = useColumnVisibility(
     'ca_surat_jalan_columns',
     SJ_COLUMNS
   );
-  const visibleColCount = SJ_COLUMNS.filter((c) => isVisible(c.id)).length;
+  const isVisible = (colId: string) => {
+    if (isHistoryMode) {
+      return (
+        colId === 'doc_number' ||
+        colId === 'route' ||
+        colId === 'items' ||
+        colId === 'pics' ||
+        colId === 'status'
+      );
+    }
+    return baseIsVisible(colId);
+  };
+  const visibleColCount = isHistoryMode ? 6 : SJ_COLUMNS.filter((c) => baseIsVisible(c.id)).length;
 
   // Sync regionFilter when URL parameter changes
   useEffect(() => {
     setRegionFilter(normalizeRegion(searchParams ? searchParams.get('region') : null));
   }, [searchParams]);
 
-  const fetchSj = async () => {
+  const fetchSj = async (silent: boolean | unknown = false) => {
+    const isSilent = silent === true;
     try {
-      setLoading(true);
-      const res = await fetch('/api/distribution/surat-jalan');
+      if (!isSilent) setLoading(true);
+      const res = await fetch('/api/distribution/surat-jalan', { cache: 'no-store' });
       const json = await res.json();
       if (json.data) {
         setSjList(json.data);
       }
     } catch (err) {
-      console.error('Failed to fetch Surat Jalan:', err);
-      setToast({ type: 'error', message: 'Gagal memuat daftar Surat Jalan' });
+      if (!isSilent) {
+        console.error('Failed to fetch Surat Jalan:', err);
+        setToast({ type: 'error', message: 'Gagal memuat daftar Surat Jalan' });
+      }
     } finally {
-      setLoading(false);
+      if (!isSilent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchSj();
+    fetchSj(sjList.length > 0);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchSj(true);
+    }, 15000);
+
+    const handleSync = () => {
+      fetchSj(true);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchSj(true);
+      }
+    };
+
+    window.addEventListener('ca_sj_updated', handleSync);
+    window.addEventListener('storage', handleSync);
+    window.addEventListener('focus', handleSync);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('ca_sj_updated', handleSync);
+      window.removeEventListener('storage', handleSync);
+      window.removeEventListener('focus', handleSync);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, []);
 
   const copyToClipboard = async (text: string, title: string, id: string) => {
@@ -199,17 +271,19 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
     photoUrl?: string;
     notes: string;
   }) => {
-    if (!deliveryProofTargetSj) return;
-    const sjId = deliveryProofTargetSj.id;
-    const roRef = deliveryProofTargetSj.ro_nomor || deliveryProofTargetSj.ro_number;
+    if (!deliveryProofTargetGroup) return;
+    const targets = collectGroupConfirmationTargets(deliveryProofTargetGroup);
+    const docIds = targets.docIds;
+    if (docIds.length === 0) return;
 
-    setUpdatingId(sjId);
+    setUpdatingId(docIds[0]);
     try {
       const res = await fetch('/api/distribution/surat-jalan', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: sjId,
+          id: docIds[0],
+          ids: docIds,
           status: 'DELIVERED',
           receiver_name: proofData.receiverName,
           penerima_nama: proofData.receiverName,
@@ -220,43 +294,43 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
       });
       const data = await res.json();
       if (data.success) {
+        const confirmedIdSet = new Set(docIds);
+        const nowIso = new Date().toISOString();
         setSjList((prev) =>
           prev.map((s) =>
-            s.id === sjId
+            confirmedIdSet.has(s.id)
               ? {
                   ...s,
                   status: 'DELIVERED',
+                  items: normalizeConfirmedSjItems(s.items || [], {
+                    signatureUrl: proofData.signatureUrl,
+                    photoUrl: proofData.photoUrl,
+                  }),
                   receiver_name: proofData.receiverName,
                   penerima_nama: proofData.receiverName,
                   tanda_tangan_url: proofData.signatureUrl,
                   foto_bukti_url: proofData.photoUrl,
                   catatan_penerimaan: proofData.notes,
-                  received_at: new Date().toISOString(),
+                  received_at: nowIso,
+                  waktu_diterima: nowIso,
                 }
               : s
           )
         );
         setToast({
           type: 'success',
-          message: 'Surat Jalan berhasil diselesaikan dengan TTD digital & bukti serah terima!',
+          message: `Seluruh item (${targets.items.length} item) pada Surat Jalan ${targets.outletName} berhasil diselesaikan sekaligus!`,
         });
 
-        // Auto-advance corresponding RO if reference exists
-        if (roRef) {
-          fetch('/api/distribution/ro', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: roRef,
-              updates: {
-                status: 'CHECKLIST_DONE',
-                current_stage: 'CHECKLIST',
-                arrival_datetime: new Date().toISOString(),
-                pic_receiver: proofData.receiverName,
-              },
-            }),
-          }).catch((e) => console.warn('Could not auto-advance RO:', e));
+        // Beri tahu halaman Pemantauan Distribusi & tab lain agar segera
+        // memuat status terbaru tanpa menunggu polling.
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('ca_sj_updated'));
         }
+
+        // Ambil data terbaru dari server agar bukti foto/TTD dan status
+        // yang tersimpan di DB langsung terlihat (bukan hanya optimistis).
+        fetchSj(true);
       } else {
         setToast({ type: 'error', message: data.error || 'Gagal menyimpan bukti serah terima' });
       }
@@ -264,7 +338,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
       setToast({ type: 'error', message: 'Terjadi kesalahan jaringan saat menyimpan bukti serah terima' });
     } finally {
       setUpdatingId(null);
-      setDeliveryProofTargetSj(null);
+      setDeliveryProofTargetGroup(null);
     }
   };
 
@@ -325,9 +399,10 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   // 1. Raw Filtered List berdasarkan Region, Status, & Search
   const filteredList = useMemo(() => {
     return sjList.filter((sj) => {
-      const sjRegion = sj.region || (
-        (sj.branch_name || sj.tujuan_outlet_nama || '').toLowerCase().includes('kalbar') ? 'KALBAR' : 'JABODETABEK'
-      );
+      const sjRegion = resolveTransferRegion({
+        explicitRegion: sj.region,
+        toLocation: sj.branch_name || sj.tujuan_outlet_nama || '',
+      });
       if (!matchesRegion(sjRegion, regionFilter)) return false;
 
       const norm = normalizeSjStatus(sj.status);
@@ -513,12 +588,17 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
         return dateA.localeCompare(dateB);
       },
       pics: (a: GroupedSuratJalanRow, b: GroupedSuratJalanRow) =>
-        (a.primarySj.pengirim_nama || '').localeCompare(b.primarySj.pengirim_nama || '', 'id'),
+        isHistoryMode
+          ? (a.primarySj.receiver_name || a.primarySj.penerima_nama || '').localeCompare(
+              b.primarySj.receiver_name || b.primarySj.penerima_nama || '',
+              'id'
+            )
+          : (a.primarySj.pengirim_nama || '').localeCompare(b.primarySj.pengirim_nama || '', 'id'),
       items: (a: GroupedSuratJalanRow, b: GroupedSuratJalanRow) => a.totalUnits - b.totalUnits,
       status: (a: GroupedSuratJalanRow, b: GroupedSuratJalanRow) =>
         (a.primarySj.status || '').localeCompare(b.primarySj.status || '', 'id'),
     }),
-    []
+    [isHistoryMode]
   );
 
   const {
@@ -621,7 +701,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
 
         <div className="flex items-center gap-2.5 flex-wrap">
           <button
-            onClick={fetchSj}
+            onClick={() => fetchSj(false)}
             disabled={loading}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-all cursor-pointer"
             title="Refresh data Surat Jalan"
@@ -836,64 +916,40 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                   <span>Ekspor Rekap CSV</span>
                 </button>
               )}
-              <ColumnVisibilityPicker
-                columns={SJ_COLUMNS}
-                visibleColumns={visibleColumns}
-                onChange={setVisibleColumns}
-                storageKey="ca_surat_jalan_columns"
-              />
+              {!isHistoryMode && (
+                <ColumnVisibilityPicker
+                  columns={SJ_COLUMNS}
+                  visibleColumns={visibleColumns}
+                  onChange={setVisibleColumns}
+                  storageKey="ca_surat_jalan_columns"
+                />
+              )}
             </div>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
               <thead className="bg-[#f0f4f9] dark:bg-[#1e1f20] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#444746]">
-                <tr>
-                  {isVisible('doc_number') && (
+                {isHistoryMode ? (
+                  <tr>
                     <th className="py-3.5 px-3">
                       <SortableHeader
-                        label="No. Dokumen & Surat Jalan"
+                        label="No. Surat Jalan"
                         field="doc_number"
                         currentSortField={sortField}
                         currentSortDirection={sortDirection}
                         onSort={handleSort}
                       />
                     </th>
-                  )}
-                  {isVisible('route') && (
                     <th className="py-3.5 px-3">
                       <SortableHeader
-                        label="Rute Distribusi (Asal → Tujuan)"
+                        label="Outlet Tujuan"
                         field="route"
                         currentSortField={sortField}
                         currentSortDirection={sortDirection}
                         onSort={handleSort}
                       />
                     </th>
-                  )}
-                  {isVisible('dates_courier') && (
-                    <th className="py-3.5 px-3">
-                      <SortableHeader
-                        label="Tanggal & Kurir"
-                        field="dates_courier"
-                        currentSortField={sortField}
-                        currentSortDirection={sortDirection}
-                        onSort={handleSort}
-                      />
-                    </th>
-                  )}
-                  {isVisible('pics') && (
-                    <th className="py-3.5 px-3">
-                      <SortableHeader
-                        label="PIC Pengirim / Penerima"
-                        field="pics"
-                        currentSortField={sortField}
-                        currentSortDirection={sortDirection}
-                        onSort={handleSort}
-                      />
-                    </th>
-                  )}
-                  {isVisible('items') && (
                     <th className="py-3.5 px-3 text-center">
                       <SortableHeader
                         label="Item & Rincian"
@@ -904,8 +960,16 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         align="center"
                       />
                     </th>
-                  )}
-                  {isVisible('status') && (
+                    <th className="py-3.5 px-3">
+                      <SortableHeader
+                        label="Nama Penerima"
+                        field="pics"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                        onSort={handleSort}
+                      />
+                    </th>
+                    <th className="py-3.5 px-3 text-center">Foto &amp; TTD Penerima</th>
                     <th className="py-3.5 px-3 text-center">
                       <SortableHeader
                         label="Status"
@@ -916,9 +980,80 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         align="center"
                       />
                     </th>
-                  )}
-                  {isVisible('actions') && <th className="py-3.5 px-3 text-right">Aksi</th>}
-                </tr>
+                  </tr>
+                ) : (
+                  <tr>
+                    {isVisible('doc_number') && (
+                      <th className="py-3.5 px-3">
+                        <SortableHeader
+                          label="No. Dokumen & Surat Jalan"
+                          field="doc_number"
+                          currentSortField={sortField}
+                          currentSortDirection={sortDirection}
+                          onSort={handleSort}
+                        />
+                      </th>
+                    )}
+                    {isVisible('route') && (
+                      <th className="py-3.5 px-3">
+                        <SortableHeader
+                          label="Rute Distribusi (Asal → Tujuan)"
+                          field="route"
+                          currentSortField={sortField}
+                          currentSortDirection={sortDirection}
+                          onSort={handleSort}
+                        />
+                      </th>
+                    )}
+                    {isVisible('dates_courier') && (
+                      <th className="py-3.5 px-3">
+                        <SortableHeader
+                          label="Tanggal & Kurir"
+                          field="dates_courier"
+                          currentSortField={sortField}
+                          currentSortDirection={sortDirection}
+                          onSort={handleSort}
+                        />
+                      </th>
+                    )}
+                    {isVisible('pics') && (
+                      <th className="py-3.5 px-3">
+                        <SortableHeader
+                          label="PIC Pengirim / Penerima"
+                          field="pics"
+                          currentSortField={sortField}
+                          currentSortDirection={sortDirection}
+                          onSort={handleSort}
+                        />
+                      </th>
+                    )}
+                    {isVisible('items') && (
+                      <th className="py-3.5 px-3 text-center">
+                        <SortableHeader
+                          label="Item & Rincian"
+                          field="items"
+                          currentSortField={sortField}
+                          currentSortDirection={sortDirection}
+                          onSort={handleSort}
+                          align="center"
+                        />
+                      </th>
+                    )}
+                    {isVisible('status') && (
+                      <th className="py-3.5 px-3 text-center">
+                        <SortableHeader
+                          label="Status"
+                          field="status"
+                          currentSortField={sortField}
+                          currentSortDirection={sortDirection}
+                          onSort={handleSort}
+                          align="center"
+                        />
+                      </th>
+                    )}
+                    {isVisible('actions') && <th className="py-3.5 px-3 text-right">Aksi</th>}
+                  </tr>
+                )}
               </thead>
               <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]">
                 {loading ? (
@@ -960,7 +1095,153 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                     const plate = group.primarySj.kendaraan_plat || group.primarySj.vehicle_number;
                     const printUrl = `/distribution/surat-jalan/print/${encodeURIComponent(group.primarySj.id)}?outlet=${encodeURIComponent(group.outletName)}`;
 
-                    return (
+                    return isHistoryMode ? (
+                      <tr key={group.key} className="hover:bg-[#f8fafd] dark:hover:bg-[#282a2c]/60 transition-colors">
+                        {/* 1. No. Surat Jalan */}
+                        <td className="py-3 px-3">
+                          <div className="font-mono font-bold text-xs text-[#0b57d0] dark:text-[#a8c7fa] flex items-center gap-1.5 flex-wrap">
+                            <span>{group.sjNumbers.join(', ')}</span>
+                          </div>
+                        </td>
+
+                        {/* 2. Outlet Tujuan */}
+                        <td className="py-3 px-3">
+                          <span className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
+                            {group.outletName}
+                          </span>
+                        </td>
+
+                        {/* 3. Item & Rincian */}
+                        <td className="py-3 px-3">
+                          <div className="space-y-1.5 min-w-[210px] max-w-[340px] mx-auto">
+                            {group.items && group.items.length > 0 ? (
+                              <>
+                                {group.items.slice(0, 3).map((it: any, idx: number) => {
+                                  const itName = it.item_name || it.nama_barang || 'Barang';
+                                  const qty = it.quantity ?? it.qty ?? 1;
+                                  const receivedQty = it.received_quantity ?? it.received_qty;
+                                  const hasReceived = receivedQty !== undefined && receivedQty !== null;
+                                  const qtyMismatch = hasReceived && Number(receivedQty) !== Number(qty);
+                                  const unit = it.unit || it.satuan || 'Unit';
+                                  return (
+                                    <div
+                                      key={it.id || idx}
+                                      className="flex items-center justify-between gap-1.5 p-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#333538] bg-[#f8fafd] dark:bg-[#282a2c]/60 text-xs shadow-2xs"
+                                    >
+                                      <span className="font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] truncate">
+                                        {itName}
+                                      </span>
+                                      <span className="flex items-center gap-1 shrink-0">
+                                        {qtyMismatch && (
+                                          <span className="rounded-md bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 px-1 py-0.5 text-[9px] font-bold text-amber-800 dark:text-amber-200">
+                                            diterima {receivedQty}
+                                          </span>
+                                        )}
+                                        <span className="font-bold text-[#0b57d0] dark:text-[#a8c7fa] font-mono">
+                                          {qty} {unit}
+                                        </span>
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+
+                                <div className="flex items-center justify-between pt-0.5">
+                                  <span className="text-[10px] font-bold text-slate-500">
+                                    Total: {group.totalUnits} Unit ({group.items.length} Item)
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDetailModalGroup(group)}
+                                    className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <span>
+                                      {group.items.length > 3
+                                        ? `+${group.items.length - 3} item lainnya...`
+                                        : 'Lihat Rincian'}
+                                    </span>
+                                  </button>
+                                </div>
+                              </>
+                            ) : (
+                              <span className="text-xs text-[#747775] italic">0 Unit</span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* 4. Nama Penerima */}
+                        <td className="py-3 px-3">
+                          {(() => {
+                            const { receiverName } = getGroupProof(group);
+                            return receiverName ? (
+                              <strong className="text-xs text-emerald-700 dark:text-emerald-300">
+                                {receiverName}
+                              </strong>
+                            ) : (
+                              <span className="text-xs italic text-[#747775]">Menunggu konfirmasi outlet</span>
+                            );
+                          })()}
+                        </td>
+
+                        {/* 5. Foto & TTD Penerima */}
+                        <td className="py-3 px-3 text-center">
+                          {(() => {
+                            const { photoUrl, signatureUrl } = getGroupProof(group);
+                            if (!photoUrl && !signatureUrl) {
+                              return (
+                                <span className="text-[11px] italic text-[#747775]">
+                                  Belum ada foto / TTD
+                                </span>
+                              );
+                            }
+                            return (
+                              <div className="inline-flex items-center justify-center gap-2 flex-wrap">
+                                {photoUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setProofPreviewGroup(group)}
+                                    className="group flex flex-col items-center gap-0.5 p-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1e1f20] hover:border-indigo-400 transition-all cursor-pointer shadow-2xs"
+                                    title="Klik untuk memperbesar Foto Bukti Penerimaan"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={photoUrl}
+                                      alt="Foto Bukti Penerima"
+                                      className="h-10 w-14 object-cover rounded border border-slate-100 dark:border-slate-800"
+                                    />
+                                    <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 group-hover:text-indigo-600">
+                                      Foto Bukti
+                                    </span>
+                                  </button>
+                                )}
+                                {signatureUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setProofPreviewGroup(group)}
+                                    className="group flex flex-col items-center gap-0.5 p-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1e1f20] hover:border-emerald-400 transition-all cursor-pointer shadow-2xs"
+                                    title="Klik untuk memperbesar TTD Penerima"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={signatureUrl}
+                                      alt="TTD Penerima"
+                                      className="h-10 w-16 object-contain bg-white rounded border border-slate-100"
+                                    />
+                                    <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-300 group-hover:text-emerald-600">
+                                      TTD Penerima
+                                    </span>
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </td>
+
+                        {/* 6. Status */}
+                        <td className="py-3 px-3 text-center">
+                          {getStatusBadge(group.primarySj.status)}
+                        </td>
+                      </tr>
+                    ) : (
                       <tr key={group.key} className="hover:bg-[#f8fafd] dark:hover:bg-[#282a2c]/60 transition-colors">
                         {/* No. Dokumen & Surat Jalan */}
                         {isVisible('doc_number') && (
@@ -1116,7 +1397,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                               {/* Tombol Lacak Riwayat & Stepper Tracking */}
                               <button
                                 onClick={() => {
-                                  setTrackingModalSj(group.primarySj);
+                                  setTrackingModalSj(collectGroupConfirmationTargets(group).consolidatedSj);
                                   setTrackingModalOutlet(group.outletName);
                                 }}
                                 className="inline-flex items-center gap-1 rounded-full bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
@@ -1128,7 +1409,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
 
                               {isInTransit && (
                                 <button
-                                  onClick={() => setDeliveryProofTargetSj(group.primarySj)}
+                                  onClick={() => setDeliveryProofTargetGroup(group)}
                                   className="flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 text-xs font-semibold transition-colors shadow-xs cursor-pointer"
                                   title="Konfirmasi Kedatangan Barang & Tanda Tangan Digital"
                                 >
@@ -1218,48 +1499,116 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         <span className="text-xs font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded">
                           {sjNo}
                         </span>
-                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
-                          <Calendar className="w-3.5 h-3.5" />
-                          {formatDateOnly(group.primarySj.delivery_date || group.primarySj.tanggal_kirim || group.primarySj.created_at)}
-                        </div>
+                        {!isHistoryMode && (
+                          <div className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5" />
+                            {formatDateOnly(group.primarySj.delivery_date || group.primarySj.tanggal_kirim || group.primarySj.created_at)}
+                          </div>
+                        )}
                       </div>
                       {getStatusBadge(group.primarySj.status)}
                     </div>
 
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 space-y-2 text-sm">
-                      <div>
-                        <div className="text-xs text-slate-400">Outlet Tujuan:</div>
-                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                          <span>{group.outletName}</span>
-                          {group.docs.length > 1 && (
-                            <span className="text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-semibold px-2 py-0.2 rounded-full">
-                              {group.docs.length} Dokumen
+                      {isHistoryMode ? (
+                        <div className="space-y-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">Outlet Tujuan:</span>
+                            <strong className="text-slate-900 dark:text-white">{group.outletName}</strong>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">Nama Penerima:</span>
+                            {(() => {
+                              const { receiverName } = getGroupProof(group);
+                              return receiverName ? (
+                                <strong className="text-emerald-700 dark:text-emerald-300">
+                                  {receiverName}
+                                </strong>
+                              ) : (
+                                <span className="italic text-slate-400">Menunggu konfirmasi outlet</span>
+                              );
+                            })()}
+                          </div>
+                          {(() => {
+                            const { photoUrl, signatureUrl } = getGroupProof(group);
+                            if (!photoUrl && !signatureUrl) return null;
+                            return (
+                              <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800/80 grid grid-cols-2 gap-2">
+                                {photoUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setProofPreviewGroup(group)}
+                                    className="flex flex-col items-center p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 hover:border-indigo-400 cursor-pointer"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={photoUrl}
+                                      alt="Foto Penerima"
+                                      className="h-14 w-full object-cover rounded"
+                                    />
+                                    <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 mt-1">
+                                      Foto Penerima
+                                    </span>
+                                  </button>
+                                )}
+                                {signatureUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setProofPreviewGroup(group)}
+                                    className="flex flex-col items-center p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 hover:border-emerald-400 cursor-pointer"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={signatureUrl}
+                                      alt="TTD Penerima"
+                                      className="h-14 w-full object-contain bg-white rounded"
+                                    />
+                                    <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 mt-1">
+                                      TTD Penerima
+                                    </span>
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <div className="text-xs text-slate-400">Outlet Tujuan:</div>
+                            <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                              <span>{group.outletName}</span>
+                              {group.docs.length > 1 && (
+                                <span className="text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-semibold px-2 py-0.2 rounded-full">
+                                  {group.docs.length} Dokumen
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+                            <span>
+                              Ref RO: <strong className="font-mono text-slate-700 dark:text-slate-300">{group.roNumbers.join(', ') || '-'}</strong>
                             </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
-                        <span>
-                          Ref RO: <strong className="font-mono text-slate-700 dark:text-slate-300">{group.roNumbers.join(', ') || '-'}</strong>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setDetailModalGroup(group)}
-                          className="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
-                        >
-                          <Boxes className="w-3.5 h-3.5" />
-                          <span>{group.items?.length || 0} Jenis Item ({group.totalUnits} Unit)</span>
-                        </button>
-                      </div>
-                      <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-2">
-                          <User className="w-3.5 h-3.5 text-slate-400" />
-                          <span className="text-slate-700 dark:text-slate-300">{group.primarySj.driver_nama || group.primarySj.driver_name || 'Driver Pengantar'}</span>
-                        </div>
-                        <span className="font-mono bg-white dark:bg-slate-900 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 font-semibold text-slate-800 dark:text-slate-200">
-                          {group.primarySj.kendaraan_plat || group.primarySj.vehicle_number || '-'}
-                        </span>
-                      </div>
+                            <button
+                              type="button"
+                              onClick={() => setDetailModalGroup(group)}
+                              className="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Boxes className="w-3.5 h-3.5" />
+                              <span>{group.items?.length || 0} Jenis Item ({group.totalUnits} Unit)</span>
+                            </button>
+                          </div>
+                          <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              <User className="w-3.5 h-3.5 text-slate-400" />
+                              <span className="text-slate-700 dark:text-slate-300">{group.primarySj.driver_nama || group.primarySj.driver_name || 'Driver Pengantar'}</span>
+                            </div>
+                            <span className="font-mono bg-white dark:bg-slate-900 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 font-semibold text-slate-800 dark:text-slate-200">
+                              {group.primarySj.kendaraan_plat || group.primarySj.vehicle_number || '-'}
+                            </span>
+                          </div>
+                        </>
+                      )}
 
                       {/* List Nama Item */}
                       <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80">
@@ -1330,7 +1679,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                       <button
                         type="button"
                         onClick={() => {
-                          setTrackingModalSj(group.primarySj);
+                          setTrackingModalSj(collectGroupConfirmationTargets(group).consolidatedSj);
                           setTrackingModalOutlet(group.outletName);
                         }}
                         className="p-2 text-indigo-600 hover:text-indigo-800 bg-indigo-50 dark:bg-indigo-950/60 rounded-lg transition-colors cursor-pointer"
@@ -1358,7 +1707,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                     {isInTransit && (
                       <button
                         type="button"
-                        onClick={() => setDeliveryProofTargetSj(group.primarySj)}
+                        onClick={() => setDeliveryProofTargetGroup(group)}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950 hover:bg-emerald-100 dark:hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer shadow-2xs"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1551,14 +1900,92 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
       )}
 
       {/* MODAL BUKTI SERAH TERIMA & TTD DIGITAL */}
-      {deliveryProofTargetSj && (
+      {deliveryProofTargetGroup && (
         <DeliveryProofModal
-          isOpen={Boolean(deliveryProofTargetSj)}
-          onClose={() => setDeliveryProofTargetSj(null)}
-          suratJalan={deliveryProofTargetSj}
+          isOpen={Boolean(deliveryProofTargetGroup)}
+          onClose={() => setDeliveryProofTargetGroup(null)}
+          suratJalan={collectGroupConfirmationTargets(deliveryProofTargetGroup).consolidatedSj}
           defaultReceiverName={user?.full_name || ''}
           onConfirm={handleConfirmDeliveryWithProof}
         />
+      )}
+
+      {/* MODAL PRATINJAU FOTO & TTD PENERIMA */}
+      {proofPreviewGroup && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          onClick={() => setProofPreviewGroup(null)}
+        >
+          <div
+            className="spring-pop panel-card w-full max-w-lg p-5 space-y-4 border rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                  Bukti Foto &amp; TTD Penerima
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  SJ: <strong>{proofPreviewGroup.sjNumbers.join(', ')}</strong> • Outlet:{' '}
+                  <strong>{proofPreviewGroup.outletName}</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProofPreviewGroup(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {(() => {
+              const { receiverName, photoUrl, signatureUrl } = getGroupProof(proofPreviewGroup);
+              return (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between text-xs bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 px-3 py-2 rounded-xl">
+                    <span className="text-slate-600 dark:text-slate-400">Nama Penerima:</span>
+                    <strong className="text-emerald-700 dark:text-emerald-300">
+                      {receiverName || 'PIC Outlet'}
+                    </strong>
+                  </div>
+
+                  {photoUrl && (
+                    <div className="space-y-1.5">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                        Foto Bukti Penerimaan
+                      </span>
+                      <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={photoUrl}
+                          alt="Foto Bukti Penerimaan"
+                          className="max-h-72 w-full object-contain mx-auto"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {signatureUrl && (
+                    <div className="space-y-1.5">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                        Tanda Tangan Penerima
+                      </span>
+                      <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-white p-3">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={signatureUrl}
+                          alt="Tanda Tangan Penerima"
+                          className="max-h-44 w-full object-contain mx-auto"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
       )}
 
       {/* MODAL RIWAYAT PENERBITAN & TRACKING TIMELINE */}

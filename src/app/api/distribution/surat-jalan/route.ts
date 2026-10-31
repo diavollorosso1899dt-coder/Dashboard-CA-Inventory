@@ -12,7 +12,10 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const data = await getSuratJalanList();
-    return NextResponse.json({ data });
+    return NextResponse.json(
+      { data },
+      { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
+    );
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
@@ -33,6 +36,7 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
     const { 
       id, 
+      ids,
       status, 
       receiver_name, 
       penerima_nama, 
@@ -43,14 +47,24 @@ export async function PATCH(req: NextRequest) {
       notes, 
       catatan_penerimaan 
     } = body;
+
+    const targetIds: string[] = Array.isArray(ids) && ids.length > 0
+      ? ids.filter(Boolean)
+      : id
+        ? [id]
+        : [];
+
+    if (targetIds.length === 0) {
+      return NextResponse.json({ error: 'ID Surat Jalan diperlukan' }, { status: 400 });
+    }
     
-    const ok = await updateSuratJalanStatus(id, status, {
+    const ok = await updateSuratJalanStatus(targetIds, status, {
       receiverName: receiver_name || penerima_nama,
       signatureUrl: signature_url || tanda_tangan_url,
       photoUrl: photo_url || foto_bukti_url,
       notes: notes || catatan_penerimaan,
     });
-    return NextResponse.json({ success: ok });
+    return NextResponse.json({ success: ok, updatedIds: targetIds });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
@@ -76,4 +90,3 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
-

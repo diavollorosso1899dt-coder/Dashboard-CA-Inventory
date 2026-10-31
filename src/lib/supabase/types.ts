@@ -251,6 +251,7 @@ export interface AssetTransfer {
   from_location: string;
   destination_type?: 'OUTLET' | 'GUDANG_PUSAT';
   to_location: string;
+  region?: RegionType;
   transfer_date: string;
   received_date?: string | null;
   status: TransferStatus;
@@ -305,6 +306,8 @@ export interface ROItem {
 
   // Checklist verification fields
   received_qty?: number;
+  /** ID item Surat Jalan yang sudah menambah received_qty (mencegah hitung ganda saat konfirmasi diulang). */
+  received_from?: string[];
   condition?: 'BAIK' | 'RUSAK' | 'KURANG' | string;
   notes?: string;
   photo_url?: string | null;
@@ -409,6 +412,7 @@ export interface SuratJalan {
   notes?: string;
   catatan?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 // ==========================================

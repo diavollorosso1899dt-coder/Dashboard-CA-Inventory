@@ -27,6 +27,20 @@ import {
 } from '../procurement/pr-history';
 import { encodeBranchAndRegion, parseBranchAndRegion } from '../access/app-feature';
 import { matchesRoDateRange, RoDateField } from '../distribution/ro-date-filter';
+import {
+  applyConfirmedItemsToRequestOrders,
+  normalizeConfirmedSjItems,
+} from '../distribution/confirm-surat-jalan';
+import {
+  extractUnknownColumnFromError,
+  mapAssetTransferToSuratJalan,
+  mergeAssetTransfersLists,
+  mergeSuratJalanLists,
+  resolveTransferRegion,
+  sanitizeAssetTransferDbPayload,
+  sanitizeSuratJalanDbPayload,
+  stripUnknownColumns,
+} from '../distribution/transfer-sj-sync';
 export { sortOrdersNewestFirst };
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -60,12 +74,63 @@ export const isServerSupabaseConfigured = () => {
 
 export const getAdminClient = () => {
   if (!isServerSupabaseConfigured()) return null;
+  if (global.__SUPABASE_ADMIN_CLIENT__) {
+    return global.__SUPABASE_ADMIN_CLIENT__;
+  }
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || supabaseUrl;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || supabaseServiceKey;
-  return createClient(url, key, {
+  const client = createClient(url, key, {
     auth: { persistSession: false },
+    global: {
+      fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+        fetch(input, { ...init, cache: 'no-store' }),
+    },
   });
+  global.__SUPABASE_ADMIN_CLIENT__ = client;
+  return client;
 };
+
+/**
+ * Insert/upsert yang tahan terhadap kolom opsional yang belum ada di Supabase.
+ * PostgREST menolak seluruh payload bila satu kolom tidak dikenal (PGRST204),
+ * sehingga baris penting seperti Surat Jalan bisa hilang tanpa jejak.
+ * Helper ini membuang kolom yang disebut error lalu mencoba ulang.
+ */
+export async function writeRowResilient(
+  table: 'asset_transfers' | 'surat_jalan' | 'request_orders',
+  payload: Record<string, any>,
+  options: { onConflict?: string } = {}
+): Promise<{ data: Record<string, any> | null; error: string | null; droppedColumns: string[] }> {
+  const admin = getAdminClient();
+  if (!admin) return { data: null, error: 'Supabase belum dikonfigurasi', droppedColumns: [] };
+
+  let next = { ...payload };
+  const droppedColumns: string[] = [];
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const query = (admin as any).from(table);
+    const { data, error } = options.onConflict
+      ? await query.upsert(next, { onConflict: options.onConflict }).select().single()
+      : await query.insert(next).select().single();
+
+    if (!error) {
+      if (droppedColumns.length > 0) {
+        console.warn(`[Supabase ${table}] kolom diabaikan karena tidak ada di skema:`, droppedColumns.join(', '));
+      }
+      return { data: data as Record<string, any>, error: null, droppedColumns };
+    }
+
+    const unknown = extractUnknownColumnFromError(error.message);
+    if (!unknown || !(unknown in next)) {
+      return { data: null, error: error.message, droppedColumns };
+    }
+
+    droppedColumns.push(unknown);
+    next = stripUnknownColumns(next, [unknown]);
+  }
+
+  return { data: null, error: 'Gagal menyimpan: terlalu banyak kolom tidak dikenal', droppedColumns };
+}
 
 export async function checkSupabaseReachability(): Promise<boolean> {
   if (!isServerSupabaseConfigured()) return false;
@@ -104,6 +169,8 @@ export async function checkSupabaseReachability(): Promise<boolean> {
 // Global in-memory cache for fast local access & fallback when Supabase is not yet populated
 declare global {
   // eslint-disable-next-line no-var
+  var __SUPABASE_ADMIN_CLIENT__: any;
+  // eslint-disable-next-line no-var
   var __LOCAL_ASSET_CACHE__: {
     items: AssetRequest[];
     lastSynced: string | null;
@@ -137,10 +204,28 @@ declare global {
     timestamp: number;
   } | undefined;
   // eslint-disable-next-line no-var
+  var __OUTLETS_PENDING__: Promise<Outlet[]> | null | undefined;
+  // eslint-disable-next-line no-var
   var __TRANSFERS_CACHE__: {
     items: AssetTransfer[];
     timestamp: number;
   } | undefined;
+  // eslint-disable-next-line no-var
+  var __TRANSFERS_PENDING__: Promise<AssetTransfer[]> | null | undefined;
+  // eslint-disable-next-line no-var
+  var __SJ_CACHE__: {
+    items: SuratJalan[];
+    timestamp: number;
+  } | undefined;
+  // eslint-disable-next-line no-var
+  var __SJ_PENDING__: Promise<SuratJalan[]> | null | undefined;
+  // eslint-disable-next-line no-var
+  var __USERS_CACHE__: {
+    items: UserProfile[];
+    timestamp: number;
+  } | undefined;
+  // eslint-disable-next-line no-var
+  var __USERS_PENDING__: Promise<UserProfile[]> | null | undefined;
   // eslint-disable-next-line no-var
   var __DELETED_RO_KEYS__: Set<string> | undefined;
 }
@@ -372,7 +457,7 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
           .eq('is_manually_edited', true);
 
         const editedMap = new Map<string, any>();
-        (existingEdits || []).forEach((e) => editedMap.set(e.external_id, e));
+        (existingEdits || []).forEach((e: any) => editedMap.set(e.external_id, e));
 
         // Batch upsert in chunks of 500
         const chunkSize = 500;
@@ -486,22 +571,9 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
   }
 }
 
-const ASSET_REQUESTS_CACHE_TTL_MS = 1 * 60 * 1000; // 1 menit (sesuai siklus auto-sync)
+const ASSET_REQUESTS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 menit + Stale-While-Revalidate
 
-/**
- * Low-level cached fetcher for raw asset requests from Supabase with TTL and Promise deduplication
- */
-export async function getAllAssetRequestsRaw(force = false): Promise<AssetRequest[]> {
-  const now = Date.now();
-  if (
-    !force &&
-    global.__ASSET_REQUESTS_CACHE__ &&
-    now - global.__ASSET_REQUESTS_CACHE__.timestamp < ASSET_REQUESTS_CACHE_TTL_MS &&
-    global.__ASSET_REQUESTS_CACHE__.items.length > 0
-  ) {
-    return global.__ASSET_REQUESTS_CACHE__.items;
-  }
-
+function triggerAssetRequestsFetch(): Promise<AssetRequest[]> {
   if (global.__ASSET_REQUESTS_PENDING__) {
     return global.__ASSET_REQUESTS_PENDING__;
   }
@@ -549,10 +621,26 @@ export async function getAllAssetRequestsRaw(force = false): Promise<AssetReques
       global.__ASSET_REQUESTS_PENDING__ = null;
     }
 
-    return cache.items || [];
+    return global.__ASSET_REQUESTS_CACHE__?.items || cache.items || [];
   })();
 
   return global.__ASSET_REQUESTS_PENDING__;
+}
+
+/**
+ * Low-level cached fetcher for raw asset requests from Supabase with SWR, TTL and Promise deduplication
+ */
+export async function getAllAssetRequestsRaw(force = false): Promise<AssetRequest[]> {
+  const now = Date.now();
+  if (!force && global.__ASSET_REQUESTS_CACHE__ && global.__ASSET_REQUESTS_CACHE__.items.length > 0) {
+    if (now - global.__ASSET_REQUESTS_CACHE__.timestamp >= ASSET_REQUESTS_CACHE_TTL_MS && !global.__ASSET_REQUESTS_PENDING__) {
+      // Stale-While-Revalidate: perbarui cache di background tanpa memblokir request user
+      void triggerAssetRequestsFetch();
+    }
+    return global.__ASSET_REQUESTS_CACHE__.items;
+  }
+
+  return triggerAssetRequestsFetch();
 }
 
 export function invalidateAssetRequestsCache() {
@@ -676,10 +764,20 @@ export async function updateAssetRequest(
       if (error) {
         console.error('[Supabase updateAssetRequest error]:', error.message);
       } else if (data) {
-        invalidateAssetRequestsCache();
         const index = cache.items.findIndex((item) => item.id === id || item.external_id === id);
         if (index !== -1) {
           cache.items[index] = { ...cache.items[index], ...data };
+        }
+        if (global.__ASSET_REQUESTS_CACHE__?.items) {
+          const gIdx = global.__ASSET_REQUESTS_CACHE__.items.findIndex(
+            (item) => item.id === id || item.external_id === id
+          );
+          if (gIdx !== -1) {
+            global.__ASSET_REQUESTS_CACHE__.items[gIdx] = {
+              ...global.__ASSET_REQUESTS_CACHE__.items[gIdx],
+              ...data,
+            };
+          }
         }
         return { success: true, data: data as AssetRequest };
       }
@@ -694,7 +792,17 @@ export async function updateAssetRequest(
       };
       cache.items[index] = updated;
       cache.manualEdits.set(id, updatePayload);
-      invalidateAssetRequestsCache();
+      if (global.__ASSET_REQUESTS_CACHE__?.items) {
+        const gIdx = global.__ASSET_REQUESTS_CACHE__.items.findIndex(
+          (item) => item.id === id || item.external_id === id
+        );
+        if (gIdx !== -1) {
+          global.__ASSET_REQUESTS_CACHE__.items[gIdx] = {
+            ...global.__ASSET_REQUESTS_CACHE__.items[gIdx],
+            ...updatePayload,
+          };
+        }
+      }
       return { success: true, data: updated };
     }
 
@@ -877,14 +985,23 @@ export async function updateAssetRequestsBulk(
         }
       }
 
-      invalidateAssetRequestsCache();
-
-      // Update in local cache as well
+      // Update in local & global cache in-place
       ids.forEach((id) => {
         const index = cache.items.findIndex((item) => item.id === id || item.external_id === id);
         if (index !== -1) {
           cache.items[index] = { ...cache.items[index], ...updatePayload };
           cache.manualEdits.set(id, updatePayload);
+        }
+        if (global.__ASSET_REQUESTS_CACHE__?.items) {
+          const gIdx = global.__ASSET_REQUESTS_CACHE__.items.findIndex(
+            (item) => item.id === id || item.external_id === id
+          );
+          if (gIdx !== -1) {
+            global.__ASSET_REQUESTS_CACHE__.items[gIdx] = {
+              ...global.__ASSET_REQUESTS_CACHE__.items[gIdx],
+              ...updatePayload,
+            };
+          }
         }
       });
 
@@ -897,6 +1014,17 @@ export async function updateAssetRequestsBulk(
       if (index !== -1) {
         cache.items[index] = { ...cache.items[index], ...updatePayload };
         cache.manualEdits.set(id, updatePayload);
+      }
+      if (global.__ASSET_REQUESTS_CACHE__?.items) {
+        const gIdx = global.__ASSET_REQUESTS_CACHE__.items.findIndex(
+          (item) => item.id === id || item.external_id === id
+        );
+        if (gIdx !== -1) {
+          global.__ASSET_REQUESTS_CACHE__.items[gIdx] = {
+            ...global.__ASSET_REQUESTS_CACHE__.items[gIdx],
+            ...updatePayload,
+          };
+        }
       }
     });
 
@@ -972,8 +1100,8 @@ export async function calculateDashboardMetrics(region: RegionType = 'ALL'): Pro
   const stockRate = totalItems > 0 ? Math.min(100, Math.round(((fromStock / totalItems) * 100) * 10) / 10) : 0;
   const avgLeadTime = leadTimeCount > 0 ? Math.round((leadTimeSum / leadTimeCount) * 10) / 10 : 0;
 
-  // Calculate upcoming openings
-  const branches = await getBranchOpeningSummaries(region);
+  // Calculate upcoming openings directly from already-fetched items
+  const branches = buildBranchOpeningSummaries(items, getDaysRemaining);
   const upcomingOpenings = branches.filter(
     (b) => b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 60
   ).length;
@@ -1030,178 +1158,198 @@ function hashOutletBranch(str: string): string {
   return Math.abs(hash).toString(36);
 }
 
-// In-Memory Cache untuk Outlets (TTL 5 Menit)
+// In-Memory Cache untuk Outlets (TTL 5 Menit + Stale-While-Revalidate)
 const OUTLETS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export function invalidateOutletsCache() {
   global.__OUTLETS_CACHE__ = undefined;
+  global.__OUTLETS_PENDING__ = null;
+}
+
+function triggerOutletsFetch(): Promise<Outlet[]> {
+  if (global.__OUTLETS_PENDING__) {
+    return global.__OUTLETS_PENDING__;
+  }
+
+  global.__OUTLETS_PENDING__ = (async () => {
+    try {
+      const admin = getAdminClient();
+      let dbOutlets: Outlet[] = [];
+      let dbRoBranches: Array<{ branch_name: string; region: string; requester_name?: string }> = [];
+
+      if (admin) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 5000);
+          const cachedRos = global.__RO_CACHE__?.items;
+          const [outletsRes, roRes] = await Promise.all([
+            admin.from('outlets').select('*').order('branch_name').abortSignal(controller.signal),
+            cachedRos && cachedRos.length > 0
+              ? Promise.resolve({ data: cachedRos, error: null })
+              : admin.from('request_orders').select('branch_name, region, requester_name').not('branch_name', 'is', null).abortSignal(controller.signal),
+          ]);
+          clearTimeout(timer);
+
+          if (!outletsRes.error && outletsRes.data && outletsRes.data.length > 0) {
+            dbOutlets = outletsRes.data as Outlet[];
+          } else if (outletsRes.error) {
+            console.error('[Supabase getOutlets error]:', outletsRes.error.message);
+          }
+
+          if (!roRes.error && roRes.data) {
+            dbRoBranches = roRes.data as Array<{ branch_name: string; region: string; requester_name?: string }>;
+          }
+        } catch {
+          // Abort or error, proceed with local cache
+        }
+      }
+
+      // Combined Map keyed by normalized branch name
+      const outletMap = new Map<string, Outlet>();
+
+      // Helper to normalize outlet object with bilingual property aliases
+      const normalizeOutlet = (o: Partial<Outlet>): Outlet => {
+        const branchName = (o.branch_name || o.nama || 'Outlet Baru').trim();
+        const region = (o.region === 'JABO' ? 'JABODETABEK' : o.region) || 'JABODETABEK';
+        const address = o.address || o.alamat || '';
+        const picName = o.pic_name || o.pic_nama || '';
+        const picPhone = o.pic_phone || o.telepon || '';
+        const targetOpening = o.target_opening_date || o.target_opening || null;
+        const status = o.status || 'Aktif';
+
+        return {
+          id: o.id || `out-${hashOutletBranch(branchName)}`,
+          branch_name: branchName,
+          nama: branchName,
+          region: region as any,
+          target_opening_date: targetOpening,
+          target_opening: targetOpening,
+          status: status as any,
+          address,
+          alamat: address,
+          pic_name: picName,
+          pic_nama: picName,
+          pic_phone: picPhone,
+          telepon: picPhone,
+          notes: o.notes || '',
+          created_at: o.created_at || new Date().toISOString(),
+        };
+      };
+
+      const isInvalidBranch = (raw: string): boolean => {
+        if (!raw) return true;
+        const lower = raw.trim().toLowerCase();
+        return (
+          !lower ||
+          lower === '-' ||
+          lower === 'new item' ||
+          lower === 'tanpa nama outlet' ||
+          lower.startsWith('ast-') ||
+          lower.startsWith('plk-')
+        );
+      };
+
+      // 1. Add from cache.outlets
+      if (cache.outlets) {
+        for (const o of cache.outlets) {
+          if (isInvalidBranch(o.branch_name || o.nama || '')) continue;
+          const norm = normalizeOutlet(o);
+          const key = norm.branch_name.toLowerCase();
+          if (key) outletMap.set(key, norm);
+        }
+      }
+
+      // 2. Add from Supabase database (takes precedence for richer data)
+      for (const o of dbOutlets) {
+        if (isInvalidBranch(o.branch_name || o.nama || '')) continue;
+        const norm = normalizeOutlet(o);
+        const key = norm.branch_name.toLowerCase();
+        if (key) outletMap.set(key, norm);
+      }
+
+      // 3. Add dynamically from request_orders branches
+      for (const ro of dbRoBranches) {
+        if (isInvalidBranch(ro.branch_name)) continue;
+        const cleanBranch = ro.branch_name.trim();
+        const key = cleanBranch.toLowerCase();
+        if (!outletMap.has(key)) {
+          const isKalbar = (ro.region as string)?.toUpperCase() === 'KALBAR';
+          const synthetic = normalizeOutlet({
+            id: `out-ro-${hashOutletBranch(key)}`,
+            branch_name: cleanBranch,
+            nama: cleanBranch,
+            region: isKalbar ? 'KALBAR' : 'JABODETABEK',
+            status: 'Aktif',
+            address: '',
+            alamat: '',
+            pic_name: ro.requester_name || '',
+            pic_nama: ro.requester_name || '',
+            pic_phone: '',
+            telepon: '',
+            notes: 'Master Data Outlet RO',
+            created_at: new Date().toISOString(),
+          });
+          outletMap.set(key, synthetic);
+        }
+      }
+
+      // 4. Scan asset_requests (items) to ensure any newly inputted or existing branch appears in the outlet list
+      const assetItems = global.__ASSET_REQUESTS_CACHE__?.items || cache.items;
+      if (assetItems) {
+        for (const item of assetItems) {
+          if (!item.branch_name || isInvalidBranch(item.branch_name)) continue;
+          const key = item.branch_name.trim().toLowerCase();
+          if (!outletMap.has(key)) {
+            const isJabo = (item.region as string) === 'JABODETABEK' || (item.region as string) === 'JABO';
+            const synthetic = normalizeOutlet({
+              id: `out-auto-${hashOutletBranch(key)}`,
+              branch_name: item.branch_name.trim(),
+              nama: item.branch_name.trim(),
+              region: isJabo ? 'JABODETABEK' : 'KALBAR',
+              target_opening_date: item.opening_date || null,
+              target_opening: item.opening_date || null,
+              status: 'Persiapan Buka',
+              address: '',
+              alamat: '',
+              pic_name: item.requester_name || '',
+              pic_nama: item.requester_name || '',
+              pic_phone: '',
+              telepon: '',
+              notes: 'Terdata otomatis dari transaksi aset',
+              created_at: item.order_datetime || new Date().toISOString(),
+            });
+            outletMap.set(key, synthetic);
+          } else {
+            const existing = outletMap.get(key)!;
+            if (!existing.target_opening_date && item.opening_date) {
+              existing.target_opening_date = item.opening_date;
+              existing.target_opening = item.opening_date;
+            }
+          }
+        }
+      }
+
+      const result = Array.from(outletMap.values()).sort((a, b) => a.branch_name.localeCompare(b.branch_name));
+      global.__OUTLETS_CACHE__ = { items: result, timestamp: Date.now() };
+      return result;
+    } finally {
+      global.__OUTLETS_PENDING__ = null;
+    }
+  })();
+
+  return global.__OUTLETS_PENDING__;
 }
 
 export async function getOutlets(): Promise<Outlet[]> {
   const now = Date.now();
-  if (
-    global.__OUTLETS_CACHE__ &&
-    now - global.__OUTLETS_CACHE__.timestamp < OUTLETS_CACHE_TTL_MS &&
-    global.__OUTLETS_CACHE__.items.length > 0
-  ) {
+  if (global.__OUTLETS_CACHE__ && global.__OUTLETS_CACHE__.items.length > 0) {
+    if (now - global.__OUTLETS_CACHE__.timestamp >= OUTLETS_CACHE_TTL_MS && !global.__OUTLETS_PENDING__) {
+      void triggerOutletsFetch();
+    }
     return global.__OUTLETS_CACHE__.items;
   }
 
-  const admin = getAdminClient();
-  let dbOutlets: Outlet[] = [];
-  let dbRoBranches: Array<{ branch_name: string; region: string; requester_name?: string }> = [];
-
-  if (admin) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 6000);
-      const [outletsRes, roRes] = await Promise.all([
-        admin.from('outlets').select('*').order('branch_name').abortSignal(controller.signal),
-        admin.from('request_orders').select('branch_name, region, requester_name').not('branch_name', 'is', null).abortSignal(controller.signal)
-      ]);
-      clearTimeout(timer);
-
-      if (!outletsRes.error && outletsRes.data && outletsRes.data.length > 0) {
-        dbOutlets = outletsRes.data as Outlet[];
-      } else if (outletsRes.error) {
-        console.error('[Supabase getOutlets error]:', outletsRes.error.message);
-      }
-
-      if (!roRes.error && roRes.data) {
-        dbRoBranches = roRes.data;
-      }
-    } catch {
-      // Abort or error, proceed with local cache
-    }
-  }
-
-  // Combined Map keyed by normalized branch name
-  const outletMap = new Map<string, Outlet>();
-
-  // Helper to normalize outlet object with bilingual property aliases
-  const normalizeOutlet = (o: Partial<Outlet>): Outlet => {
-    const branchName = (o.branch_name || o.nama || 'Outlet Baru').trim();
-    const region = (o.region === 'JABO' ? 'JABODETABEK' : o.region) || 'JABODETABEK';
-    const address = o.address || o.alamat || '';
-    const picName = o.pic_name || o.pic_nama || '';
-    const picPhone = o.pic_phone || o.telepon || '';
-    const targetOpening = o.target_opening_date || o.target_opening || null;
-    const status = o.status || 'Aktif';
-
-    return {
-      id: o.id || `out-${hashOutletBranch(branchName)}`,
-      branch_name: branchName,
-      nama: branchName,
-      region: region as any,
-      target_opening_date: targetOpening,
-      target_opening: targetOpening,
-      status: status as any,
-      address,
-      alamat: address,
-      pic_name: picName,
-      pic_nama: picName,
-      pic_phone: picPhone,
-      telepon: picPhone,
-      notes: o.notes || '',
-      created_at: o.created_at || new Date().toISOString(),
-    };
-  };
-
-  const isInvalidBranch = (raw: string): boolean => {
-    if (!raw) return true;
-    const lower = raw.trim().toLowerCase();
-    return (
-      !lower ||
-      lower === '-' ||
-      lower === 'new item' ||
-      lower === 'tanpa nama outlet' ||
-      lower.startsWith('ast-') ||
-      lower.startsWith('plk-')
-    );
-  };
-
-  // 1. Add from cache.outlets
-  if (cache.outlets) {
-    for (const o of cache.outlets) {
-      if (isInvalidBranch(o.branch_name || o.nama || '')) continue;
-      const norm = normalizeOutlet(o);
-      const key = norm.branch_name.toLowerCase();
-      if (key) outletMap.set(key, norm);
-    }
-  }
-
-  // 2. Add from Supabase database (takes precedence for richer data)
-  for (const o of dbOutlets) {
-    if (isInvalidBranch(o.branch_name || o.nama || '')) continue;
-    const norm = normalizeOutlet(o);
-    const key = norm.branch_name.toLowerCase();
-    if (key) outletMap.set(key, norm);
-  }
-
-  // 3. Add dynamically from request_orders branches
-  for (const ro of dbRoBranches) {
-    if (isInvalidBranch(ro.branch_name)) continue;
-    const cleanBranch = ro.branch_name.trim();
-    const key = cleanBranch.toLowerCase();
-    if (!outletMap.has(key)) {
-      const isKalbar = (ro.region as string)?.toUpperCase() === 'KALBAR';
-      const synthetic = normalizeOutlet({
-        id: `out-ro-${hashOutletBranch(key)}`,
-        branch_name: cleanBranch,
-        nama: cleanBranch,
-        region: isKalbar ? 'KALBAR' : 'JABODETABEK',
-        status: 'Aktif',
-        address: '',
-        alamat: '',
-        pic_name: ro.requester_name || '',
-        pic_nama: ro.requester_name || '',
-        pic_phone: '',
-        telepon: '',
-        notes: 'Master Data Outlet RO',
-        created_at: new Date().toISOString(),
-      });
-      outletMap.set(key, synthetic);
-    }
-  }
-
-  // 4. Scan asset_requests (items) to ensure any newly inputted or existing branch appears in the outlet list
-  if (cache.items) {
-    for (const item of cache.items) {
-      if (!item.branch_name || isInvalidBranch(item.branch_name)) continue;
-      const key = item.branch_name.trim().toLowerCase();
-      if (!outletMap.has(key)) {
-        const isJabo = (item.region as string) === 'JABODETABEK' || (item.region as string) === 'JABO';
-        const synthetic = normalizeOutlet({
-          id: `out-auto-${hashOutletBranch(key)}`,
-          branch_name: item.branch_name.trim(),
-          nama: item.branch_name.trim(),
-          region: isJabo ? 'JABODETABEK' : 'KALBAR',
-          target_opening_date: item.opening_date || null,
-          target_opening: item.opening_date || null,
-          status: 'Persiapan Buka',
-          address: '',
-          alamat: '',
-          pic_name: item.requester_name || '',
-          pic_nama: item.requester_name || '',
-          pic_phone: '',
-          telepon: '',
-          notes: 'Terdata otomatis dari transaksi aset',
-          created_at: item.order_datetime || new Date().toISOString(),
-        });
-        outletMap.set(key, synthetic);
-      } else {
-        const existing = outletMap.get(key)!;
-        if (!existing.target_opening_date && item.opening_date) {
-          existing.target_opening_date = item.opening_date;
-          existing.target_opening = item.opening_date;
-        }
-      }
-    }
-  }
-
-  const result = Array.from(outletMap.values()).sort((a, b) => a.branch_name.localeCompare(b.branch_name));
-  global.__OUTLETS_CACHE__ = { items: result, timestamp: Date.now() };
-  return result;
+  return triggerOutletsFetch();
 }
 
 export async function saveOutlet(outletData: Partial<Outlet>): Promise<Outlet> {
@@ -1277,63 +1425,100 @@ function syncOutletToCache(outlet: Outlet) {
   }
 }
 
-export async function getUserProfiles(): Promise<UserProfile[]> {
-  const admin = getAdminClient();
-  if (admin) {
-    try {
-      const { data, error } = await admin.from('user_profiles').select('*').order('full_name');
-      if (!error && data && data.length > 0) {
-        return data.map((u: any) => {
-          const cachedUser = cache.users?.find((cu) => cu.email && cu.email.toLowerCase() === (u.email || '').toLowerCase());
-          const isSuper = u.role === 'Super User' || u.role === 'super_user';
-          let allowed = u.allowed_features;
-          if (typeof allowed === 'string') {
-            try { allowed = JSON.parse(allowed); } catch (e) { allowed = allowed.split(','); }
-          }
-          if (!Array.isArray(allowed) && cachedUser?.allowed_features) {
-            allowed = cachedUser.allowed_features;
-          }
-          const { branchName, allowedRegion, allowedFeatures } = parseBranchAndRegion(
-            u.branch_name || u.outlet_assigned,
-            u.allowed_region || cachedUser?.allowed_region,
-            u.role,
-            Array.isArray(allowed) ? allowed : undefined
-          );
-          const effectiveFeatures = isSuper ? ALL_FEATURE_IDS : allowedFeatures;
-          return {
-            ...u,
-            username: u.username || u.email,
-            password: u.password || u.phone || cachedUser?.password || '',
-            branch_name: branchName || undefined,
-            outlet_assigned: branchName || undefined,
-            allowed_region: allowedRegion,
-            allowed_features: effectiveFeatures,
-          };
-        }) as UserProfile[];
-      }
-      if (error) console.error('[Supabase getUserProfiles error]:', error.message);
-    } catch (err: any) {
-      console.error('[Supabase getUserProfiles exception]:', err.message);
-    }
+const USERS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export function invalidateUsersCache() {
+  global.__USERS_CACHE__ = undefined;
+  global.__USERS_PENDING__ = null;
+}
+
+function triggerUsersFetch(): Promise<UserProfile[]> {
+  if (global.__USERS_PENDING__) {
+    return global.__USERS_PENDING__;
   }
-  return (cache.users || []).map((u) => {
-    const isSuper = u.role === 'Super User' || u.role === 'super_user';
-    const { branchName, allowedRegion, allowedFeatures } = parseBranchAndRegion(
-      u.branch_name || u.outlet_assigned,
-      u.allowed_region,
-      u.role,
-      u.allowed_features
-    );
-    return {
-      ...u,
-      username: u.username || u.email,
-      password: u.password || u.phone || '',
-      branch_name: branchName || undefined,
-      outlet_assigned: branchName || undefined,
-      allowed_region: allowedRegion,
-      allowed_features: isSuper ? ALL_FEATURE_IDS : allowedFeatures,
-    };
-  });
+
+  global.__USERS_PENDING__ = (async () => {
+    try {
+      const admin = getAdminClient();
+      if (admin) {
+        try {
+          const { data, error } = await admin.from('user_profiles').select('*').order('full_name');
+          if (!error && data && data.length > 0) {
+            const parsed = data.map((u: any) => {
+              const cachedUser = cache.users?.find((cu) => cu.email && cu.email.toLowerCase() === (u.email || '').toLowerCase());
+              const isSuper = u.role === 'Super User' || u.role === 'super_user';
+              let allowed = u.allowed_features;
+              if (typeof allowed === 'string') {
+                try { allowed = JSON.parse(allowed); } catch (e) { allowed = allowed.split(','); }
+              }
+              if (!Array.isArray(allowed) && cachedUser?.allowed_features) {
+                allowed = cachedUser.allowed_features;
+              }
+              const { branchName, allowedRegion, allowedFeatures } = parseBranchAndRegion(
+                u.branch_name || u.outlet_assigned,
+                u.allowed_region || cachedUser?.allowed_region,
+                u.role,
+                Array.isArray(allowed) ? allowed : undefined
+              );
+              const effectiveFeatures = isSuper ? ALL_FEATURE_IDS : allowedFeatures;
+              return {
+                ...u,
+                username: u.username || u.email,
+                password: u.password || u.phone || cachedUser?.password || '',
+                branch_name: branchName || undefined,
+                outlet_assigned: branchName || undefined,
+                allowed_region: allowedRegion,
+                allowed_features: effectiveFeatures,
+              };
+            }) as UserProfile[];
+            global.__USERS_CACHE__ = { items: parsed, timestamp: Date.now() };
+            cache.users = parsed;
+            return parsed;
+          }
+          if (error) console.error('[Supabase getUserProfiles error]:', error.message);
+        } catch (err: any) {
+          console.error('[Supabase getUserProfiles exception]:', err.message);
+        }
+      }
+
+      const fallback = (cache.users || []).map((u) => {
+        const isSuper = u.role === 'Super User' || u.role === 'super_user';
+        const { branchName, allowedRegion, allowedFeatures } = parseBranchAndRegion(
+          u.branch_name || u.outlet_assigned,
+          u.allowed_region,
+          u.role,
+          u.allowed_features
+        );
+        return {
+          ...u,
+          username: u.username || u.email,
+          password: u.password || u.phone || '',
+          branch_name: branchName || undefined,
+          outlet_assigned: branchName || undefined,
+          allowed_region: allowedRegion,
+          allowed_features: isSuper ? ALL_FEATURE_IDS : allowedFeatures,
+        };
+      });
+      global.__USERS_CACHE__ = { items: fallback, timestamp: Date.now() };
+      return fallback;
+    } finally {
+      global.__USERS_PENDING__ = null;
+    }
+  })();
+
+  return global.__USERS_PENDING__;
+}
+
+export async function getUserProfiles(): Promise<UserProfile[]> {
+  const now = Date.now();
+  if (global.__USERS_CACHE__ && global.__USERS_CACHE__.items.length > 0) {
+    if (now - global.__USERS_CACHE__.timestamp >= USERS_CACHE_TTL_MS && !global.__USERS_PENDING__) {
+      void triggerUsersFetch();
+    }
+    return global.__USERS_CACHE__.items;
+  }
+
+  return triggerUsersFetch();
 }
 
 export async function saveUserProfile(userData: Partial<UserProfile>): Promise<UserProfile> {
@@ -1475,6 +1660,16 @@ function syncUserToCache(user: UserProfile) {
   } else {
     cache.users.push(user);
   }
+  if (global.__USERS_CACHE__?.items) {
+    const gIdx = global.__USERS_CACHE__.items.findIndex(
+      (u) => u.id === user.id || (u.email && u.email.toLowerCase() === user.email.toLowerCase())
+    );
+    if (gIdx !== -1) {
+      global.__USERS_CACHE__.items[gIdx] = { ...global.__USERS_CACHE__.items[gIdx], ...user };
+    } else {
+      global.__USERS_CACHE__.items.push(user);
+    }
+  }
 }
 
 export async function deleteUserProfile(userIdOrEmail: string): Promise<boolean> {
@@ -1500,6 +1695,11 @@ export async function deleteUserProfile(userIdOrEmail: string): Promise<boolean>
       (u) => u.id !== userIdOrEmail && u.email?.toLowerCase() !== target && u.username?.toLowerCase() !== target
     );
   }
+  if (global.__USERS_CACHE__?.items) {
+    global.__USERS_CACHE__.items = global.__USERS_CACHE__.items.filter(
+      (u) => u.id !== userIdOrEmail && u.email?.toLowerCase() !== target && u.username?.toLowerCase() !== target
+    );
+  }
   return true;
 }
 
@@ -1507,43 +1707,66 @@ export async function deleteUserProfile(userIdOrEmail: string): Promise<boolean>
 // ==============================================================================
 // 2. MONITORING: TRANSFER ASET & INPUT ASET
 // ==============================================================================
-const TRANSFERS_CACHE_TTL_MS = 3 * 60 * 1000;
+const TRANSFERS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export function invalidateTransfersCache() {
   global.__TRANSFERS_CACHE__ = undefined;
+  global.__TRANSFERS_PENDING__ = null;
+}
+
+export function invalidateSjCache() {
+  global.__SJ_CACHE__ = undefined;
+  global.__SJ_PENDING__ = null;
+}
+
+function triggerTransfersFetch(): Promise<AssetTransfer[]> {
+  if (global.__TRANSFERS_PENDING__) {
+    return global.__TRANSFERS_PENDING__;
+  }
+
+  global.__TRANSFERS_PENDING__ = (async () => {
+    try {
+      const admin = getAdminClient();
+      if (admin) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 3000);
+          const { data, error } = await admin
+            .from('asset_transfers')
+            .select('*')
+            .order('transfer_date', { ascending: false })
+            .abortSignal(controller.signal);
+          clearTimeout(timer);
+          if (!error && Array.isArray(data)) {
+            const merged = mergeAssetTransfersLists(data as AssetTransfer[], cache.transfers || []);
+            global.__TRANSFERS_CACHE__ = { items: merged, timestamp: Date.now() };
+            return merged;
+          }
+        } catch {
+          // Abort or error
+        }
+      }
+      const fallback = cache.transfers || [];
+      global.__TRANSFERS_CACHE__ = { items: fallback, timestamp: Date.now() };
+      return fallback;
+    } finally {
+      global.__TRANSFERS_PENDING__ = null;
+    }
+  })();
+
+  return global.__TRANSFERS_PENDING__;
 }
 
 export async function getAssetTransfers(): Promise<AssetTransfer[]> {
   const now = Date.now();
-  if (
-    global.__TRANSFERS_CACHE__ &&
-    now - global.__TRANSFERS_CACHE__.timestamp < TRANSFERS_CACHE_TTL_MS &&
-    global.__TRANSFERS_CACHE__.items.length > 0
-  ) {
-    return global.__TRANSFERS_CACHE__.items;
+  if (global.__TRANSFERS_CACHE__ !== undefined) {
+    if (now - global.__TRANSFERS_CACHE__.timestamp >= TRANSFERS_CACHE_TTL_MS && !global.__TRANSFERS_PENDING__) {
+      void triggerTransfersFetch();
+    }
+    return mergeAssetTransfersLists(global.__TRANSFERS_CACHE__.items, cache.transfers || []);
   }
 
-  const admin = getAdminClient();
-  if (admin) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2500);
-      const { data, error } = await admin
-        .from('asset_transfers')
-        .select('*')
-        .order('transfer_date', { ascending: false })
-        .abortSignal(controller.signal);
-      clearTimeout(timer);
-      if (!error && data && data.length > 0) {
-        const trfs = data as AssetTransfer[];
-        global.__TRANSFERS_CACHE__ = { items: trfs, timestamp: Date.now() };
-        return trfs;
-      }
-    } catch {
-      // Abort or error
-    }
-  }
-  return cache.transfers || [];
+  return triggerTransfersFetch();
 }
 
 export async function createAssetTransfer(payload: Partial<AssetTransfer>): Promise<AssetTransfer> {
@@ -1553,6 +1776,14 @@ export async function createAssetTransfer(payload: Partial<AssetTransfer>): Prom
   const year = now.getFullYear();
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
 
+  const resolvedRegion = resolveTransferRegion({
+    explicitRegion: (payload as any).region,
+    toLocation: payload.to_location,
+    outlets: global.__OUTLETS_CACHE__?.items || cache.outlets,
+    requestOrders: global.__RO_CACHE__?.items || cache.requestOrders,
+    assets: global.__ASSET_REQUESTS_CACHE__?.items || cache.items,
+  });
+
   const transfer: AssetTransfer = {
     id: transferId,
     transfer_number: payload.transfer_number || `TRF-MUT/${year}/${randomSuffix}`,
@@ -1561,6 +1792,7 @@ export async function createAssetTransfer(payload: Partial<AssetTransfer>): Prom
     from_location: payload.from_location || 'Gudang Pusat SCGA',
     destination_type: payload.destination_type || 'OUTLET',
     to_location: payload.to_location || 'Outlet Cabang',
+    region: resolvedRegion,
     transfer_date: payload.transfer_date || now.toISOString().split('T')[0],
     received_date: payload.received_date || null,
     status: payload.status || 'IN_TRANSIT',
@@ -1574,46 +1806,46 @@ export async function createAssetTransfer(payload: Partial<AssetTransfer>): Prom
     created_at: now.toISOString(),
   };
 
+  const mappedSj = mapAssetTransferToSuratJalan(transfer, resolvedRegion);
+
   if (admin) {
     try {
-      const { data, error } = await admin.from('asset_transfers').insert(transfer).select().single();
+      const cleanTransferDb = sanitizeAssetTransferDbPayload(transfer);
+      const { error } = await writeRowResilient('asset_transfers', cleanTransferDb);
       if (error) {
-        console.error('[Supabase createAssetTransfer error]:', error.message);
-      } else if (data) {
-        invalidateTransfersCache();
-        const saved = data as unknown as AssetTransfer;
-        cache.transfers.unshift(saved);
-        return saved;
+        console.error('[Supabase createAssetTransfer error]:', error);
       }
     } catch (err: any) {
       console.error('[Supabase createAssetTransfer exception]:', err.message);
     }
+
+    try {
+      const cleanSjDb = sanitizeSuratJalanDbPayload(mappedSj);
+      const { error: sjErr } = await writeRowResilient('surat_jalan', cleanSjDb, { onConflict: 'id' });
+      if (sjErr) {
+        console.error('[Supabase createAssetTransfer -> surat_jalan error]:', sjErr);
+      }
+    } catch (err: any) {
+      console.error('[Supabase createAssetTransfer -> surat_jalan exception]:', err.message);
+    }
   }
 
   invalidateTransfersCache();
-  cache.transfers.unshift(transfer);
+  invalidateSjCache();
+  cache.transfers = [transfer, ...cache.transfers.filter((t) => t.id !== transfer.id)];
+  cache.suratJalan = [
+    mappedSj,
+    ...cache.suratJalan.filter(
+      (s) => s.id !== mappedSj.id && s.sj_number !== mappedSj.sj_number
+    ),
+  ];
   return transfer;
 }
 
 export async function updateAssetTransfer(id: string, payload: Partial<AssetTransfer>): Promise<AssetTransfer | null> {
   invalidateTransfersCache();
+  invalidateSjCache();
   const admin = getAdminClient();
-  if (admin) {
-    try {
-      const { data, error } = await admin
-        .from('asset_transfers')
-        .update(payload)
-        .eq('id', id)
-        .select()
-        .single();
-      if (!error && data) {
-        cache.transfers = cache.transfers.map((t) => (t.id === id ? (data as AssetTransfer) : t));
-        return data as AssetTransfer;
-      }
-    } catch (err: any) {
-      console.error('[Supabase updateAssetTransfer exception]:', err.message);
-    }
-  }
 
   let updated: AssetTransfer | null = null;
   cache.transfers = cache.transfers.map((t) => {
@@ -1623,25 +1855,87 @@ export async function updateAssetTransfer(id: string, payload: Partial<AssetTran
     }
     return t;
   });
+
+  if (admin) {
+    try {
+      const cleanPayload = sanitizeAssetTransferDbPayload(payload as Record<string, any>);
+      if (Object.keys(cleanPayload).length > 0) {
+        const { data, error } = await admin
+          .from('asset_transfers')
+          .update(cleanPayload)
+          .eq('id', id)
+          .select()
+          .single();
+        if (!error && data) {
+          updated = { ...(updated || {}), ...(data as AssetTransfer), ...payload } as AssetTransfer;
+          cache.transfers = cache.transfers.map((t) => (t.id === id ? (updated as AssetTransfer) : t));
+        }
+      }
+    } catch (err: any) {
+      console.error('[Supabase updateAssetTransfer exception]:', err.message);
+    }
+
+    try {
+      const sjUpdate: Record<string, any> = {};
+      if (payload.status) {
+        sjUpdate.status =
+          payload.status === 'RECEIVED' || payload.status === 'COMPLETED'
+            ? 'DELIVERED'
+            : payload.status === 'IN_TRANSIT'
+              ? 'SHIPPED'
+              : 'PROCESSED';
+      }
+      if (payload.receiver_pic !== undefined) sjUpdate.receiver_name = payload.receiver_pic;
+      if (payload.received_date !== undefined) sjUpdate.received_at = payload.received_date;
+      if (payload.items !== undefined) sjUpdate.items = payload.items;
+      if (payload.received_notes !== undefined) sjUpdate.notes = payload.received_notes;
+      else if (payload.notes !== undefined) sjUpdate.notes = payload.notes;
+
+      if (Object.keys(sjUpdate).length > 0) {
+        await admin.from('surat_jalan').update(sjUpdate).eq('id', id);
+      }
+    } catch (err: any) {
+      console.error('[Supabase updateAssetTransfer -> surat_jalan exception]:', err.message);
+    }
+  }
+
+  if (updated) {
+    const resolvedRegion = resolveTransferRegion({
+      explicitRegion: (updated as any).region,
+      toLocation: (updated as AssetTransfer).to_location,
+      outlets: global.__OUTLETS_CACHE__?.items || cache.outlets,
+      requestOrders: global.__RO_CACHE__?.items || cache.requestOrders,
+      assets: global.__ASSET_REQUESTS_CACHE__?.items || cache.items,
+    });
+    const mappedSj = mapAssetTransferToSuratJalan(updated, resolvedRegion);
+    cache.suratJalan = cache.suratJalan.map((s) =>
+      s.id === id || s.sj_number === mappedSj.sj_number ? { ...s, ...mappedSj } : s
+    );
+  }
+
   return updated;
 }
 
 export async function deleteAssetTransfer(id: string): Promise<{ success: boolean }> {
   invalidateTransfersCache();
+  invalidateSjCache();
   const admin = getAdminClient();
   if (admin) {
     try {
       await admin.from('asset_transfers').delete().eq('id', id);
+      await admin.from('surat_jalan').delete().eq('id', id);
     } catch (err: any) {
       console.error('[Supabase deleteAssetTransfer exception]:', err.message);
     }
   }
   cache.transfers = cache.transfers.filter((t) => t.id !== id);
+  cache.suratJalan = cache.suratJalan.filter((s) => s.id !== id);
   return { success: true };
 }
 
 export async function clearAllAssetTransfers(): Promise<{ success: boolean; count: number }> {
   invalidateTransfersCache();
+  invalidateSjCache();
   const admin = getAdminClient();
   let count = 0;
   if (admin) {
@@ -1794,6 +2088,9 @@ export async function createAssetRequest(payload: Partial<AssetRequest>): Promis
         console.error('[Supabase createAssetRequest error]:', error.message);
       } else if (data) {
         cache.items.unshift(data as AssetRequest);
+        if (global.__ASSET_REQUESTS_CACHE__?.items) {
+          global.__ASSET_REQUESTS_CACHE__.items.unshift(data as AssetRequest);
+        }
         return data as AssetRequest;
       }
     } catch (err: any) {
@@ -1802,6 +2099,9 @@ export async function createAssetRequest(payload: Partial<AssetRequest>): Promis
   }
 
   cache.items.unshift(newAsset);
+  if (global.__ASSET_REQUESTS_CACHE__?.items) {
+    global.__ASSET_REQUESTS_CACHE__.items.unshift(newAsset);
+  }
   return newAsset;
 }
 
@@ -1835,24 +2135,15 @@ export function deduplicateOrderItems(orders: RequestOrder[]): RequestOrder[] {
   return sanitizedOrders;
 }
 
-// In-Memory Cache untuk Request Orders (TTL 1 Menit + Promise Deduplication)
-const RO_CACHE_TTL_MS = 1 * 60 * 1000;
+// In-Memory Cache untuk Request Orders (TTL 5 Menit + Stale-While-Revalidate + Promise Deduplication)
+const RO_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export function invalidateRoCache() {
   global.__RO_CACHE__ = undefined;
   global.__RO_PENDING__ = null;
 }
 
-export async function getRequestOrders(): Promise<RequestOrder[]> {
-  const now = Date.now();
-  if (
-    global.__RO_CACHE__ &&
-    now - global.__RO_CACHE__.timestamp < RO_CACHE_TTL_MS &&
-    global.__RO_CACHE__.items.length > 0
-  ) {
-    return global.__RO_CACHE__.items;
-  }
-
+function triggerRoFetch(): Promise<RequestOrder[]> {
   if (global.__RO_PENDING__) {
     return global.__RO_PENDING__;
   }
@@ -1862,7 +2153,7 @@ export async function getRequestOrders(): Promise<RequestOrder[]> {
     if (admin) {
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 3500);
+        const timer = setTimeout(() => controller.abort(), 5000);
 
         // Query batch 0-999 dan 1000-1999 secara paralel dengan urutan deterministik
         const [res1, res2] = await Promise.all([
@@ -1915,6 +2206,7 @@ export async function getRequestOrders(): Promise<RequestOrder[]> {
           const deduplicated = deduplicateOrderItems(allOrders);
           const sorted = sortOrdersNewestFirst(deduplicated);
           global.__RO_CACHE__ = { items: sorted, timestamp: Date.now() };
+          cache.requestOrders = sorted;
           return sorted;
         }
       } catch {
@@ -1922,15 +2214,28 @@ export async function getRequestOrders(): Promise<RequestOrder[]> {
       }
     }
 
-    // Removed fallback syncRequestOrdersFromSheet to ensure UI is decoupled from Google Sheets
-    const result = sortOrdersNewestFirst(deduplicateOrderItems(cache.requestOrders || []));
-    global.__RO_CACHE__ = { items: result, timestamp: Date.now() };
-    return result;
+    // Fallback ke cache yang sudah ada tanpa memicu Google Sheets sync yang lambat
+    const fallback = global.__RO_CACHE__?.items || sortOrdersNewestFirst(deduplicateOrderItems(cache.requestOrders || []));
+    global.__RO_CACHE__ = { items: fallback, timestamp: Date.now() };
+    return fallback;
   })().finally(() => {
     global.__RO_PENDING__ = null;
   });
 
   return global.__RO_PENDING__;
+}
+
+export async function getRequestOrders(): Promise<RequestOrder[]> {
+  const now = Date.now();
+  if (global.__RO_CACHE__ && global.__RO_CACHE__.items.length > 0) {
+    if (now - global.__RO_CACHE__.timestamp >= RO_CACHE_TTL_MS && !global.__RO_PENDING__) {
+      // Stale-While-Revalidate: refresh di background tanpa memblokir request user
+      void triggerRoFetch();
+    }
+    return global.__RO_CACHE__.items;
+  }
+
+  return triggerRoFetch();
 }
 
 export async function createRequestOrder(payload: Partial<RequestOrder>): Promise<RequestOrder> {
@@ -1973,7 +2278,12 @@ export async function createRequestOrder(payload: Partial<RequestOrder>): Promis
         console.error('[Supabase createRequestOrder error]:', error.message);
       } else if (data) {
         cache.requestOrders.unshift(data as RequestOrder);
-        invalidateRoCache();
+        if (global.__RO_CACHE__?.items) {
+          global.__RO_CACHE__.items = [
+            data as RequestOrder,
+            ...global.__RO_CACHE__.items.filter((r) => r.id !== (data as RequestOrder).id && r.ro_number !== (data as RequestOrder).ro_number),
+          ];
+        }
         return data as RequestOrder;
       }
     } catch (err: any) {
@@ -1982,7 +2292,12 @@ export async function createRequestOrder(payload: Partial<RequestOrder>): Promis
   }
 
   cache.requestOrders.unshift(ro);
-  invalidateRoCache();
+  if (global.__RO_CACHE__?.items) {
+    global.__RO_CACHE__.items = [
+      ro,
+      ...global.__RO_CACHE__.items.filter((r) => r.id !== ro.id && r.ro_number !== ro.ro_number),
+    ];
+  }
   return ro;
 }
 
@@ -2125,7 +2440,6 @@ export async function deleteRequestOrder(id: string): Promise<boolean> {
     return !match;
   });
 
-  invalidateRoCache();
   return true;
 }
 
@@ -2697,79 +3011,84 @@ export async function cleanDuplicateRequestOrders(): Promise<{ cleanedCount: num
   return { cleanedCount, totalUnique: uniqueOrders.length };
 }
 
-export async function getSuratJalanList(): Promise<SuratJalan[]> {
-  const admin = getAdminClient();
-  let sjFromDb: SuratJalan[] = [];
-  if (admin) {
-    try {
-      const { data, error } = await admin.from('surat_jalan').select('*').order('delivery_date', { ascending: false });
-      if (!error && data && data.length > 0) sjFromDb = data as SuratJalan[];
-      if (error) console.error('[Supabase getSuratJalanList error]:', error.message);
-    } catch (err: any) {
-      console.error('[Supabase getSuratJalanList exception]:', err.message);
-    }
+const SJ_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function triggerSjFetch(): Promise<SuratJalan[]> {
+  if (global.__SJ_PENDING__) {
+    return global.__SJ_PENDING__;
   }
 
-  const list: SuratJalan[] = [...(sjFromDb.length > 0 ? sjFromDb : (cache.suratJalan || []))];
-
-  // Also include asset_transfers mapped to SuratJalan format
-  try {
-    const transfers = await getAssetTransfers();
-    const existingSjNumbers = new Set(list.map((s) => (s.sj_number || s.nomor_sj || '').toLowerCase()));
-    const existingIds = new Set(list.map((s) => s.id));
-
-    for (const tr of transfers) {
-      const sjNo = tr.surat_jalan_number || tr.transfer_number;
-      if (existingIds.has(tr.id) || (sjNo && existingSjNumbers.has(sjNo.toLowerCase()))) {
-        continue;
+  global.__SJ_PENDING__ = (async () => {
+    try {
+      const admin = getAdminClient();
+      let sjFromDb: SuratJalan[] = [];
+      if (admin) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 3500);
+          const { data, error } = await admin
+            .from('surat_jalan')
+            .select('*')
+            .order('delivery_date', { ascending: false })
+            .abortSignal(controller.signal);
+          clearTimeout(timer);
+          if (!error && Array.isArray(data)) {
+            sjFromDb = data as SuratJalan[];
+            global.__SJ_CACHE__ = { items: sjFromDb, timestamp: Date.now() };
+          }
+          if (error) console.error('[Supabase getSuratJalanList error]:', error.message);
+        } catch (err: any) {
+          console.error('[Supabase getSuratJalanList exception]:', err.message);
+        }
       }
-      list.push({
-        id: tr.id,
-        sj_number: sjNo,
-        nomor_sj: sjNo,
-        ro_number: tr.transfer_number,
-        ro_nomor: tr.transfer_number,
-        branch_name: tr.to_location,
-        tujuan_outlet_nama: tr.to_location,
-        region: (tr as any).region || (tr.to_location.toLowerCase().includes('kalbar') ? 'KALBAR' : 'JABODETABEK'),
-        delivery_date: tr.transfer_date,
-        tanggal_kirim: tr.transfer_date,
-        driver_name: tr.expedition_courier || 'Armada Internal SCGA',
-        driver_nama: tr.expedition_courier || 'Armada Internal SCGA',
-        vehicle_number: tr.tracking_number,
-        kendaraan_plat: tr.tracking_number,
-        expedition: tr.expedition_courier || 'Armada Internal SCGA',
-        ekspedisi: tr.expedition_courier || 'Armada Internal SCGA',
-        sender_name: tr.sender_pic || 'Staff Gudang SCGA',
-        pengirim_nama: tr.sender_pic || 'Staff Gudang SCGA',
-        receiver_name: tr.receiver_pic || '',
-        penerima_nama: tr.receiver_pic || '',
-        status: (tr.status === 'RECEIVED' || tr.status === 'COMPLETED') ? 'DELIVERED' : tr.status === 'IN_TRANSIT' ? 'SHIPPED' : 'PROCESSED',
-        received_at: tr.received_date,
-        waktu_diterima: tr.received_date,
-        catatan_penerimaan: tr.received_notes,
-        items: (tr.items || []).map((it) => ({
-          id: it.id,
-          item_name: it.item_name,
-          nama_barang: it.item_name,
-          quantity: it.quantity,
-          qty: it.quantity,
-          received_quantity: it.received_quantity,
-          specification: it.specification,
-          notes: it.notes,
-        })),
-        notes: tr.notes,
-        catatan: tr.notes,
-        created_at: tr.created_at || new Date().toISOString(),
-      } as SuratJalan);
+      if (!global.__SJ_CACHE__) {
+        global.__SJ_CACHE__ = { items: sjFromDb, timestamp: Date.now() };
+      }
+      return sjFromDb;
+    } finally {
+      global.__SJ_PENDING__ = null;
     }
+  })();
+
+  return global.__SJ_PENDING__;
+}
+
+export async function getSuratJalanList(): Promise<SuratJalan[]> {
+  const now = Date.now();
+  let sjFromDb: SuratJalan[];
+  if (global.__SJ_CACHE__ !== undefined) {
+    if (now - global.__SJ_CACHE__.timestamp >= SJ_CACHE_TTL_MS && !global.__SJ_PENDING__) {
+      void triggerSjFetch();
+    }
+    sjFromDb = global.__SJ_CACHE__.items;
+  } else {
+    sjFromDb = await triggerSjFetch();
+  }
+
+  let transfers: AssetTransfer[] = [];
+  try {
+    transfers = await getAssetTransfers();
   } catch (err: any) {
     console.error('[getSuratJalanList merge transfers error]:', err?.message);
   }
 
-  // Sort newest first
-  list.sort((a, b) => new Date(b.delivery_date || b.created_at).getTime() - new Date(a.delivery_date || a.created_at).getTime());
-  return list;
+  const outlets = global.__OUTLETS_CACHE__?.items || cache.outlets;
+  const requestOrders = global.__RO_CACHE__?.items || cache.requestOrders;
+  const assets = global.__ASSET_REQUESTS_CACHE__?.items || cache.items;
+
+  return mergeSuratJalanLists({
+    dbSuratJalan: sjFromDb,
+    cachedSuratJalan: cache.suratJalan || [],
+    transfers,
+    resolveRegion: (toLocation, explicitRegion) =>
+      resolveTransferRegion({
+        explicitRegion,
+        toLocation,
+        outlets,
+        requestOrders,
+        assets,
+      }),
+  });
 }
 
 export async function getSuratJalanById(id: string): Promise<SuratJalan | null> {
@@ -2791,6 +3110,14 @@ export async function createSuratJalan(payload: Partial<SuratJalan>): Promise<Su
   const exped = payload.expedition || payload.ekspedisi || 'Armada Internal SCGA';
   const sender = payload.sender_name || payload.pengirim_nama || 'Staff Gudang SCGA';
   const receiver = payload.receiver_name || payload.penerima_nama;
+
+  const resolvedRegion = resolveTransferRegion({
+    explicitRegion: payload.region,
+    toLocation: branch,
+    outlets: global.__OUTLETS_CACHE__?.items || cache.outlets,
+    requestOrders: global.__RO_CACHE__?.items || cache.requestOrders,
+    assets: global.__ASSET_REQUESTS_CACHE__?.items || cache.items,
+  });
 
   const normalizedItems = (payload.items || []).map((it: any) => {
     const name = it.nama_barang || it.item_name || it.name || it.system_item_name || 'Barang Aset';
@@ -2819,7 +3146,7 @@ export async function createSuratJalan(payload: Partial<SuratJalan>): Promise<Su
     ro_nomor: roNo,
     branch_name: branch,
     tujuan_outlet_nama: branch,
-    region: payload.region || 'JABODETABEK',
+    region: resolvedRegion,
     delivery_date: deliveryDate,
     tanggal_kirim: deliveryDate,
     driver_name: driver,
@@ -2842,23 +3169,26 @@ export async function createSuratJalan(payload: Partial<SuratJalan>): Promise<Su
 
   if (admin) {
     try {
-      const dbPayload = {
+      const dbPayload = sanitizeSuratJalanDbPayload({
         ...sj,
         ro_id: roId,
-      };
-      const { data, error } = await admin.from('surat_jalan').insert(dbPayload).select().single();
+      });
+      const { data, error } = await writeRowResilient('surat_jalan', dbPayload, { onConflict: 'id' });
       if (error) {
-        console.error('[Supabase createSuratJalan error]:', error.message);
+        console.error('[Supabase createSuratJalan error]:', error);
       } else if (data) {
-        cache.suratJalan.unshift(data as SuratJalan);
-        return data as SuratJalan;
+        const saved = { ...sj, ...(data as SuratJalan), region: resolvedRegion };
+        cache.suratJalan = [saved, ...cache.suratJalan.filter((s) => s.id !== saved.id)];
+        invalidateSjCache();
+        return saved;
       }
     } catch (err: any) {
       console.error('[Supabase createSuratJalan exception]:', err.message);
     }
   }
 
-  cache.suratJalan.unshift(sj);
+  cache.suratJalan = [sj, ...cache.suratJalan.filter((s) => s.id !== sj.id)];
+  invalidateSjCache();
   return sj;
 }
 
@@ -2870,75 +3200,228 @@ export interface SuratJalanProofOptions {
 }
 
 export async function updateSuratJalanStatus(
-  id: string, 
-  status: 'SHIPPED' | 'DELIVERED', 
+  idOrIds: string | string[],
+  status: 'SHIPPED' | 'DELIVERED',
   proof?: string | SuratJalanProofOptions
 ): Promise<boolean> {
   const admin = getAdminClient();
-  const options: SuratJalanProofOptions = typeof proof === 'string' ? { receiverName: proof } : (proof || {});
-  
-  const updateData: any = { 
-    status, 
-    updated_at: new Date().toISOString() 
+  const targetIds = (Array.isArray(idOrIds) ? idOrIds : [idOrIds]).filter(Boolean);
+  if (targetIds.length === 0) return false;
+
+  const options: SuratJalanProofOptions =
+    typeof proof === 'string' ? { receiverName: proof } : proof || {};
+
+  const nowIso = new Date().toISOString();
+  const nowDate = nowIso.split('T')[0];
+
+  // Ambil daftar SJ & Transfer saat ini untuk mengekstrak seluruh item & referensi RO
+  const allSj = await getSuratJalanList();
+  const targetSet = new Set(targetIds.map((x) => x.toLowerCase()));
+  const matchedDocs = allSj.filter(
+    (s) =>
+      targetSet.has((s.id || '').toLowerCase()) ||
+      (s.sj_number && targetSet.has(s.sj_number.toLowerCase())) ||
+      (s.nomor_sj && targetSet.has(s.nomor_sj.toLowerCase()))
+  );
+
+  const findDoc = (id: string) => {
+    const key = id.toLowerCase();
+    return allSj.find(
+      (s) =>
+        (s.id || '').toLowerCase() === key ||
+        (s.sj_number || '').toLowerCase() === key ||
+        (s.nomor_sj || '').toLowerCase() === key
+    );
   };
-  
-  if (options.receiverName) {
-    updateData.receiver_name = options.receiverName;
-    updateData.penerima_nama = options.receiverName;
-  }
-  if (options.signatureUrl) {
-    updateData.tanda_tangan_url = options.signatureUrl;
-  }
-  if (options.photoUrl) {
-    updateData.foto_bukti_url = options.photoUrl;
-  }
-  if (options.notes) {
-    updateData.catatan_penerimaan = options.notes;
-  }
 
-  if (status === 'DELIVERED') {
-    const nowIso = new Date().toISOString();
-    updateData.received_at = nowIso;
-    updateData.waktu_diterima = nowIso;
-  }
+  let anySjDbUpdated = false;
 
-  if (admin) {
-    try {
-      let q = admin.from('surat_jalan').update(updateData);
-      if (isUuid(id)) {
-        q = q.eq('id', id);
-      } else {
-        q = q.eq('sj_number', id);
+  for (const id of targetIds) {
+    const existingDoc = findDoc(id);
+    const normalizedItems = existingDoc?.items
+      ? status === 'DELIVERED'
+        ? normalizeConfirmedSjItems(existingDoc.items, {
+            signatureUrl: options.signatureUrl,
+            photoUrl: options.photoUrl,
+          })
+        : existingDoc.items
+      : undefined;
+
+    const updateData: any = {
+      status,
+      updated_at: nowIso,
+      ...(normalizedItems ? { items: normalizedItems } : {}),
+    };
+
+    if (options.receiverName) {
+      updateData.receiver_name = options.receiverName;
+      updateData.penerima_nama = options.receiverName;
+    }
+    if (options.signatureUrl) {
+      updateData.tanda_tangan_url = options.signatureUrl;
+    }
+    if (options.photoUrl) {
+      updateData.foto_bukti_url = options.photoUrl;
+    }
+    if (options.notes) {
+      updateData.catatan_penerimaan = options.notes;
+    }
+    if (status === 'DELIVERED') {
+      updateData.received_at = nowIso;
+      updateData.waktu_diterima = nowIso;
+    }
+
+    if (admin) {
+      // A. Update di tabel surat_jalan. Payload dibersihkan lebih dulu agar
+      //    tidak ada round-trip yang pasti gagal karena kolom tidak ada di DB.
+      try {
+        const sjDbPayload = sanitizeSuratJalanDbPayload({
+          ...updateData,
+          updated_at: nowIso,
+        });
+        let q = admin.from('surat_jalan').update(sjDbPayload);
+        q = isUuid(id) ? q.eq('id', id) : q.eq('sj_number', id);
+        const { error } = await q;
+        if (error) {
+          console.error('[Supabase updateSuratJalanStatus sj error]:', error.message);
+        } else {
+          anySjDbUpdated = true;
+        }
+      } catch (err: any) {
+        console.error('[Supabase updateSuratJalanStatus sj exception]:', err.message);
       }
-      const { error } = await q;
-      if (error) console.error('[Supabase updateSuratJalanStatus error]:', error.message);
-    } catch (err: any) {
-      console.error('[Supabase updateSuratJalanStatus exception]:', err.message);
+
+      // B. Update juga di tabel asset_transfers (Surat Jalan dari Pemantauan
+      //    Distribusi tersimpan di sana). Hanya kolom yang benar-benar ada.
+      try {
+        const transferUpdate = sanitizeAssetTransferDbPayload({
+          status: status === 'DELIVERED' ? 'RECEIVED' : 'IN_TRANSIT',
+          ...(options.receiverName ? { receiver_pic: options.receiverName } : {}),
+          ...(normalizedItems ? { items: normalizedItems } : {}),
+          updated_at: nowIso,
+        });
+
+        // id dokumen SJ dan asset_transfers dibuat sama saat distribusi,
+        // jadi id UUID bisa dipakai langsung. Untuk nomor dokumen, pakai
+        // transfer_number (satu-satunya kolom referensi yang ada di DB).
+        const transferRef = isUuid(id)
+          ? id
+          : existingDoc?.id && isUuid(existingDoc.id)
+            ? existingDoc.id
+            : null;
+
+        let tq = admin.from('asset_transfers').update(transferUpdate);
+        tq = transferRef ? tq.eq('id', transferRef) : tq.eq('transfer_number', id);
+        const { error: tErr } = await tq;
+        if (tErr) {
+          console.error('[Supabase updateSuratJalanStatus transfer error]:', tErr.message);
+        }
+      } catch (err: any) {
+        console.error('[Supabase updateSuratJalanStatus transfer exception]:', err.message);
+      }
+    }
+
+    // Update in-memory caches
+    const sjIdx = cache.suratJalan.findIndex((sj) => sj.id === id || sj.sj_number === id || sj.nomor_sj === id);
+    if (sjIdx !== -1) {
+      cache.suratJalan[sjIdx] = {
+        ...cache.suratJalan[sjIdx],
+        ...updateData,
+        status,
+      };
+    } else if (existingDoc) {
+      cache.suratJalan.unshift({
+        ...existingDoc,
+        ...updateData,
+        status,
+      });
+    }
+
+    const trIdx = cache.transfers.findIndex(
+      (t) => t.id === id || t.surat_jalan_number === id || t.transfer_number === id
+    );
+    if (trIdx !== -1) {
+      cache.transfers[trIdx] = {
+        ...cache.transfers[trIdx],
+        status: status === 'DELIVERED' ? 'RECEIVED' : 'IN_TRANSIT',
+        ...(options.receiverName ? { receiver_pic: options.receiverName } : {}),
+        ...(status === 'DELIVERED' ? { received_date: nowDate } : {}),
+        ...(options.notes ? { received_notes: options.notes } : {}),
+        ...(options.signatureUrl ? { tanda_tangan_url: options.signatureUrl } : {}),
+        ...(options.photoUrl ? { foto_bukti_url: options.photoUrl } : {}),
+        ...(normalizedItems ? { items: normalizedItems } : {}),
+      } as AssetTransfer;
     }
   }
 
-  const idx = cache.suratJalan.findIndex((sj) => sj.id === id || sj.sj_number === id);
-  if (idx !== -1) {
-    cache.suratJalan[idx] = {
-      ...cache.suratJalan[idx],
-      ...updateData,
-      status,
-    };
-    return true;
+  invalidateTransfersCache();
+  invalidateSjCache();
+
+  // C. Jika status === 'DELIVERED', selesaikan seluruh item terkait pada Request Order (RO) sekaligus
+  if (status === 'DELIVERED' && matchedDocs.length > 0) {
+    try {
+      const allRos = await getRequestOrders();
+      const combinedItems = matchedDocs.flatMap((d) => d.items || []);
+      const roNumbers = matchedDocs
+        .map((d) => d.ro_nomor || d.ro_number || '')
+        .filter(Boolean);
+      const outletName =
+        matchedDocs[0]?.tujuan_outlet_nama || matchedDocs[0]?.branch_name || '';
+
+      const roPatches = applyConfirmedItemsToRequestOrders(
+        allRos,
+        combinedItems,
+        outletName,
+        {
+          receivedDate: nowDate,
+          receiverName: options.receiverName || 'PIC Cabang',
+          notes: options.notes,
+          roNumbers,
+        }
+      );
+
+      for (const patch of roPatches) {
+        await updateRequestOrder(patch.id, patch.updates as any);
+      }
+    } catch (err: any) {
+      console.error('[updateSuratJalanStatus RO batch sync error]:', err?.message);
+    }
   }
-  return true;
+
+  return !admin || anySjDbUpdated;
 }
 
 export async function deleteSuratJalan(id: string): Promise<boolean> {
   const admin = getAdminClient();
+  let deletedFromDb = false;
+
   if (admin) {
     try {
       if (isUuid(id)) {
-        await admin.from('surat_jalan').delete().eq('id', id);
-        await admin.from('asset_transfers').delete().eq('id', id);
+        const { error: sjErr } = await admin.from('surat_jalan').delete().eq('id', id);
+        if (sjErr) console.error('[Supabase deleteSuratJalan sj error]:', sjErr.message);
+        else deletedFromDb = true;
+
+        const { error: trErr } = await admin.from('asset_transfers').delete().eq('id', id);
+        if (trErr) console.error('[Supabase deleteSuratJalan transfer error]:', trErr.message);
       } else {
-        await admin.from('surat_jalan').delete().eq('sj_number', id);
-        await admin.from('asset_transfers').delete().or(`surat_jalan_number.eq.${id},transfer_number.eq.${id}`);
+        const { error: sjErr } = await admin.from('surat_jalan').delete().eq('sj_number', id);
+        if (sjErr) console.error('[Supabase deleteSuratJalan sj error]:', sjErr.message);
+        else deletedFromDb = true;
+
+        // asset_transfers tidak punya kolom surat_jalan_number; relasi hanya
+        // bisa lewat id (dibuat sama) atau transfer_number.
+        const { data: matchedTransfers, error: findErr } = await admin
+          .from('asset_transfers')
+          .select('id')
+          .eq('transfer_number', id);
+        if (findErr) {
+          console.error('[Supabase deleteSuratJalan transfer lookup error]:', findErr.message);
+        }
+        for (const row of matchedTransfers || []) {
+          const { error: trErr } = await admin.from('asset_transfers').delete().eq('id', (row as any).id);
+          if (trErr) console.error('[Supabase deleteSuratJalan transfer error]:', trErr.message);
+        }
       }
     } catch (e: any) {
       console.error('[Supabase deleteSuratJalan error]:', e?.message);
@@ -2949,9 +3432,13 @@ export async function deleteSuratJalan(id: string): Promise<boolean> {
     cache.suratJalan = cache.suratJalan.filter((s) => s.id !== id && s.sj_number !== id);
   }
   if (cache.transfers) {
-    cache.transfers = cache.transfers.filter((t) => t.id !== id && t.surat_jalan_number !== id && t.transfer_number !== id);
+    cache.transfers = cache.transfers.filter(
+      (t) => t.id !== id && t.surat_jalan_number !== id && t.transfer_number !== id
+    );
   }
-  return true;
+  invalidateTransfersCache();
+  invalidateSjCache();
+  return !admin || deletedFromDb;
 }
 
 export async function clearAllSuratJalan(): Promise<{ count: number }> {
@@ -2966,6 +3453,8 @@ export async function clearAllSuratJalan(): Promise<{ count: number }> {
     count += cache.transfers.length;
     cache.transfers = [];
   }
+  invalidateTransfersCache();
+  invalidateSjCache();
 
   if (admin) {
     try {
