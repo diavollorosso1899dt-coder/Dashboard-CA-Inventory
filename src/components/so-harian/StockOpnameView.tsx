@@ -29,12 +29,13 @@ import DocViewerModal from './DocViewerModal';
 import {
   saveSession,
   loadSession,
-  getAllSessionsSync,
+  getAllSessions,
   getSupabaseConfig,
   SOSession,
 } from '@/lib/so-harian/storageService';
 import { exportSoReportToExcel, downloadBlob } from '@/lib/so-harian/excelService';
 import { calculateSessionSummary, SOItem } from '@/lib/so-harian/inventoryEngine';
+import { buildCarryForwardEntries, pickPreviousSession } from '@/lib/so-harian/rollover';
 
 export function StockOpnameView() {
   const [activeTab, setActiveTab] = useState<'UPLOAD' | 'SO_TABLE' | 'HISTORY'>('UPLOAD');
@@ -55,7 +56,11 @@ export function StockOpnameView() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const [previousSessionStock, setPreviousSessionStock] = useState<Map<string, number>>(new Map());
+  const [previousSessionItems, setPreviousSessionItems] = useState<SOItem[]>([]);
   const [previousSessionDate, setPreviousSessionDate] = useState<string | null>(null);
+  const [previousSessionStatus, setPreviousSessionStatus] = useState<string | null>(null);
+  // Sesi yang dibuka dari arsip; dipakai agar simpan tidak menimpa tanggal lain.
+  const [loadedSessionMeta, setLoadedSessionMeta] = useState<{ id: string; tanggal: string } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -64,28 +69,68 @@ export function StockOpnameView() {
 
   useEffect(() => {
     setIsCloudConfigured(getSupabaseConfig().isConfigured);
-
-    const sessions = getAllSessionsSync();
-    if (sessions.length > 0) {
-      const latest = sessions[0];
-      loadSession(latest.id).then(({ session, items: prevItems }) => {
-        if (prevItems && prevItems.length > 0) {
-          const map = new Map<string, number>();
-          for (const item of prevItems) {
-            const val = item.qty_fisik !== null && item.qty_fisik !== undefined ? item.qty_fisik : item.stok_sistem;
-            map.set(item.kode_barang, val);
-          }
-          setPreviousSessionStock(map);
-          setPreviousSessionDate(session?.tanggal || null);
-        }
-      });
-    }
   }, []);
 
-  const handleCompilationSuccess = (compiledItems: SOItem[], _metadata: any) => {
+  // Stok awal hari ini = hasil SO hari sebelumnya (bukan master spreadsheet).
+  // Sesi diambil dari cache lokal DAN cloud agar rollover tetap jalan di
+  // perangkat/browser lain. Sesi di tanggal yang sama tidak dipakai.
+  useEffect(() => {
+    let active = true;
+
+    async function loadPreviousSession() {
+      try {
+        const sessions = await getAllSessions();
+        const previous = pickPreviousSession(sessions, sessionData.tanggal);
+        if (!previous) {
+          if (active) {
+            setPreviousSessionStock(new Map());
+            setPreviousSessionItems([]);
+            setPreviousSessionDate(null);
+            setPreviousSessionStatus(null);
+          }
+          return;
+        }
+
+        const { session, items: prevItems } = await loadSession(previous.id);
+        if (!active) return;
+
+        const entries = buildCarryForwardEntries(prevItems);
+        setPreviousSessionStock(new Map(Array.from(entries, ([code, entry]) => [code, entry.qty])));
+        setPreviousSessionItems(prevItems);
+        setPreviousSessionDate(session?.tanggal || previous.tanggal || null);
+        setPreviousSessionStatus(session?.status || previous.status || null);
+      } catch (err) {
+        console.warn('Gagal memuat hasil SO sebelumnya:', err);
+      }
+    }
+
+    loadPreviousSession();
+    return () => {
+      active = false;
+    };
+  }, [sessionData.tanggal]);
+
+  const handleCompilationSuccess = (compiledItems: SOItem[], metadata: any) => {
     setItems(compiledItems);
+    setLoadedSessionMeta(null);
     setActiveTab('SO_TABLE');
-    showToast(`Berhasil mengompilasi ${compiledItems.length} SKU dari data transaksi!`, 'success');
+
+    if (metadata?.openingSource === 'SO_SEBELUMNYA') {
+      const prevDate = metadata.previousSessionDate || 'hari sebelumnya';
+      const extra =
+        metadata.openingFromMaster > 0
+          ? ` + ${metadata.openingFromMaster} SKU baru dari master`
+          : '';
+      showToast(
+        `Stok awal memakai hasil SO ${prevDate} (${metadata.openingFromPrevious} SKU)${extra}.`,
+        'success'
+      );
+    } else {
+      showToast(
+        `Stok awal memakai master spreadsheet (${metadata?.openingFromMaster ?? compiledItems.length} SKU).`,
+        'success'
+      );
+    }
   };
 
   const handleSaveSession = async () => {
@@ -97,14 +142,26 @@ export function StockOpnameView() {
     setIsSaving(true);
     try {
       const summary = calculateSessionSummary(items);
+      // Satu tanggal = satu sesi. Jika user mengubah tanggal (mis. tab dibiarkan
+      // terbuka melewati tengah malam), simpan ke id tanggal yang dipilih agar
+      // hasil SO hari lain tidak tertimpa.
+      const dateKey =
+        String(sessionData.tanggal || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+      const sameAsLoaded =
+        loadedSessionMeta && String(loadedSessionMeta.tanggal || '').slice(0, 10) === dateKey;
+      const targetId = sameAsLoaded ? loadedSessionMeta.id : `so-${dateKey}`;
+
       const payload: Partial<SOSession> = {
         ...sessionData,
+        id: targetId,
+        tanggal: dateKey,
         akurasi_persen: summary.akurasiPersen,
         status: summary.itemUnchecked === 0 ? 'COMPLETED' : 'IN_PROGRESS',
       };
 
       const savedId = await saveSession(payload, items);
-      setSessionData((prev) => ({ ...prev, id: savedId }));
+      setSessionData((prev) => ({ ...prev, id: savedId, tanggal: dateKey }));
+      setLoadedSessionMeta({ id: savedId, tanggal: dateKey });
       showToast('Sesi SO harian berhasil disimpan ke sistem!', 'success');
     } catch (err: any) {
       showToast(`Gagal menyimpan: ${err.message}`, 'error');
@@ -140,6 +197,7 @@ export function StockOpnameView() {
     if (session) {
       setSessionData(session);
       setItems(loadedItems);
+      setLoadedSessionMeta({ id: session.id, tanggal: session.tanggal });
       setActiveTab('SO_TABLE');
       showToast(`Memuat sesi SO tanggal ${session.tanggal}`, 'success');
     }
@@ -354,7 +412,9 @@ export function StockOpnameView() {
           <UploadSection
             onCompilationSuccess={handleCompilationSuccess}
             previousSessionStock={previousSessionStock}
+            previousSessionItems={previousSessionItems}
             previousSessionDate={previousSessionDate}
+            previousSessionStatus={previousSessionStatus}
           />
         )}
 

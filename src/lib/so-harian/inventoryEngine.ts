@@ -22,6 +22,8 @@ export interface SOItem {
   selisih: number | null;
   status_selisih: 'UNCHECKED' | 'MATCH' | 'MINUS' | 'PLUS';
   catatan: string;
+  /** Asal angka stok awal: hasil SO hari sebelumnya, master spreadsheet, atau input manual. */
+  stok_awal_sumber?: 'SO_SEBELUMNYA' | 'MASTER' | 'MANUAL';
 }
 
 export interface CategorySummary {
@@ -131,7 +133,8 @@ export function mergeDailyInventory(
   initialStockMap: Map<string, number> = new Map(),
   roMap: Map<string, number> = new Map(),
   penerimaanMap: Map<string, number> = new Map(),
-  itemDetailsMap: Map<string, any> = new Map()
+  itemDetailsMap: Map<string, any> = new Map(),
+  initialSourceMap: Map<string, 'SO_SEBELUMNYA' | 'MASTER' | 'MANUAL'> = new Map()
 ): SOItem[] {
   const allCodes = new Set([
     ...Array.from(initialStockMap.keys()),
@@ -167,6 +170,7 @@ export function mergeDailyInventory(
       selisih: null,
       status_selisih: 'UNCHECKED',
       catatan: '',
+      stok_awal_sumber: initialSourceMap.get(code) || 'MASTER',
     });
   }
 

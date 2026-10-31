@@ -160,7 +160,8 @@ CREATE INDEX IF NOT EXISTS idx_so_details_kode_barang ON public.so_details(kode_
                   <p className="text-slate-600 dark:text-slate-400">
                     - Upload Data RO Harian (Pengeluaran Barang)<br />
                     - Upload Data Penerimaan Harian (Barang Masuk)<br />
-                    - Stok Awal Kategori (Peralatan &amp; Perlengkapan Tetap)
+                    - Master / Stok Awal Kategori (Peralatan &amp; Perlengkapan Tetap)<br />
+                    &nbsp;&nbsp;<em>hanya dipakai sebagai data awal</em>
                   </p>
                 </div>
 
@@ -184,7 +185,8 @@ CREATE INDEX IF NOT EXISTS idx_so_details_kode_barang ON public.so_details(kode_
                 <div className="p-4 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
                   <span className="font-bold text-indigo-600 dark:text-indigo-400 block text-xs">Langkah 4: Auto Rollover &amp; Sync</span>
                   <p className="text-slate-600 dark:text-slate-400">
-                    - Hasil SO otomatis menjadi Stok Awal hari berikutnya<br />
+                    - Hasil SO (qty fisik) otomatis menjadi Stok Awal hari berikutnya<br />
+                    - Master spreadsheet hanya menambah SKU baru / saat reset<br />
                     - Dukungan Sinkronisasi Multi-Device Cloud (Supabase)
                   </p>
                 </div>

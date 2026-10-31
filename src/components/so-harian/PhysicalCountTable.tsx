@@ -125,7 +125,24 @@ const PhysicalCountRow = React.memo(function PhysicalCountRow({
         </span>
       </td>
       <td className="py-2.5 px-2 text-center text-slate-500 font-mono text-[11px]">{item.satuan}</td>
-      <td className="py-2.5 px-2 text-right font-medium text-slate-500">{item.stok_awal}</td>
+      <td className="py-2.5 px-2 text-right font-medium text-slate-500">
+        <div>{item.stok_awal}</div>
+        {item.stok_awal_sumber === 'SO_SEBELUMNYA' ? (
+          <div
+            className="text-[9px] font-bold text-sky-600 dark:text-sky-400"
+            title="Stok awal dari hasil SO hari sebelumnya"
+          >
+            SO lalu
+          </div>
+        ) : item.stok_awal_sumber === 'MASTER' ? (
+          <div
+            className="text-[9px] text-amber-600 dark:text-amber-400"
+            title="Stok awal dari master spreadsheet"
+          >
+            master
+          </div>
+        ) : null}
+      </td>
       <td className="py-2.5 px-2 text-right font-medium text-emerald-600">+{item.qty_penerimaan}</td>
       <td className="py-2.5 px-2 text-right font-medium text-rose-600">-{item.qty_ro}</td>
       <td className="py-2.5 px-3 text-right bg-slate-100/70 dark:bg-slate-900/40 font-black text-slate-900 dark:text-white">

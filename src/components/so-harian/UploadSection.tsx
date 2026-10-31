@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Upload,
   Download,
@@ -24,12 +24,20 @@ import {
 } from 'lucide-react';
 import { parseExcelFile, generateSampleTemplate, downloadBlob } from '@/lib/so-harian/excelService';
 import { aggregateTransactions, mergeDailyInventory, SOItem } from '@/lib/so-harian/inventoryEngine';
+import {
+  buildCarryForwardEntries,
+  CarryForwardEntry,
+  mergeOpeningStock,
+  OpeningStockDetail,
+} from '@/lib/so-harian/rollover';
 import DataPreviewModal from './DataPreviewModal';
 
 interface UploadSectionProps {
   onCompilationSuccess: (compiledItems: SOItem[], metadata: any) => void;
   previousSessionStock?: Map<string, number>;
+  previousSessionItems?: SOItem[];
   previousSessionDate?: string | null;
+  previousSessionStatus?: string | null;
 }
 
 // Default permanent URLs from ENV with reliable fallbacks
@@ -49,7 +57,9 @@ const DEFAULT_SHEET_URLS: Record<string, string> = {
 export default function UploadSection({
   onCompilationSuccess,
   previousSessionStock = new Map(),
+  previousSessionItems = [],
   previousSessionDate = null,
+  previousSessionStatus = null,
 }: UploadSectionProps) {
   // Input Modes: 'MONITORING_SLA' | 'PR_READY_STOCK' | 'INTERNAL_SJ' | 'FILE' | 'LINK'
   // Default to MONITORING_SLA for RO and PR_READY_STOCK for PENERIMAAN!
@@ -129,7 +139,47 @@ export default function UploadSection({
   const [stokPerlengkapanFile, setStokPerlengkapanFile] = useState<File | null>(null);
   const [stokPerlengkapanData, setStokPerlengkapanData] = useState<any[]>([]);
 
-  const [usePreviousStock, setUsePreviousStock] = useState(previousSessionStock.size > 0);
+  // Sumber stok awal: hasil SO hari sebelumnya (default) atau reset ke master.
+  // Master spreadsheet hanya jadi acuan pertama / saat reset.
+  const carryForwardMap = useMemo(() => {
+    const fromItems = buildCarryForwardEntries(previousSessionItems || []);
+    if (fromItems.size > 0) return fromItems;
+
+    const fallback = new Map<string, CarryForwardEntry>();
+    for (const [code, qty] of Array.from(previousSessionStock.entries())) {
+      fallback.set(code, {
+        kode_barang: code,
+        nama_barang: code,
+        kategori: 'Peralatan',
+        satuan: 'PCS',
+        lokasi: 'Gudang Utama',
+        qty,
+        counted: true,
+      });
+    }
+    return fallback;
+  }, [previousSessionItems, previousSessionStock]);
+
+  const carryForwardCounted = useMemo(
+    () => Array.from(carryForwardMap.values()).filter((entry) => entry.counted).length,
+    [carryForwardMap]
+  );
+
+  const [openingSourceMode, setOpeningSourceMode] = useState<'SO_SEBELUMNYA' | 'MASTER'>('MASTER');
+  const openingSourceTouched = useRef(false);
+
+  useEffect(() => {
+    // Otomatis pakai hasil SO sebelumnya begitu data tersedia, kecuali user
+    // sudah memilih sumber lain secara manual.
+    if (!openingSourceTouched.current && carryForwardMap.size > 0) {
+      setOpeningSourceMode('SO_SEBELUMNYA');
+    }
+  }, [carryForwardMap.size]);
+
+  const chooseOpeningSource = (mode: 'SO_SEBELUMNYA' | 'MASTER') => {
+    openingSourceTouched.current = true;
+    setOpeningSourceMode(mode);
+  };
 
   const [previewModal, setPreviewModal] = useState<{ isOpen: boolean; title: string; data: any[] }>({
     isOpen: false,
@@ -475,8 +525,8 @@ export default function UploadSection({
   const handleCompile = () => {
     setErrorMessage('');
 
-    const initialStockMap = new Map<string, number>();
-    const itemDetailsMap = new Map<string, any>();
+    const masterStock = new Map<string, number>();
+    const masterDetails = new Map<string, OpeningStockDetail>();
     const nameToSkuMap = new Map<string, string>();
 
     for (const row of stokPeralatanData) {
@@ -493,8 +543,8 @@ export default function UploadSection({
       ).trim();
       if (sku) {
         const qty = Number(row.stok_awal || row.qty || 0) || 0;
-        initialStockMap.set(sku, qty);
-        itemDetailsMap.set(sku, {
+        masterStock.set(sku, qty);
+        masterDetails.set(sku, {
           nama_barang: nama || sku,
           satuan: row.satuan || 'UNIT',
           lokasi: row.lokasi || 'Ruang Peralatan',
@@ -520,8 +570,8 @@ export default function UploadSection({
       ).trim();
       if (sku) {
         const qty = Number(row.stok_awal || row.qty || 0) || 0;
-        initialStockMap.set(sku, qty);
-        itemDetailsMap.set(sku, {
+        masterStock.set(sku, qty);
+        masterDetails.set(sku, {
           nama_barang: nama || sku,
           satuan: row.satuan || 'UNIT',
           lokasi: row.lokasi || 'Gedung / Kantor',
@@ -533,13 +583,29 @@ export default function UploadSection({
       }
     }
 
-    if (usePreviousStock && previousSessionStock.size > 0) {
-      for (const [sku, qty] of Array.from(previousSessionStock.entries())) {
-        if (!initialStockMap.has(sku)) {
-          initialStockMap.set(sku, qty);
-        }
+    // Nama barang dari hasil SO sebelumnya ikut dipakai untuk mencocokkan
+// baris RO/Penerimaan yang hanya berisi nama tanpa SKU, supaya tidak
+// muncul baris ganda untuk item yang sama.
+    for (const entry of carryForwardMap.values()) {
+      const nameLower = (entry.nama_barang || '').toLowerCase().trim();
+      if (nameLower && nameLower !== entry.kode_barang.toLowerCase() && !nameToSkuMap.has(nameLower)) {
+        nameToSkuMap.set(nameLower, entry.kode_barang);
       }
     }
+
+    // Hasil SO hari sebelumnya menjadi acuan stok awal; master hanya
+    // melengkapi SKU baru yang belum ada di hasil SO tersebut.
+    const preferCarryForward = openingSourceMode === 'SO_SEBELUMNYA' && carryForwardMap.size > 0;
+    const opening = mergeOpeningStock({
+      master: masterStock,
+      masterDetails,
+      carryForward: carryForwardMap,
+      preferCarryForward,
+    });
+
+    const initialStockMap = opening.stock;
+    const initialSourceMap = opening.sources;
+    const itemDetailsMap = new Map<string, OpeningStockDetail>(opening.details);
 
     // Remap roData and penerimaanData with nameToSkuMap if row uses item name instead of SKU
     const normalizedRoData = roData.map((r) => {
@@ -604,12 +670,23 @@ export default function UploadSection({
       return;
     }
 
-    const compiledItems = mergeDailyInventory(initialStockMap, roMap, penerimaanMap, itemDetailsMap);
+    const compiledItems = mergeDailyInventory(
+      initialStockMap,
+      roMap,
+      penerimaanMap,
+      itemDetailsMap,
+      initialSourceMap
+    );
     onCompilationSuccess(compiledItems, {
       roTotalRows: roData.length,
       penerimaanTotalRows: penerimaanData.length,
       peralatanCount: stokPeralatanData.length,
       perlengkapanCount: stokPerlengkapanData.length,
+      openingSource: preferCarryForward ? 'SO_SEBELUMNYA' : 'MASTER',
+      openingFromPrevious: opening.stats.fromPrevious,
+      openingFromMaster: opening.stats.fromMaster,
+      previousSessionDate,
+      previousSessionStatus,
     });
   };
 
@@ -624,7 +701,9 @@ export default function UploadSection({
           </div>
           <h2 className="text-xl md:text-2xl font-extrabold tracking-tight">Tarik Data Harian &amp; Stok Awal 2 Kategori</h2>
           <p className="text-sky-100 text-sm mt-1 max-w-2xl leading-relaxed">
-            Dapat menggunakan <strong>Upload File Excel/CSV</strong> maupun <strong>Tautkan Link Google Sheets</strong> secara langsung untuk RO, Penerimaan, dan Stok Awal.
+            Master / Spreadsheet di tab ini hanya menjadi <strong>sumber awal</strong>. Setelah hari
+            pertama, stok awal otomatis mengikuti <strong>hasil SO hari sebelumnya</strong>; master
+            hanya dipakai untuk menambah SKU baru.
           </p>
         </div>
         <div className="absolute -right-8 -bottom-10 opacity-10 pointer-events-none">
@@ -1419,26 +1498,88 @@ export default function UploadSection({
         </div>
       </div>
 
-      {/* Auto rollover checkbox */}
-      {previousSessionStock.size > 0 && (
-        <div className="p-4 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <input
-              type="checkbox"
-              id="rollover"
-              checked={usePreviousStock}
-              onChange={(e) => setUsePreviousStock(e.target.checked)}
-              className="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500"
-            />
-            <label htmlFor="rollover" className="text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
-              Gunakan hasil SO tanggal <strong>{previousSessionDate || 'kemarin'}</strong> ({previousSessionStock.size} SKU) sebagai fallback stok awal
-            </label>
+      {/* Sumber Stok Awal: hasil SO sebelumnya vs master */}
+      <div className="p-4 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl space-y-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-start space-x-3">
+            <div className="p-2 bg-sky-100 dark:bg-sky-950/60 rounded-lg text-sky-700 dark:text-sky-300">
+              <RefreshCw className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="text-xs font-extrabold text-slate-800 dark:text-slate-100">
+                Sumber Stok Awal
+              </h4>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                Master / Spreadsheet hanya dipakai sebagai data awal. Setelah hari pertama, hasil SO
+                harian otomatis menjadi acuan stok awal hari berikutnya.
+              </p>
+            </div>
           </div>
-          <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-            Auto Rollover Siap
+          <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+            Auto Rollover
           </span>
         </div>
-      )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => chooseOpeningSource('SO_SEBELUMNYA')}
+            disabled={carryForwardMap.size === 0}
+            className={`text-left p-3 rounded-xl border transition-all ${
+              openingSourceMode === 'SO_SEBELUMNYA' && carryForwardMap.size > 0
+                ? 'bg-sky-50 dark:bg-sky-950/40 border-sky-400 dark:border-sky-700 ring-1 ring-sky-300 dark:ring-sky-800'
+                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-sky-300'
+            } ${carryForwardMap.size === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                Hasil SO {previousSessionDate || 'sebelumnya'}
+              </span>
+              {openingSourceMode === 'SO_SEBELUMNYA' && carryForwardMap.size > 0 && (
+                <CheckCircle2 className="w-4 h-4 text-sky-600" />
+              )}
+            </div>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+              {carryForwardMap.size > 0
+                ? `${carryForwardMap.size} SKU · ${carryForwardCounted} sudah dihitung fisik. Master hanya menambah SKU baru.`
+                : 'Belum ada hasil SO sebelumnya. Kompilasi memakai master.'}
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => chooseOpeningSource('MASTER')}
+            className={`text-left p-3 rounded-xl border transition-all ${
+              openingSourceMode === 'MASTER'
+                ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-400 dark:border-amber-700 ring-1 ring-amber-300 dark:ring-amber-800'
+                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-amber-300'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                <FileSpreadsheet className="w-3.5 h-3.5" /> Master / Spreadsheet
+              </span>
+              {openingSourceMode === 'MASTER' && <CheckCircle2 className="w-4 h-4 text-amber-600" />}
+            </div>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+              Reset stok awal dari file master. Gunakan hanya untuk hari pertama atau koreksi awal.
+            </p>
+          </button>
+        </div>
+
+        {openingSourceMode === 'SO_SEBELUMNYA' &&
+          carryForwardMap.size > 0 &&
+          previousSessionStatus &&
+          previousSessionStatus !== 'COMPLETED' && (
+            <div className="flex items-start space-x-2 text-[11px] text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-2.5">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>
+                Sesi SO {previousSessionDate} berstatus <strong>{previousSessionStatus}</strong>. Item
+                yang belum dihitung memakai stok sistem hari itu sebagai stok awal.
+              </span>
+            </div>
+          )}
+      </div>
 
       {/* Compile button */}
       <div className="pt-2 flex justify-end">
