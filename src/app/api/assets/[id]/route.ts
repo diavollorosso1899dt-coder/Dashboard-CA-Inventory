@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { updateAssetRequest, getAssetRequestById, getAdminClient } from '@/lib/supabase/server';
+import {
+  updateAssetRequest,
+  getAssetRequestById,
+  getAdminClient,
+  invalidateAssetRequestsCache,
+} from '@/lib/supabase/server';
 import { moveItemToTrash, recordAuditLog } from '@/lib/audit/audit-store';
 
 export const dynamic = 'force-dynamic';
@@ -49,6 +54,10 @@ export async function PATCH(
     if (!result.success) {
       return NextResponse.json({ error: result.error || 'Update failed' }, { status: 400 });
     }
+
+    // Buang cache in-memory instance ini supaya render berikutnya membaca
+    // data terbaru dari DB (menghindari status "balik ke awal" setelah update).
+    invalidateAssetRequestsCache();
 
     // Log update in audit trail with previous_state and new_state
     try {

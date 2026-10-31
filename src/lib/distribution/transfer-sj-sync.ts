@@ -259,18 +259,43 @@ export function mergeAssetTransfersLists(
   dbTransfers: AssetTransfer[],
   cachedTransfers: AssetTransfer[]
 ): AssetTransfer[] {
+  // DB adalah sumber kebenaran. Cache hanya dipakai untuk melengkapi field yang
+  // belum ada di baris DB (mis. dokumen yang baru dibuat dan belum tersimpan).
+  // Sebelumnya cache diiterasi lebih dulu sehingga status lama di cache bisa
+  // menutupi status terbaru dari DB -- penyebab status "kembali ke awal".
   const result: AssetTransfer[] = [];
-  const seenIds = new Set<string>();
-  const seenNumbers = new Set<string>();
+  const byId = new Map<string, AssetTransfer>();
 
-  for (const tr of [...cachedTransfers, ...dbTransfers]) {
+  const keyOf = (tr: AssetTransfer) =>
+    (tr.id || tr.transfer_number || '').toLowerCase();
+
+  for (const tr of dbTransfers || []) {
     if (!tr) continue;
-    const id = (tr.id || '').toLowerCase();
-    const num = (tr.transfer_number || '').toLowerCase();
-    if ((id && seenIds.has(id)) || (num && seenNumbers.has(num))) continue;
-    if (id) seenIds.add(id);
-    if (num) seenNumbers.add(num);
+    const key = keyOf(tr);
+    if (!key) continue;
+    byId.set(key, tr);
     result.push(tr);
+  }
+
+  for (const tr of cachedTransfers || []) {
+    if (!tr) continue;
+    const key = keyOf(tr);
+    if (!key) continue;
+
+    const existing = byId.get(key);
+    if (!existing) {
+      byId.set(key, tr);
+      result.push(tr);
+      continue;
+    }
+
+    // Jangan timpa nilai DB yang sudah terisi; isi hanya field kosong.
+    for (const [field, value] of Object.entries(tr)) {
+      const current = (existing as any)[field];
+      if (current === undefined || current === null || current === '') {
+        (existing as any)[field] = value;
+      }
+    }
   }
 
   result.sort(

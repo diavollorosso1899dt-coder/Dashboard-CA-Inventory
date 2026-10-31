@@ -10,8 +10,8 @@ export async function GET(req: NextRequest) {
     const filter = searchParams.get('filter') || 'fulfilled'; // 'fulfilled' | 'received' | 'all'
 
     const [roOrders, transfers] = await Promise.all([
-      getRequestOrders(),
-      getAssetTransfers(),
+      getRequestOrders(true),
+      getAssetTransfers(true),
     ]);
 
     // Build transfer map mirroring InteractiveSlaDashboard logic

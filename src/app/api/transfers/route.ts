@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const data = await getAssetTransfers();
+    const data = await getAssetTransfers(true);
     return NextResponse.json(
       { success: true, data },
       { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }

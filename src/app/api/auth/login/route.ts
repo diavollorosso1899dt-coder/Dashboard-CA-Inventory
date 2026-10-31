@@ -43,7 +43,7 @@ export async function POST(req: Request) {
     }
 
     // 2. Check registered user profiles
-    const profiles = await getUserProfiles();
+    const profiles = await getUserProfiles(true);
     const user = profiles.find((p) => matchesLoginIdentifier(p, loginId));
 
     if (!user) {

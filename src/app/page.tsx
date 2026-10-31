@@ -21,9 +21,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const region = (rawRegion as RegionType) || 'ALL';
 
   const [assetResponse, allRos, allSj] = await Promise.all([
-    getAssetRequests({ region, limit: 10000 }),
-    getRequestOrders(),
-    getSuratJalanList(),
+    getAssetRequests({ region, limit: 10000, fresh: true }),
+    getRequestOrders(true),
+    getSuratJalanList(true),
   ]);
 
   const branchSummaries = buildBranchOpeningSummaries(assetResponse.data, getDaysRemaining);

@@ -7,7 +7,9 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
     const activeOnly = req.nextUrl.searchParams.get('active') === 'true';
-    let data = await getRequestOrders();
+    // Selalu baca DB terbaru: endpoint ini dipakai polling UI, jadi cache
+    // instance lain bisa menampilkan status lama setelah user mengubahnya.
+    let data = await getRequestOrders(true);
     if (activeOnly) {
       data = data.filter((o) => {
         if (o.notes && o.notes.includes('[PROCESSED_FROM_RO]')) return false;
@@ -30,7 +32,10 @@ export async function GET(req: NextRequest) {
         return true;
       });
     }
-    return NextResponse.json({ data });
+    return NextResponse.json(
+      { data },
+      { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
+    );
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

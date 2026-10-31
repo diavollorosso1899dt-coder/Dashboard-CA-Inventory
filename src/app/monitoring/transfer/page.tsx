@@ -7,10 +7,10 @@ export const dynamic = 'force-dynamic';
 
 export default async function TransferAssetPage() {
   const [transfers, outlets, assetsRes, requestOrders] = await Promise.all([
-    getAssetTransfers(),
+    getAssetTransfers(true),
     getOutlets(),
-    getAssetRequests({ limit: 10000 }),
-    getRequestOrders(),
+    getAssetRequests({ limit: 10000, fresh: true }),
+    getRequestOrders(true),
   ]);
 
   return (

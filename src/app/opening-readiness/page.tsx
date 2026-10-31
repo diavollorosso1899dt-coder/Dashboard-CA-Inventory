@@ -17,7 +17,7 @@ export default async function OpeningReadinessPage({ searchParams }: PageProps) 
   const region = (rawRegion as RegionType) || 'ALL';
   const filter = rawFilter || 'ALL';
 
-  const allBranchSummaries = await getBranchOpeningSummaries(region);
+  const allBranchSummaries = await getBranchOpeningSummaries(region, true);
 
   const criticalH3List = allBranchSummaries.filter(
     (b) => (b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 3 && b.readiness_percentage < 100) ||
@@ -50,6 +50,7 @@ export default async function OpeningReadinessPage({ searchParams }: PageProps) 
     region,
     branch: activeBranch || undefined,
     limit: 500,
+    fresh: true,
   });
 
   const activeBranchSummary = allBranchSummaries.find((b) => b.branch_name === activeBranch);

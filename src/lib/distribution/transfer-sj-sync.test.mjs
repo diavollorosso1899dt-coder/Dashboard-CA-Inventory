@@ -5,6 +5,7 @@ import {
   sanitizeAssetTransferDbPayload,
   sanitizeSuratJalanDbPayload,
   mapAssetTransferToSuratJalan,
+  mergeAssetTransfersLists,
   mergeSuratJalanLists,
   extractUnknownColumnFromError,
   stripUnknownColumns,
@@ -288,3 +289,43 @@ test('extractUnknownColumnFromError membaca pesan PostgREST dan PostgreSQL', () 
   assert.deepEqual(stripUnknownColumns({ a: 1, b: 2, c: 3 }, ['b']), { a: 1, c: 3 });
 });
 
+
+test('mergeAssetTransfersLists memakai status DB terbaru, bukan cache lama', () => {
+  const dbTransfers = [
+    {
+      id: 'trf-1',
+      transfer_number: 'TRF/1',
+      status: 'RECEIVED',
+      receiver_pic: 'PIC Baru',
+      created_at: '2026-10-31T08:00:00.000Z',
+      items: [{ item_name: 'Meja', quantity: 2 }],
+    },
+  ];
+  const cachedTransfers = [
+    {
+      id: 'trf-1',
+      transfer_number: 'TRF/1',
+      status: 'IN_TRANSIT',
+      receiver_pic: '',
+      created_at: '2026-10-31T08:00:00.000Z',
+      items: [{ item_name: 'Meja', quantity: 2 }],
+    },
+  ];
+
+  const merged = mergeAssetTransfersLists(dbTransfers, cachedTransfers);
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].status, 'RECEIVED');
+  assert.equal(merged[0].receiver_pic, 'PIC Baru');
+});
+
+test('mergeAssetTransfersLists tetap memuat dokumen cache yang belum tersimpan di DB', () => {
+  const merged = mergeAssetTransfersLists(
+    [{ id: 'trf-db', transfer_number: 'TRF/DB', status: 'RECEIVED', created_at: '2026-10-31T09:00:00.000Z' }],
+    [{ id: 'trf-cache', transfer_number: 'TRF/CACHE', status: 'IN_TRANSIT', created_at: '2026-10-31T10:00:00.000Z' }]
+  );
+
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].id, 'trf-cache');
+  assert.equal(merged[1].id, 'trf-db');
+});

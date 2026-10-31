@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const outlets = await getOutlets();
+    const outlets = await getOutlets(true);
     return NextResponse.json({ success: true, data: outlets });
   } catch (error) {
     return NextResponse.json({ success: false, error: 'Gagal memuat data outlet' }, { status: 500 });

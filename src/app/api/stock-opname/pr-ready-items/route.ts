@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   try {
     const [prAllItems, { data: allAssetRequests }] = await Promise.all([
       getPurchaseRequirementItems('ALL', true),
-      getAssetRequests({ region: 'ALL', limit: 5000 }),
+      getAssetRequests({ region: 'ALL', limit: 5000, fresh: true }),
     ]);
 
     const mergedMap = new Map<string, AssetRequest>();

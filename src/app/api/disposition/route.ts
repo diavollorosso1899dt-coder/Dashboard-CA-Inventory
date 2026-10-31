@@ -50,6 +50,12 @@ export async function PATCH(req: Request) {
     }
 
     const updated = await updateDispositionStatus(id, status, catatan_admin);
+    if (!updated) {
+      return NextResponse.json(
+        { success: false, error: 'Gagal menyimpan status disposisi ke database. Silakan coba lagi.' },
+        { status: 500 }
+      );
+    }
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
     return NextResponse.json({ success: false, error: 'Gagal memperbarui status disposisi' }, { status: 500 });

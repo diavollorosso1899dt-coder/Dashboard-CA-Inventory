@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const users = await getUserProfiles();
+    const users = await getUserProfiles(true);
     return NextResponse.json({ success: true, data: users });
   } catch (error) {
     return NextResponse.json({ success: false, error: 'Gagal memuat data pengguna' }, { status: 500 });

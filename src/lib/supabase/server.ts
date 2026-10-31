@@ -167,6 +167,11 @@ export async function checkSupabaseReachability(): Promise<boolean> {
 }
 
 // Global in-memory cache for fast local access & fallback when Supabase is not yet populated
+type CacheSignature = {
+  count: number;
+  maxUpdatedAt: string | null;
+};
+
 declare global {
   // eslint-disable-next-line no-var
   var __SUPABASE_ADMIN_CLIENT__: any;
@@ -188,6 +193,7 @@ declare global {
   var __ASSET_REQUESTS_CACHE__: {
     items: AssetRequest[];
     timestamp: number;
+    signature?: CacheSignature;
   } | undefined;
   // eslint-disable-next-line no-var
   var __ASSET_REQUESTS_PENDING__: Promise<AssetRequest[]> | null | undefined;
@@ -195,6 +201,7 @@ declare global {
   var __RO_CACHE__: {
     items: RequestOrder[];
     timestamp: number;
+    signature?: CacheSignature;
   } | undefined;
   // eslint-disable-next-line no-var
   var __RO_PENDING__: Promise<RequestOrder[]> | null | undefined;
@@ -232,6 +239,76 @@ declare global {
 
 if (!global.__DELETED_RO_KEYS__) {
   global.__DELETED_RO_KEYS__ = new Set<string>();
+}
+
+/**
+ * Signature ringan untuk cache tabel besar (`count` + `updated_at` terbaru).
+ * Dipakai saat halaman meminta data "fresh": kalau signature DB masih sama
+ * dengan signature saat cache diisi, cache pasti belum berubah sehingga tidak
+ * perlu menarik ribuan baris lagi (mis. asset_requests / request_orders).
+ */
+function computeCacheSignature(
+  rows: Array<{ updated_at?: string | null }> | null | undefined
+): CacheSignature {
+  const list = rows || [];
+  let maxUpdatedAt: string | null = null;
+  for (const row of list) {
+    const value = row?.updated_at;
+    if (!value) continue;
+    const text = String(value);
+    if (!maxUpdatedAt || text > maxUpdatedAt) maxUpdatedAt = text;
+  }
+  return { count: list.length, maxUpdatedAt };
+}
+
+async function fetchTableSignature(table: string): Promise<CacheSignature | null> {
+  const admin = getAdminClient();
+  if (!admin) return null;
+  try {
+    const [countRes, latestRes] = await Promise.all([
+      admin.from(table).select('id', { count: 'exact', head: true }),
+      admin
+        .from(table)
+        .select('updated_at')
+        .order('updated_at', { ascending: false, nullsFirst: false })
+        .limit(1),
+    ]);
+    if (countRes.error || latestRes.error) return null;
+    if (typeof countRes.count !== 'number') return null;
+    const latest = Array.isArray(latestRes.data) ? latestRes.data[0] : null;
+    return {
+      count: countRes.count,
+      maxUpdatedAt: (latest?.updated_at as string | null) || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isSameSignature(a: CacheSignature | undefined, b: CacheSignature | null): boolean {
+  if (!a || !b) return false;
+  return a.count === b.count && (a.maxUpdatedAt || null) === (b.maxUpdatedAt || null);
+}
+
+/**
+ * Cek murah sebelum full fetch saat mode fresh: kalau DB belum berubah sejak
+ * cache diisi, pakai cache dan perpanjang TTL-nya. Mengembalikan false bila
+ * ragu (tanpa signature / query gagal) supaya pemanggil tetap membaca DB.
+ */
+async function reuseCacheIfUnchanged(table: string): Promise<boolean> {
+  const entry =
+    table === 'asset_requests'
+      ? global.__ASSET_REQUESTS_CACHE__
+      : table === 'request_orders'
+        ? global.__RO_CACHE__
+        : undefined;
+  if (!entry || entry.items.length === 0 || !entry.signature) return false;
+
+  const dbSignature = await fetchTableSignature(table);
+  if (!isSameSignature(entry.signature, dbSignature)) return false;
+
+  entry.timestamp = Date.now();
+  return true;
 }
 
 if (!global.__LOCAL_ASSET_CACHE__) {
@@ -447,6 +524,7 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
 
     if (isOnline && admin) {
       // 1. Supabase Mode: Upsert records
+      const editedMap = new Map<string, any>();
       try {
         // Fetch existing manually edited external_ids to preserve dashboard updates
         const { data: existingEdits } = await admin
@@ -456,16 +534,21 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
           )
           .eq('is_manually_edited', true);
 
-        const editedMap = new Map<string, any>();
         (existingEdits || []).forEach((e: any) => editedMap.set(e.external_id, e));
 
         // Batch upsert in chunks of 500
         const chunkSize = 500;
+        const syncTimestamp = new Date().toISOString();
         for (let i = 0; i < items.length; i += chunkSize) {
           const chunk = items.slice(i, i + chunkSize).map((item) => {
             const { id, ...rest } = item;
             const manualEdit = editedMap.get(item.external_id);
-            return mergeManualAssetEdit(rest, manualEdit);
+            // updated_at wajib ikut berubah saat sync menulis data, supaya
+            // instance lain yang memakai cache-signature tahu harus re-fetch.
+            return {
+              ...mergeManualAssetEdit(rest, manualEdit),
+              updated_at: syncTimestamp,
+            };
           });
 
           const { error } = await admin
@@ -504,11 +587,18 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
         console.warn('[Supabase Sync Warning]', dbErr.message);
       }
 
-      // Also update memory cache
-      cache.items = items;
+      // Also update memory cache.
+      // PENTING: cache harus memakai baris hasil merge (manual edit tetap
+      // menang), bukan `items` mentah dari Google Sheets. Kalau memakai data
+      // sheet mentah, status PR yang baru diubah user akan tampak kembali ke
+      // awal tepat setelah tombol "Sync Data" ditekan.
+      const cachedItems = items.map((item) =>
+        mergeManualAssetEdit(item, editedMap.get(item.external_id))
+      );
+      cache.items = cachedItems;
       cache.lastSynced = new Date().toISOString();
       cache.lastContentHash = contentHash;
-      global.__ASSET_REQUESTS_CACHE__ = { items, timestamp: Date.now() };
+      global.__ASSET_REQUESTS_CACHE__ = { items: cachedItems, timestamp: Date.now() };
 
       return {
         success: true,
@@ -584,7 +674,10 @@ function triggerAssetRequestsFetch(): Promise<AssetRequest[]> {
         const admin = getAdminClient();
         if (admin) {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 8000);
+          // Beri waktu cukup untuk cold start Vercel + Supabase. Timeout terlalu
+          // pendek membuat pembacaan "fresh" jatuh ke cache lama, sehingga status
+          // yang baru diubah tampak kembali ke nilai sebelumnya.
+          const timeoutId = setTimeout(() => controller.abort(), 15000);
 
           try {
             // Fetch batches paralel (3300 baris = 4 batch x 1000)
@@ -608,7 +701,11 @@ function triggerAssetRequestsFetch(): Promise<AssetRequest[]> {
             }
 
             if (all.length > 0) {
-              global.__ASSET_REQUESTS_CACHE__ = { items: all, timestamp: Date.now() };
+              global.__ASSET_REQUESTS_CACHE__ = {
+                items: all,
+                timestamp: Date.now(),
+                signature: computeCacheSignature(all),
+              };
               cache.items = all;
               return all;
             }
@@ -640,6 +737,11 @@ export async function getAllAssetRequestsRaw(force = false): Promise<AssetReques
     return global.__ASSET_REQUESTS_CACHE__.items;
   }
 
+  // Mode fresh: cukup cek signature murah. Full fetch hanya bila DB berubah.
+  if (force && (await reuseCacheIfUnchanged('asset_requests'))) {
+    return global.__ASSET_REQUESTS_CACHE__!.items;
+  }
+
   return triggerAssetRequestsFetch();
 }
 
@@ -659,8 +761,14 @@ export async function getAssetRequests(options?: {
   isSystemTransfer?: boolean;
   limit?: number;
   offset?: number;
+  /**
+   * Bypass cache in-memory dan baca langsung dari Supabase.
+   * Dipakai halaman yang menampilkan hasil edit (PR) agar update dari
+   * instance server lain tidak tertimpa cache lama (TTL 5 menit).
+   */
+  fresh?: boolean;
 }): Promise<{ data: AssetRequest[]; total: number; lastSynced: string | null }> {
-  const allItems = await getAllAssetRequestsRaw();
+  const allItems = await getAllAssetRequestsRaw(options?.fresh === true);
   let filtered = allItems;
 
   if (options?.region && options.region !== 'ALL') {
@@ -762,25 +870,34 @@ export async function updateAssetRequest(
 
       const { data, error } = await query.select().single();
       if (error) {
+        // Jangan pura-pura sukses: kalau DB menolak, UI akan revert setelah
+        // refresh karena cache instance lain masih berisi data lama.
         console.error('[Supabase updateAssetRequest error]:', error.message);
-      } else if (data) {
-        const index = cache.items.findIndex((item) => item.id === id || item.external_id === id);
-        if (index !== -1) {
-          cache.items[index] = { ...cache.items[index], ...data };
-        }
-        if (global.__ASSET_REQUESTS_CACHE__?.items) {
-          const gIdx = global.__ASSET_REQUESTS_CACHE__.items.findIndex(
-            (item) => item.id === id || item.external_id === id
-          );
-          if (gIdx !== -1) {
-            global.__ASSET_REQUESTS_CACHE__.items[gIdx] = {
-              ...global.__ASSET_REQUESTS_CACHE__.items[gIdx],
-              ...data,
-            };
-          }
-        }
-        return { success: true, data: data as AssetRequest };
+        return {
+          success: false,
+          error: `Gagal menyimpan perubahan ke database: ${error.message}`,
+        };
       }
+      if (!data) {
+        return { success: false, error: 'Item tidak ditemukan di database' };
+      }
+
+      const index = cache.items.findIndex((item) => item.id === id || item.external_id === id);
+      if (index !== -1) {
+        cache.items[index] = { ...cache.items[index], ...data };
+      }
+      if (global.__ASSET_REQUESTS_CACHE__?.items) {
+        const gIdx = global.__ASSET_REQUESTS_CACHE__.items.findIndex(
+          (item) => item.id === id || item.external_id === id
+        );
+        if (gIdx !== -1) {
+          global.__ASSET_REQUESTS_CACHE__.items[gIdx] = {
+            ...global.__ASSET_REQUESTS_CACHE__.items[gIdx],
+            ...data,
+          };
+        }
+      }
+      return { success: true, data: data as AssetRequest };
     }
 
     // Update in local cache
@@ -811,8 +928,10 @@ export async function updateAssetRequest(
       console.log(`[PR UPDATE] Processing RO Item ID: ${id}`);
       cache.manualEdits.set(id, updatePayload);
 
-      // Pastikan cache RO termuat dari DB Supabase
-      const allRos = await getRequestOrders();
+      // Pastikan data RO yang dibaca adalah versi terbaru dari DB. Memakai
+      // cache in-memory bisa menulis balik items lama dan menimpa perubahan
+      // yang baru disimpan oleh instance server lain.
+      const allRos = await getRequestOrders(true);
       console.log(`[PR UPDATE] Total ROs loaded: ${allRos.length}`);
 
       const rawDecodedId = decodeURIComponent(id).trim().toLowerCase();
@@ -1038,8 +1157,11 @@ export async function updateAssetRequestsBulk(
 /**
  * Calculate Summary KPI Metrics & Analytics
  */
-export async function calculateDashboardMetrics(region: RegionType = 'ALL'): Promise<DashboardMetrics> {
-  const { data: items } = await getAssetRequests({ region, limit: 15000 });
+export async function calculateDashboardMetrics(
+  region: RegionType = 'ALL',
+  fresh = false
+): Promise<DashboardMetrics> {
+  const { data: items } = await getAssetRequests({ region, limit: 15000, fresh });
 
   let totalItems = 0;
   let totalRab = 0;
@@ -1140,8 +1262,11 @@ export async function calculateDashboardMetrics(region: RegionType = 'ALL'): Pro
 /**
  * Get Branch Opening Readiness Summaries
  */
-export async function getBranchOpeningSummaries(region: RegionType = 'ALL'): Promise<BranchOpeningSummary[]> {
-  const { data: items } = await getAssetRequests({ region, limit: 15000 });
+export async function getBranchOpeningSummaries(
+  region: RegionType = 'ALL',
+  fresh = false
+): Promise<BranchOpeningSummary[]> {
+  const { data: items } = await getAssetRequests({ region, limit: 15000, fresh });
   return buildBranchOpeningSummaries(items, getDaysRemaining);
 }
 
@@ -1340,9 +1465,9 @@ function triggerOutletsFetch(): Promise<Outlet[]> {
   return global.__OUTLETS_PENDING__;
 }
 
-export async function getOutlets(): Promise<Outlet[]> {
+export async function getOutlets(force = false): Promise<Outlet[]> {
   const now = Date.now();
-  if (global.__OUTLETS_CACHE__ && global.__OUTLETS_CACHE__.items.length > 0) {
+  if (!force && global.__OUTLETS_CACHE__ && global.__OUTLETS_CACHE__.items.length > 0) {
     if (now - global.__OUTLETS_CACHE__.timestamp >= OUTLETS_CACHE_TTL_MS && !global.__OUTLETS_PENDING__) {
       void triggerOutletsFetch();
     }
@@ -1400,12 +1525,17 @@ export async function saveOutlet(outletData: Partial<Outlet>): Promise<Outlet> {
       const { data, error } = await admin.from('outlets').upsert(dbPayload, { onConflict: 'branch_name' }).select().single();
       if (error) {
         console.error('[Supabase saveOutlet error]:', error.message);
-      } else if (data) {
+        // Jangan simpan hanya di cache: perubahan akan tampak berhasil lalu
+        // hilang setelah refresh karena DB tidak benar-benar berubah.
+        throw new Error(`Gagal menyimpan outlet ke database: ${error.message}`);
+      }
+      if (data) {
         syncOutletToCache({ ...outlet, ...data });
         return { ...outlet, ...data };
       }
     } catch (e: any) {
-      console.warn('[saveOutlet] Error persisting to Supabase, falling back to local cache:', e.message);
+      console.error('[saveOutlet] Error persisting to Supabase:', e?.message);
+      throw e instanceof Error ? e : new Error(String(e));
     }
   }
 
@@ -1509,9 +1639,9 @@ function triggerUsersFetch(): Promise<UserProfile[]> {
   return global.__USERS_PENDING__;
 }
 
-export async function getUserProfiles(): Promise<UserProfile[]> {
+export async function getUserProfiles(force = false): Promise<UserProfile[]> {
   const now = Date.now();
-  if (global.__USERS_CACHE__ && global.__USERS_CACHE__.items.length > 0) {
+  if (!force && global.__USERS_CACHE__ && global.__USERS_CACHE__.items.length > 0) {
     if (now - global.__USERS_CACHE__.timestamp >= USERS_CACHE_TTL_MS && !global.__USERS_PENDING__) {
       void triggerUsersFetch();
     }
@@ -1629,7 +1759,11 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
 
       if (res.error) {
         console.error('[Supabase saveUserProfile error]:', res.error.message);
-      } else if (res.data) {
+        // Sama seperti outlet/PR: jangan balas sukses bila DB menolak, karena
+        // perubahan akan kembali ke nilai awal setelah halaman di-refresh.
+        throw new Error(`Gagal menyimpan pengguna ke database: ${res.error.message}`);
+      }
+      if (res.data) {
         const result = {
           ...res.data,
           username: (res.data as any).username || res.data.email,
@@ -1645,6 +1779,7 @@ export async function saveUserProfile(userData: Partial<UserProfile>): Promise<U
       }
     } catch (err: any) {
       console.error('[Supabase saveUserProfile exception]:', err.message);
+      throw err instanceof Error ? err : new Error(String(err));
     }
   }
 
@@ -1730,7 +1865,7 @@ function triggerTransfersFetch(): Promise<AssetTransfer[]> {
       if (admin) {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 3000);
+          const timer = setTimeout(() => controller.abort(), 10000);
           const { data, error } = await admin
             .from('asset_transfers')
             .select('*')
@@ -1746,8 +1881,12 @@ function triggerTransfersFetch(): Promise<AssetTransfer[]> {
           // Abort or error
         }
       }
-      const fallback = cache.transfers || [];
-      global.__TRANSFERS_CACHE__ = { items: fallback, timestamp: Date.now() };
+      const fallback = global.__TRANSFERS_CACHE__?.items || cache.transfers || [];
+      // Hanya inisialisasi cache kalau memang belum ada. Kalau fetch gagal,
+      // biarkan timestamp lama agar percobaan berikutnya membaca DB lagi.
+      if (!global.__TRANSFERS_CACHE__) {
+        global.__TRANSFERS_CACHE__ = { items: fallback, timestamp: Date.now() };
+      }
       return fallback;
     } finally {
       global.__TRANSFERS_PENDING__ = null;
@@ -1757,9 +1896,12 @@ function triggerTransfersFetch(): Promise<AssetTransfer[]> {
   return global.__TRANSFERS_PENDING__;
 }
 
-export async function getAssetTransfers(): Promise<AssetTransfer[]> {
+export async function getAssetTransfers(force = false): Promise<AssetTransfer[]> {
   const now = Date.now();
-  if (global.__TRANSFERS_CACHE__ !== undefined) {
+  // `force` = selalu baca DB terbaru. Dipakai halaman/endpoint yang
+  // menampilkan status yang bisa diubah, agar update dari instance server
+  // lain tidak tertimpa cache in-memory instance ini.
+  if (!force && global.__TRANSFERS_CACHE__ !== undefined) {
     if (now - global.__TRANSFERS_CACHE__.timestamp >= TRANSFERS_CACHE_TTL_MS && !global.__TRANSFERS_PENDING__) {
       void triggerTransfersFetch();
     }
@@ -1858,7 +2000,12 @@ export async function updateAssetTransfer(id: string, payload: Partial<AssetTran
 
   if (admin) {
     try {
-      const cleanPayload = sanitizeAssetTransferDbPayload(payload as Record<string, any>);
+      const cleanPayload = sanitizeAssetTransferDbPayload({
+        ...(payload as Record<string, any>),
+        // Selalu perbarui updated_at agar pembaca "fresh" bisa mendeteksi
+        // perubahan status tanpa menarik seluruh tabel.
+        updated_at: new Date().toISOString(),
+      });
       if (Object.keys(cleanPayload).length > 0) {
         const { data, error } = await admin
           .from('asset_transfers')
@@ -1866,13 +2013,20 @@ export async function updateAssetTransfer(id: string, payload: Partial<AssetTran
           .eq('id', id)
           .select()
           .single();
-        if (!error && data) {
+        if (error) {
+          console.error('[Supabase updateAssetTransfer error]:', error.message);
+          // Jangan balas sukses bila DB menolak; status akan tampak berubah
+          // lalu kembali ke awal setelah refresh / pindah instance.
+          return null;
+        }
+        if (data) {
           updated = { ...(updated || {}), ...(data as AssetTransfer), ...payload } as AssetTransfer;
           cache.transfers = cache.transfers.map((t) => (t.id === id ? (updated as AssetTransfer) : t));
         }
       }
     } catch (err: any) {
       console.error('[Supabase updateAssetTransfer exception]:', err.message);
+      return null;
     }
 
     try {
@@ -1966,7 +2120,7 @@ export async function resetAllSystemTransfers(): Promise<{ success: boolean; res
     try {
       const { data, error } = await admin
         .from('asset_requests')
-        .update({ is_system_transfer: false })
+        .update({ is_system_transfer: false, updated_at: new Date().toISOString() })
         .eq('is_system_transfer', true)
         .select('id');
       if (!error && data) {
@@ -2153,7 +2307,7 @@ function triggerRoFetch(): Promise<RequestOrder[]> {
     if (admin) {
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 5000);
+        const timer = setTimeout(() => controller.abort(), 15000);
 
         // Query batch 0-999 dan 1000-1999 secara paralel dengan urutan deterministik
         const [res1, res2] = await Promise.all([
@@ -2205,7 +2359,13 @@ function triggerRoFetch(): Promise<RequestOrder[]> {
         if (allOrders.length > 0) {
           const deduplicated = deduplicateOrderItems(allOrders);
           const sorted = sortOrdersNewestFirst(deduplicated);
-          global.__RO_CACHE__ = { items: sorted, timestamp: Date.now() };
+          global.__RO_CACHE__ = {
+            items: sorted,
+            timestamp: Date.now(),
+            // Signature dihitung dari baris DB mentah (sebelum dedupe) agar
+            // bisa dibandingkan langsung dengan count tabel di Supabase.
+            signature: computeCacheSignature(allOrders),
+          };
           cache.requestOrders = sorted;
           return sorted;
         }
@@ -2214,8 +2374,13 @@ function triggerRoFetch(): Promise<RequestOrder[]> {
       }
     }
 
-    // Fallback ke cache yang sudah ada tanpa memicu Google Sheets sync yang lambat
-    const fallback = global.__RO_CACHE__?.items || sortOrdersNewestFirst(deduplicateOrderItems(cache.requestOrders || []));
+    // Fallback ke cache yang sudah ada tanpa memicu Google Sheets sync yang lambat.
+    // Jangan menandai cache lama sebagai "baru": kalau timestamp di-reset, data
+    // basi akan dianggap segar selama 5 menit berikutnya.
+    const existing = global.__RO_CACHE__?.items;
+    if (existing && existing.length > 0) return existing;
+
+    const fallback = sortOrdersNewestFirst(deduplicateOrderItems(cache.requestOrders || []));
     global.__RO_CACHE__ = { items: fallback, timestamp: Date.now() };
     return fallback;
   })().finally(() => {
@@ -2225,14 +2390,21 @@ function triggerRoFetch(): Promise<RequestOrder[]> {
   return global.__RO_PENDING__;
 }
 
-export async function getRequestOrders(): Promise<RequestOrder[]> {
+export async function getRequestOrders(force = false): Promise<RequestOrder[]> {
   const now = Date.now();
-  if (global.__RO_CACHE__ && global.__RO_CACHE__.items.length > 0) {
+  // `force` dipakai halaman PR agar selalu membaca status RO terbaru dari DB,
+  // bukan cache in-memory instance lain yang bisa tertinggal beberapa menit.
+  if (!force && global.__RO_CACHE__ && global.__RO_CACHE__.items.length > 0) {
     if (now - global.__RO_CACHE__.timestamp >= RO_CACHE_TTL_MS && !global.__RO_PENDING__) {
       // Stale-While-Revalidate: refresh di background tanpa memblokir request user
       void triggerRoFetch();
     }
     return global.__RO_CACHE__.items;
+  }
+
+  // Mode fresh: cek signature murah dulu, full fetch hanya bila DB berubah.
+  if (force && (await reuseCacheIfUnchanged('request_orders'))) {
+    return global.__RO_CACHE__!.items;
   }
 
   return triggerRoFetch();
@@ -2309,36 +2481,74 @@ export async function updateRequestOrder(id: string, updates: Partial<RequestOrd
   const admin = getAdminClient();
   const updateData: any = { ...updates, updated_at: new Date().toISOString() };
 
-  // Find corresponding order in cache to extract ro_number & raw_ro_id for comprehensive matching
-  const cachedOrder =
+  // Baca RO terbaru bila cache tidak memuat dokumen ini, supaya penulisan
+  // balik (mis. items/stage) tidak memakai data lama dari instance lain.
+  let cachedOrder =
     (global.__RO_CACHE__?.items || []).find((r: RequestOrder) => r.id === id || r.ro_number === id) ||
     cache.requestOrders.find((r) => r.id === id || r.ro_number === id);
+
+  if (admin && !cachedOrder) {
+    try {
+      const allOrders = await getRequestOrders(true);
+      cachedOrder = allOrders.find((r: RequestOrder) => r.id === id || r.ro_number === id);
+    } catch {
+      // Abaikan; pencocokan di bawah masih bisa memakai id/nomor RO.
+    }
+  }
 
   const roNumber = updates.ro_number || cachedOrder?.ro_number;
   const rawRoId = cachedOrder?.raw_ro_id || (roNumber ? roNumber.replace(/^RO-?/i, '') : null);
   const cleanRawId = rawRoId ? rawRoId.replace(/[^\w]/g, '') : null;
 
   if (admin) {
+    let updatedRows = 0;
+
     try {
       if (isUuid(id)) {
-        const { error } = await admin.from('request_orders').update(updateData).eq('id', id);
-        if (error) console.error('[Supabase updateRequestOrder by id error]:', error.message);
+        const { data, error } = await admin
+          .from('request_orders')
+          .update(updateData)
+          .eq('id', id)
+          .select('id');
+        if (error) {
+          console.error('[Supabase updateRequestOrder by id error]:', error.message);
+        } else {
+          updatedRows += data?.length || 0;
+        }
       }
 
       // Also update any matching rows by ro_number or raw_ro_id to synchronize duplicate entries in Supabase
       if (rawRoId) {
-        await admin
+        const { data, error } = await admin
           .from('request_orders')
           .update(updateData)
-          .or(`raw_ro_id.eq.${rawRoId},ro_number.eq.RO-${rawRoId},ro_number.ilike.%${cleanRawId}%`);
+          .or(`raw_ro_id.eq.${rawRoId},ro_number.eq.RO-${rawRoId},ro_number.ilike.%${cleanRawId}%`)
+          .select('id');
+        if (error) {
+          console.error('[Supabase updateRequestOrder by ro error]:', error.message);
+        } else {
+          updatedRows += data?.length || 0;
+        }
       } else if (roNumber) {
-        await admin
+        const { data, error } = await admin
           .from('request_orders')
           .update(updateData)
-          .eq('ro_number', roNumber);
+          .eq('ro_number', roNumber)
+          .select('id');
+        if (error) {
+          console.error('[Supabase updateRequestOrder by number error]:', error.message);
+        } else {
+          updatedRows += data?.length || 0;
+        }
       }
     } catch (err: any) {
       console.error('[Supabase updateRequestOrder exception]:', err.message);
+    }
+
+    // Jangan balas sukses kalau DB tidak menulis apa pun. Tanpa ini UI
+    // menampilkan status baru sebentar, lalu "kembali ke awal" saat refresh.
+    if (updatedRows === 0) {
+      return false;
     }
   }
 
@@ -2904,8 +3114,13 @@ export async function syncRequestOrdersFromSheet(
       const chunkSize = 100;
       const writeChunks = async (rows: any[], label: string) => {
         let ok = 0;
+        const writeTimestamp = new Date().toISOString();
         for (let i = 0; i < rows.length; i += chunkSize) {
-          const chunk = rows.slice(i, i + chunkSize);
+          const chunk = rows
+            .slice(i, i + chunkSize)
+            // updated_at ikut ditulis agar cache-signature di instance lain
+            // mendeteksi perubahan hasil sync dan tidak menyajikan data lama.
+            .map((row) => ({ ...row, updated_at: writeTimestamp }));
           const { error: upsertErr } = await admin
             .from('request_orders')
             .upsert(chunk, { onConflict: 'ro_number', defaultToNull: false });
@@ -3022,10 +3237,11 @@ function triggerSjFetch(): Promise<SuratJalan[]> {
     try {
       const admin = getAdminClient();
       let sjFromDb: SuratJalan[] = [];
+      let fetchFailed = false;
       if (admin) {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 3500);
+          const timer = setTimeout(() => controller.abort(), 10000);
           const { data, error } = await admin
             .from('surat_jalan')
             .select('*')
@@ -3035,11 +3251,20 @@ function triggerSjFetch(): Promise<SuratJalan[]> {
           if (!error && Array.isArray(data)) {
             sjFromDb = data as SuratJalan[];
             global.__SJ_CACHE__ = { items: sjFromDb, timestamp: Date.now() };
+          } else {
+            fetchFailed = true;
           }
           if (error) console.error('[Supabase getSuratJalanList error]:', error.message);
         } catch (err: any) {
+          fetchFailed = true;
           console.error('[Supabase getSuratJalanList exception]:', err.message);
         }
+      }
+      // Jika fetch GAGAL, kembalikan cache lama (bukan array kosong) dan
+      // jangan reset timestamp-nya supaya percobaan berikutnya tetap ke DB.
+      // Fetch sukses dengan 0 baris tetap dianggap valid (data memang kosong).
+      if (fetchFailed && global.__SJ_CACHE__?.items?.length) {
+        sjFromDb = global.__SJ_CACHE__.items;
       }
       if (!global.__SJ_CACHE__) {
         global.__SJ_CACHE__ = { items: sjFromDb, timestamp: Date.now() };
@@ -3053,10 +3278,10 @@ function triggerSjFetch(): Promise<SuratJalan[]> {
   return global.__SJ_PENDING__;
 }
 
-export async function getSuratJalanList(): Promise<SuratJalan[]> {
+export async function getSuratJalanList(force = false): Promise<SuratJalan[]> {
   const now = Date.now();
   let sjFromDb: SuratJalan[];
-  if (global.__SJ_CACHE__ !== undefined) {
+  if (!force && global.__SJ_CACHE__ !== undefined) {
     if (now - global.__SJ_CACHE__.timestamp >= SJ_CACHE_TTL_MS && !global.__SJ_PENDING__) {
       void triggerSjFetch();
     }
@@ -3067,7 +3292,9 @@ export async function getSuratJalanList(): Promise<SuratJalan[]> {
 
   let transfers: AssetTransfer[] = [];
   try {
-    transfers = await getAssetTransfers();
+    // Ikuti mode baca yang sama: data Surat Jalan dan Transfer saling
+    // melengkapi, jadi keduanya harus segar saat halaman status dibuka.
+    transfers = await getAssetTransfers(force);
   } catch (err: any) {
     console.error('[getSuratJalanList merge transfers error]:', err?.message);
   }
@@ -3092,7 +3319,7 @@ export async function getSuratJalanList(): Promise<SuratJalan[]> {
 }
 
 export async function getSuratJalanById(id: string): Promise<SuratJalan | null> {
-  const all = await getSuratJalanList();
+  const all = await getSuratJalanList(true);
   return all.find((sj) => sj.id === id || sj.sj_number === id) || null;
 }
 
@@ -3214,8 +3441,10 @@ export async function updateSuratJalanStatus(
   const nowIso = new Date().toISOString();
   const nowDate = nowIso.split('T')[0];
 
-  // Ambil daftar SJ & Transfer saat ini untuk mengekstrak seluruh item & referensi RO
-  const allSj = await getSuratJalanList();
+  // Ambil daftar SJ & Transfer TERBARU untuk mengekstrak seluruh item &
+  // referensi RO. Memakai cache bisa menulis balik items/status lama dan
+  // menimpa perubahan yang baru disimpan instance lain.
+  const allSj = await getSuratJalanList(true);
   const targetSet = new Set(targetIds.map((x) => x.toLowerCase()));
   const matchedDocs = allSj.filter(
     (s) =>
@@ -3360,7 +3589,7 @@ export async function updateSuratJalanStatus(
   // C. Jika status === 'DELIVERED', selesaikan seluruh item terkait pada Request Order (RO) sekaligus
   if (status === 'DELIVERED' && matchedDocs.length > 0) {
     try {
-      const allRos = await getRequestOrders();
+      const allRos = await getRequestOrders(true);
       const combinedItems = matchedDocs.flatMap((d) => d.items || []);
       const roNumbers = matchedDocs
         .map((d) => d.ro_nomor || d.ro_number || '')
@@ -3490,7 +3719,8 @@ export async function getDispositionRequests(): Promise<DispositionRequest[]> {
   if (admin) {
     try {
       const { data, error } = await admin.from('disposition_requests').select('*').order('submission_date', { ascending: false });
-      if (!error && data && data.length > 0) return data as DispositionRequest[];
+      // DB yang sukses (termasuk hasil kosong) adalah sumber kebenaran.
+      if (!error && Array.isArray(data)) return data as DispositionRequest[];
       if (error) console.error('[Supabase getDispositionRequests error]:', error.message);
     } catch (err: any) {
       console.error('[Supabase getDispositionRequests exception]:', err.message);
@@ -3581,10 +3811,18 @@ export async function updateDispositionStatus(
       } else {
         q = q.eq('disposition_number', id);
       }
-      const { error } = await q;
-      if (error) console.error('[Supabase updateDispositionStatus error]:', error.message);
+      const { data, error } = await q.select('id');
+      if (error) {
+        console.error('[Supabase updateDispositionStatus error]:', error.message);
+        return false;
+      }
+      if ((data?.length || 0) === 0) {
+        console.error('[Supabase updateDispositionStatus] Tidak ada baris yang diperbarui untuk', id);
+        return false;
+      }
     } catch (err: any) {
       console.error('[Supabase updateDispositionStatus exception]:', err.message);
+      return false;
     }
   }
 
@@ -3606,13 +3844,16 @@ export async function getPurchaseRequirementItems(
   region: RegionType = 'ALL',
   includeCompleted = false
 ): Promise<AssetRequest[]> {
-  const { data: allItems } = await getAssetRequests({ region, limit: 5000 });
+  // Halaman PR menampilkan data yang bisa diedit user, jadi selalu baca DB
+  // terbaru. Cache in-memory per-instance (TTL 5 menit) membuat status yang
+  // baru disimpan di instance lain terlihat "kembali ke awal".
+  const { data: allItems } = await getAssetRequests({ region, limit: 5000, fresh: true });
   const sheetPrItems = allItems.filter((it) =>
     matchesPurchaseRequirementFilter(it, includeCompleted)
   );
 
   // Fetch RO items that require PR (stock_source === 'PR_VENDOR')
-  const roOrders = await getRequestOrders();
+  const roOrders = await getRequestOrders(true);
   const roPrItems: AssetRequest[] = [];
   const seenIds = new Set<string>(sheetPrItems.map((it) => it.id));
 

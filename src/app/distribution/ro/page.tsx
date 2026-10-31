@@ -11,7 +11,7 @@ export const metadata = {
 
 export default async function RoPage() {
   const [orders, outlets] = await Promise.all([
-    getRequestOrders(),
+    getRequestOrders(true),
     getOutlets(),
   ]);
 

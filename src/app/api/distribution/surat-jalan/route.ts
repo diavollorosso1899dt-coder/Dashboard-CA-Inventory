@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const data = await getSuratJalanList();
+    const data = await getSuratJalanList(true);
     return NextResponse.json(
       { data },
       { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }

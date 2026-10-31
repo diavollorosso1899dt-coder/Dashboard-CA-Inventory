@@ -21,6 +21,9 @@ export async function GET(request: NextRequest) {
       search,
       limit,
       offset,
+      // Endpoint ini dipakai untuk refresh tabel setelah edit status. Baca DB
+      // terbaru agar perubahan dari instance server lain tidak tertimpa.
+      fresh: true,
     });
 
     return NextResponse.json(result);

@@ -19,11 +19,11 @@ export default async function SlaAnalyticsPage({ searchParams }: PageProps) {
   const region = (rawRegion as RegionType) || 'ALL';
 
   const [metrics, assetResponse, roOrders, branchSummaries, transfers] = await Promise.all([
-    calculateDashboardMetrics(region),
-    getAssetRequests({ region, limit: 3000 }),
-    getRequestOrders(),
-    getBranchOpeningSummaries(region),
-    getAssetTransfers(),
+    calculateDashboardMetrics(region, true),
+    getAssetRequests({ region, limit: 3000, fresh: true }),
+    getRequestOrders(true),
+    getBranchOpeningSummaries(region, true),
+    getAssetTransfers(true),
   ]);
 
   return (
