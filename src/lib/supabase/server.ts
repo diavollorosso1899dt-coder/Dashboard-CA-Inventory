@@ -681,7 +681,7 @@ function triggerAssetRequestsFetch(): Promise<AssetRequest[]> {
 
           try {
             // Fetch batches paralel (3300 baris = 4 batch x 1000)
-            const [b0, b1, b2, b3] = await Promise.all([
+            const results = await Promise.all([
               admin.from('asset_requests').select('*').order('order_datetime', { ascending: false, nullsFirst: false }).range(0, 999).abortSignal(controller.signal),
               admin.from('asset_requests').select('*').order('order_datetime', { ascending: false, nullsFirst: false }).range(1000, 1999).abortSignal(controller.signal),
               admin.from('asset_requests').select('*').order('order_datetime', { ascending: false, nullsFirst: false }).range(2000, 2999).abortSignal(controller.signal),
@@ -689,18 +689,26 @@ function triggerAssetRequestsFetch(): Promise<AssetRequest[]> {
             ]);
             clearTimeout(timeoutId);
 
+            // PostgREST mengembalikan error per-batch (bukan reject). Jangan
+            // anggap hasil parsial/error sebagai "tabel kosong".
+            let fetchFailed = results.some((r) => r.error);
             const all: AssetRequest[] = [];
-            if (b0.data) all.push(...(b0.data as AssetRequest[]));
-            if (b1.data) all.push(...(b1.data as AssetRequest[]));
-            if (b2.data) all.push(...(b2.data as AssetRequest[]));
-            if (b3.data) all.push(...(b3.data as AssetRequest[]));
 
-            if (b3.data && b3.data.length === 1000) {
-              const b4 = await admin.from('asset_requests').select('*').order('order_datetime', { ascending: false, nullsFirst: false }).range(4000, 4999);
-              if (b4.data) all.push(...(b4.data as AssetRequest[]));
+            if (!fetchFailed) {
+              for (const r of results) {
+                if (r.data) all.push(...(r.data as AssetRequest[]));
+              }
+
+              if (results[3].data && results[3].data.length === 1000) {
+                const b4 = await admin.from('asset_requests').select('*').order('order_datetime', { ascending: false, nullsFirst: false }).range(4000, 4999);
+                if (b4.error) fetchFailed = true;
+                else if (b4.data) all.push(...(b4.data as AssetRequest[]));
+              }
             }
 
-            if (all.length > 0) {
+            // Fetch sukses = DB adalah sumber kebenaran, termasuk saat 0 baris.
+            // Tanpa ini, setelah data dikosongkan cache lama tetap ditampilkan.
+            if (!fetchFailed) {
               global.__ASSET_REQUESTS_CACHE__ = {
                 items: all,
                 timestamp: Date.now(),
@@ -1873,7 +1881,10 @@ function triggerTransfersFetch(): Promise<AssetTransfer[]> {
             .abortSignal(controller.signal);
           clearTimeout(timer);
           if (!error && Array.isArray(data)) {
-            const merged = mergeAssetTransfersLists(data as AssetTransfer[], cache.transfers || []);
+            // DB-first: cache hanya salinan DB. Kalau dokumen dihapus langsung
+            // dari DB, sisa cache tidak boleh muncul kembali.
+            cache.transfers = data as AssetTransfer[];
+            const merged = mergeAssetTransfersLists(data as AssetTransfer[], []);
             global.__TRANSFERS_CACHE__ = { items: merged, timestamp: Date.now() };
             return merged;
           }
@@ -2330,22 +2341,29 @@ function triggerRoFetch(): Promise<RequestOrder[]> {
         ]);
         clearTimeout(timer);
 
+        let fetchFailed = Boolean(res1.error || res2.error);
         const allOrders: RequestOrder[] = [];
-        if (res1.data) allOrders.push(...(res1.data as RequestOrder[]));
-        if (res2.data) allOrders.push(...(res2.data as RequestOrder[]));
+        if (!fetchFailed) {
+          if (res1.data) allOrders.push(...(res1.data as RequestOrder[]));
+          if (res2.data) allOrders.push(...(res2.data as RequestOrder[]));
+        }
 
         // Jika data lebih dari 2000, ambil batch berikutnya
-        if (res2.data && res2.data.length === 1000) {
+        if (!fetchFailed && res2.data && res2.data.length === 1000) {
           let from = 2000;
           let hasMore = true;
           while (hasMore) {
-            const { data } = await admin
+            const { data, error } = await admin
               .from('request_orders')
               .select('*')
               .order('request_date', { ascending: false, nullsFirst: false })
               .order('created_at', { ascending: false })
               .order('ro_number', { ascending: false })
               .range(from, from + 999);
+            if (error) {
+              fetchFailed = true;
+              break;
+            }
             if (data && data.length > 0) {
               allOrders.push(...(data as RequestOrder[]));
               if (data.length < 1000) hasMore = false;
@@ -2356,7 +2374,8 @@ function triggerRoFetch(): Promise<RequestOrder[]> {
           }
         }
 
-        if (allOrders.length > 0) {
+        // Fetch sukses = DB sumber kebenaran, termasuk saat tabel kosong.
+        if (!fetchFailed) {
           const deduplicated = deduplicateOrderItems(allOrders);
           const sorted = sortOrdersNewestFirst(deduplicated);
           global.__RO_CACHE__ = {
@@ -3251,6 +3270,10 @@ function triggerSjFetch(): Promise<SuratJalan[]> {
           if (!error && Array.isArray(data)) {
             sjFromDb = data as SuratJalan[];
             global.__SJ_CACHE__ = { items: sjFromDb, timestamp: Date.now() };
+            // Fetch sukses = DB sumber kebenaran. Buang sisa salinan lokal
+            // (termasuk data contoh/seed) agar tidak muncul lagi setelah DB
+            // dikosongkan.
+            cache.suratJalan = [];
           } else {
             fetchFailed = true;
           }
