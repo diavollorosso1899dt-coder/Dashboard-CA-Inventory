@@ -403,82 +403,13 @@ if (!global.__LOCAL_ASSET_CACHE__) {
         created_at: new Date().toISOString(),
       }
     ],
+    // Data transaksi tidak di-seed: DB adalah satu-satunya sumber kebenaran.
+    // Seed lama (2 RO, 1 SJ, 1 disposisi) membuat dokumen contoh tetap muncul
+    // setelah tabel DB dikosongkan.
     transfers: [],
-    requestOrders: [
-      {
-        id: 'ro-1',
-        ro_number: 'RO-CA-2026-0042',
-        branch_name: 'Mie Ayam Muntjul Karawang',
-        region: 'JABODETABEK',
-        requester_name: 'Mutia Kulsum (BusDev)',
-        request_date: '2026-03-01',
-        target_delivery_date: '2026-03-25',
-        status: 'APPROVED',
-        notes: 'Permohonan aset kelengkapan opening outlet April 2026',
-        items: [
-          { id: 'roi-1', item_name: 'Meja Lesehan', quantity_ordered: 6, quantity_fulfilled: 6, stock_source: 'GUDANG_SCGA' },
-          { id: 'roi-2', item_name: 'Kursi Kayu', quantity_ordered: 40, quantity_fulfilled: 40, stock_source: 'GUDANG_SCGA' },
-          { id: 'roi-3', item_name: 'Exhaust Hood Stainless 2M', quantity_ordered: 1, quantity_fulfilled: 0, stock_source: 'PR_VENDOR' },
-        ],
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: 'ro-2',
-        ro_number: 'RO-CA-2026-0043',
-        branch_name: 'Warung Nini Karawang',
-        region: 'JABODETABEK',
-        requester_name: 'Siti Aminah',
-        request_date: '2026-03-05',
-        target_delivery_date: '2026-03-28',
-        status: 'PENDING',
-        notes: 'Penambahan chiller undercounter dan blender komersial',
-        items: [
-          { id: 'roi-4', item_name: 'Undercounter Chiller 2 Pintu', quantity_ordered: 1, quantity_fulfilled: 0, stock_source: 'PR_VENDOR' },
-        ],
-        created_at: new Date().toISOString(),
-      }
-    ],
-    suratJalan: [
-      {
-        id: 'sj-1',
-        sj_number: 'SJ/SCGA/2026/03/0088',
-        ro_id: 'ro-1',
-        ro_number: 'RO-CA-2026-0042',
-        branch_name: 'Mie Ayam Muntjul Karawang',
-        region: 'JABODETABEK',
-        delivery_date: '2026-03-08',
-        driver_name: 'Suryanto',
-        driver_phone: '081399887711',
-        vehicle_number: 'B 9482 SXZ',
-        expedition: 'Armada Internal SCGA',
-        sender_name: 'Staff SCGA Warehouse',
-        receiver_name: 'Budi Santoso (Outlet Manager)',
-        status: 'SHIPPED',
-        notes: 'Harap periksa kondisi fisik kayu dan segel sebelum menandatangani',
-        items: [
-          { id: 'sji-1', item_name: 'Meja Lesehan Jepara (120x70x35)', quantity: 6, unit: 'Unit', notes: 'Bahan mahoni jati muda' },
-          { id: 'sji-2', item_name: 'Kursi Kayu Panjang (4 Orang)', quantity: 40, unit: 'Unit', notes: 'Finishing natural doff' }
-        ],
-        created_at: new Date().toISOString(),
-      }
-    ],
-    dispositions: [
-      {
-        id: 'disp-1',
-        disposition_number: 'DISP/CA/2026/02/0014',
-        branch_name: 'Sop Mak Garang Kisamaun',
-        region: 'JABODETABEK',
-        requester_name: 'Ahmad Dani',
-        submission_date: '2026-02-28',
-        status: 'DISETUJUI',
-        approval_notes: 'Disetujui untuk dikembalikan ke Gudang SCGA untuk servis kompresor',
-        approved_by: 'Super Administrator CA',
-        items: [
-          { id: 'di-1', item_name: 'Blender Komersial Heavy Duty', quantity: 1, condition: 'RUSAK_RINGAN', reason: 'Motor overheating setelah pemakaian 8 bulan' }
-        ],
-        created_at: new Date().toISOString(),
-      }
-    ]
+    requestOrders: [],
+    suratJalan: [],
+    dispositions: []
   };
 }
 
