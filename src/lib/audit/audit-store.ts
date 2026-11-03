@@ -1,5 +1,5 @@
 import { TrashItem, AuditLogEntry, AuditEntityType, TrashEntityType, AuditActionType } from '@/lib/supabase/types';
-import { getAdminClient, updateAssetRequest, updateAssetTransfer } from '@/lib/supabase/server';
+import { getAdminClient, updateAssetRequest, updateAssetTransfer, updateRequestOrder } from '@/lib/supabase/server';
 
 // In-memory fallback. Data utama selalu disimpan di Supabase (tabel
 // audit_logs & trash_items); memori hanya dipakai bila koneksi DB gagal.
@@ -167,22 +167,69 @@ export async function revertAuditLog(
     return { success: false, message: 'Catatan log tidak ditemukan.' };
   }
 
-  if (!log.previous_state || Object.keys(log.previous_state).length === 0) {
-    return { 
-      success: false, 
-      message: 'Log ini tidak memiliki data kondisi sebelumnya (previous state) untuk dikembalikan.' 
+  const previousState = log.previous_state;
+  if (
+    !previousState ||
+    typeof previousState !== 'object' ||
+    Array.isArray(previousState) ||
+    Object.keys(previousState).length === 0
+  ) {
+    return {
+      success: false,
+      message:
+        'Log ini tidak memiliki kondisi sebelumnya yang dapat dikembalikan otomatis (mis. perubahan massal atau pembuatan data baru).',
     };
   }
 
   try {
-    // 1. Rollback entity data based on entity_type
-    if (log.entity_type === 'ASET' && log.entity_id) {
-      const res = await updateAssetRequest(log.entity_id, log.previous_state);
+    // 1. Kembalikan data entitas sesuai modulnya.
+    if (log.entity_type === 'RO' && log.entity_id) {
+      const ok = await updateRequestOrder(log.entity_id, previousState as any);
+      if (!ok) {
+        return {
+          success: false,
+          message: 'Gagal mengembalikan data RO ke Supabase. Pastikan dokumen RO masih ada.',
+        };
+      }
+    } else if (log.entity_type === 'ASET' && log.entity_id) {
+      const res = await updateAssetRequest(log.entity_id, previousState);
       if (!res.success) {
         return { success: false, message: res.error || 'Gagal mengembalikan data aset di basis data.' };
       }
     } else if (log.entity_type === 'TRANSFER' && log.entity_id) {
-      await updateAssetTransfer(log.entity_id, log.previous_state);
+      await updateAssetTransfer(log.entity_id, previousState);
+    } else {
+      const tableByEntity: Record<string, string> = {
+        OUTLET: 'outlets',
+        PENGGUNA: 'user_profiles',
+        SURAT_JALAN: 'surat_jalan',
+        DISPOSISI: 'disposition_requests',
+      };
+      const table = tableByEntity[log.entity_type];
+      if (!table) {
+        return {
+          success: false,
+          message: `Revert otomatis belum didukung untuk modul ${log.entity_type}.`,
+        };
+      }
+      if (!log.entity_id) {
+        return { success: false, message: 'Log tidak menyimpan ID data sehingga tidak bisa dikembalikan.' };
+      }
+      const admin = getAdminClient();
+      if (!admin) {
+        return { success: false, message: 'Koneksi Supabase tidak tersedia.' };
+      }
+      const { data: updatedRows, error } = await admin
+        .from(table)
+        .update(previousState)
+        .eq('id', log.entity_id)
+        .select('id');
+      if (error || !updatedRows || updatedRows.length === 0) {
+        return {
+          success: false,
+          message: `Gagal mengembalikan data ${log.entity_type} di Supabase${error ? `: ${error.message}` : '.'}`,
+        };
+      }
     }
 
     // 2. Record new audit log for the REVERT action

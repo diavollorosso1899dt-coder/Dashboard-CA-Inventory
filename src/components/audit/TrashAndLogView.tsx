@@ -991,7 +991,10 @@ export function TrashAndLogView({
 
                         {isLogColVisible('actions') && (
                           <td className="py-3 px-4 text-right whitespace-nowrap">
-                            {log.previous_state && Object.keys(log.previous_state).length > 0 ? (
+                            {log.previous_state &&
+                            !Array.isArray(log.previous_state) &&
+                            Object.keys(log.previous_state).length > 0 &&
+                            ['RO', 'ASET', 'OUTLET', 'PENGGUNA', 'SURAT_JALAN', 'DISPOSISI', 'TRANSFER'].includes(log.entity_type) ? (
                               <button
                                 type="button"
                                 onClick={() => setRevertingLog(log)}

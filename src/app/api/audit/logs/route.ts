@@ -25,7 +25,8 @@ export async function POST(req: NextRequest) {
     // Revert action
     if (body.action === 'revert') {
       const { logId, actorName, actorRole } = body;
-      const res = await revertAuditLog(logId, actorName, actorRole);
+      const actor = resolveActor(req, { name: actorName, role: actorRole });
+      const res = await revertAuditLog(logId, actor.name, actor.role);
       return NextResponse.json(res, { status: res.success ? 200 : 400 });
     }
 
