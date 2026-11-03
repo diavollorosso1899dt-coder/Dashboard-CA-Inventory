@@ -31,6 +31,7 @@ import {
   applyConfirmedItemsToRequestOrders,
   normalizeConfirmedSjItems,
 } from '../distribution/confirm-surat-jalan';
+import { mergeRoForSync } from '../distribution/ro-sync-merge';
 import {
   extractUnknownColumnFromError,
   mapAssetTransferToSuratJalan,
@@ -2963,7 +2964,7 @@ export async function syncRequestOrdersFromSheet(
         for (let from = 0; ; from += pageSize) {
           const { data, error } = await admin
             .from('request_orders')
-            .select('id, ro_number, raw_ro_id, branch_name, region, requester_name, request_date, target_delivery_date, status, current_stage, source_type, warehouse_name, notes, items')
+            .select('*')
             .order('id', { ascending: true })
             .range(from, from + pageSize - 1);
           if (error) throw error;
@@ -2988,65 +2989,14 @@ export async function syncRequestOrdersFromSheet(
         const existing = existingMap.get(keyNo) || (keyRaw ? existingMap.get(keyRaw) : null);
 
         if (!existing) {
-          return {
-            ro_number: o.ro_number,
-            raw_ro_id: o.raw_ro_id,
-            branch_name: o.branch_name,
-            region: o.region,
-            requester_name: o.requester_name,
-            request_date: o.request_date,
-            target_delivery_date: o.target_delivery_date || null,
-            status: o.status,
-            current_stage: o.current_stage,
-            source_type: o.source_type,
-            warehouse_name: o.warehouse_name,
-            items: o.items,
-          };
+          // ID sementara dari grouping bukan UUID; biarkan database membuat id baru.
+          const { id: _tempId, ...newOrder } = o as any;
+          return newOrder;
         }
 
-        // Merge items: preserve user-assigned stock_source / quantity_fulfilled
-        const existingItemMap = new Map<string, any>();
-        if (Array.isArray(existing.items)) {
-          existing.items.forEach((it: any) => {
-            const itemKey = (it.item_name || '').toLowerCase().trim();
-            if (itemKey) existingItemMap.set(itemKey, it);
-          });
-        }
-
-        const mergedItems = o.items.map((it) => {
-          const matched = existingItemMap.get((it.item_name || '').toLowerCase().trim());
-          if (matched && matched.stock_source && matched.stock_source !== 'ON_PROSES') {
-            return {
-              ...it,
-              stock_source: matched.stock_source,
-              quantity_fulfilled: matched.quantity_fulfilled ?? it.quantity_fulfilled,
-              specification: matched.specification || it.specification,
-            };
-          }
-          return it;
-        });
-
-        const isProcessed =
-          (existing.notes && existing.notes.includes('[PROCESSED_FROM_RO]')) ||
-          (existing.current_stage && existing.current_stage !== 'REQUEST_ORDER') ||
-          (existing.status && existing.status !== 'INPUT_SYSTEM');
-
-        return {
-          id: existing.id,
-          ro_number: o.ro_number,
-          raw_ro_id: o.raw_ro_id,
-          branch_name: o.branch_name,
-          region: o.region,
-          requester_name: o.requester_name,
-          request_date: o.request_date,
-          target_delivery_date: o.target_delivery_date || null,
-          status: isProcessed ? existing.status : o.status,
-          current_stage: isProcessed ? existing.current_stage : o.current_stage,
-          notes: existing.notes || null,
-          source_type: o.source_type,
-          warehouse_name: o.warehouse_name,
-          items: mergedItems,
-        };
+        // Data yang sudah ada di aplikasi menang: status, tahap, catatan,
+        // item, dan tanggal hasil update user tidak boleh kembali ke sheet.
+        return mergeRoForSync(o, existing);
       });
 
       // Only write rows that are new or actually differ from the DB. New rows (no id) and
