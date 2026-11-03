@@ -39,7 +39,10 @@ export default function SyncPage() {
   var options = {
     "method": "POST",
     "headers": {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      // Samakan dengan env SYNC_TOKEN di server. Tanpa token, endpoint
+      // hanya menerima sync manual dari dashboard yang sudah login.
+      "x-sync-token": "ISI_TOKEN_RAHASIA"
     },
     "muteHttpExceptions": true
   };

@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncGoogleSheetsToSupabase, syncRequestOrdersFromSheet } from '@/lib/supabase/server';
+import { isSyncRequestAllowed, SYNC_BLOCKED_MESSAGE } from '@/lib/auth/sync-guard';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
+    if (!isSyncRequestAllowed(request)) {
+      return NextResponse.json({ success: false, message: SYNC_BLOCKED_MESSAGE }, { status: 401 });
+    }
+
     const force = request.nextUrl.searchParams.get('force') === 'true';
     const [assetRes, roRes] = await Promise.allSettled([
       syncGoogleSheetsToSupabase({ force }),
@@ -32,6 +37,10 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    if (!isSyncRequestAllowed(request)) {
+      return NextResponse.json({ success: false, message: SYNC_BLOCKED_MESSAGE }, { status: 401 });
+    }
+
     const force = request.nextUrl.searchParams.get('force') === 'true';
     const [assetRes, roRes] = await Promise.allSettled([
       syncGoogleSheetsToSupabase({ force }),

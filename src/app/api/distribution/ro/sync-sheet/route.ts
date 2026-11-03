@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncRequestOrdersFromSheet, cleanDuplicateRequestOrders } from '@/lib/supabase/server';
 import { RoDateField } from '@/lib/distribution/ro-date-filter';
+import { isSyncRequestAllowed, SYNC_BLOCKED_MESSAGE } from '@/lib/auth/sync-guard';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
+    if (!isSyncRequestAllowed(req)) {
+      return NextResponse.json({ success: false, message: SYNC_BLOCKED_MESSAGE }, { status: 401 });
+    }
+
     const clearOld = req.nextUrl.searchParams.get('clear') === 'true';
     const startDate = req.nextUrl.searchParams.get('startDate') || undefined;
     const endDate = req.nextUrl.searchParams.get('endDate') || undefined;
@@ -25,6 +30,10 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    if (!isSyncRequestAllowed(req)) {
+      return NextResponse.json({ success: false, message: SYNC_BLOCKED_MESSAGE }, { status: 401 });
+    }
+
     const clearOld = req.nextUrl.searchParams.get('clear') === 'true';
     let startDate = req.nextUrl.searchParams.get('startDate') || undefined;
     let endDate = req.nextUrl.searchParams.get('endDate') || undefined;
