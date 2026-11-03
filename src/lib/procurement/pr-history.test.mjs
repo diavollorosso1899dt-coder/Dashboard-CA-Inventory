@@ -5,6 +5,7 @@ import {
   filterPurchaseRequirementHistory,
   matchesPurchaseRequirementFilter,
   mergeManualAssetEdit,
+  resolveRoPrItemStatus,
   sanitizeAssetRequestDbPayload,
 } from './pr-history.ts';
 
@@ -162,6 +163,74 @@ test('extractPrReadyStockItemsForSo mengambil jumlah quantity PR dari item yang 
   assert.equal(items[0].qty, 8);
   assert.equal(items[1].nama_barang, 'Keset karet mie');
   assert.equal(items[1].qty, 3);
+});
+
+test('resolveRoPrItemStatus: RO READY_STOCK campuran tidak membuat item PR selesai', () => {
+  const status = resolveRoPrItemStatus(
+    {
+      quantity_ordered: 4,
+      quantity_fulfilled: 0,
+      procurement_status: 'proses',
+    },
+    {
+      current_stage: 'READY_STOCK',
+      status: 'READY_STOCK',
+      received_date: '2026-11-03',
+      arrival_datetime: '2026-11-03T00:00:00.000Z',
+    }
+  );
+
+  assert.equal(status.procurement_status, 'proses');
+  assert.equal(status.received_date, null);
+});
+
+test('resolveRoPrItemStatus: item yang benar-benar diterima tetap selesai', () => {
+  const arrived = resolveRoPrItemStatus(
+    {
+      quantity_ordered: 4,
+      quantity_fulfilled: 0,
+      is_arrived_at_warehouse: true,
+    },
+    { current_stage: 'READY_STOCK', received_date: '2026-11-03' }
+  );
+  assert.equal(arrived.procurement_status, 'selesai');
+  assert.equal(arrived.received_date, '2026-11-03');
+
+  const fulfilled = resolveRoPrItemStatus(
+    { quantity_ordered: 4, quantity_fulfilled: 4, procurement_status: 'proses' },
+    { current_stage: 'READY_STOCK' }
+  );
+  assert.equal(fulfilled.procurement_status, 'selesai');
+});
+
+test('resolveRoPrItemStatus: RO final SELESAI menuntaskan item PR', () => {
+  const status = resolveRoPrItemStatus(
+    { quantity_ordered: 2, quantity_fulfilled: 0, procurement_status: 'proses' },
+    { current_stage: 'SELESAI', received_date: '2026-11-03' }
+  );
+
+  assert.equal(status.procurement_status, 'selesai');
+  assert.equal(status.received_date, '2026-11-03');
+});
+
+test('resolveRoPrItemStatus: PO dan status belum dipertahankan', () => {
+  const po = resolveRoPrItemStatus(
+    { quantity_ordered: 2, quantity_fulfilled: 0, procurement_status: 'po' },
+    { current_stage: 'READY_STOCK' }
+  );
+  assert.equal(po.procurement_status, 'po');
+
+  const belum = resolveRoPrItemStatus(
+    { quantity_ordered: 2, quantity_fulfilled: 0 },
+    { current_stage: 'READY_STOCK' }
+  );
+  assert.equal(belum.procurement_status, 'belum');
+
+  const poFallback = resolveRoPrItemStatus(
+    { quantity_ordered: 2, quantity_fulfilled: 0 },
+    { current_stage: 'READY_STOCK', pr_po_number: 'PO-AUTO' }
+  );
+  assert.equal(poFallback.procurement_status, 'po');
 });
 
 

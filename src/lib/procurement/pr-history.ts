@@ -33,6 +33,52 @@ export function filterPurchaseRequirementHistory<
   return items.filter((item) => item.procurement_status === 'selesai');
 }
 
+export type PrProcurementStatus = 'selesai' | 'proses' | 'belum' | 'po';
+
+/**
+ * Status pengadaan untuk item PR yang berasal dari Request Order.
+ *
+ * Dihitung per item. Tahap RO `READY_STOCK` tidak lagi otomatis membuat semua
+ * item PR-nya "selesai", karena RO campuran (sebagian Ready Stock, sebagian PR)
+ * memang berakhir di tahap itu. Item baru dianggap selesai bila item itu sendiri
+ * sudah diterima/dipenuhi, ditandai selesai manual, atau RO sudah final.
+ */
+export function resolveRoPrItemStatus(
+  item: {
+    quantity_ordered?: number | null;
+    quantity_fulfilled?: number | null;
+    is_arrived_at_warehouse?: boolean;
+    procurement_status?: PrProcurementStatus | null;
+    pr_arrival_date?: string | null;
+  },
+  ro: {
+    current_stage?: string | null;
+    pr_po_number?: string | null;
+    received_date?: string | null;
+    arrival_datetime?: string | null;
+  }
+): { procurement_status: PrProcurementStatus; received_date: string | null } {
+  const orderedQty = Number(item.quantity_ordered) || 0;
+  const fulfilledQty = Number(item.quantity_fulfilled) || 0;
+  const storedStatus = item.procurement_status || undefined;
+
+  const isCompleted =
+    ro.current_stage === 'SELESAI' ||
+    item.is_arrived_at_warehouse === true ||
+    (orderedQty > 0 && fulfilledQty >= orderedQty) ||
+    storedStatus === 'selesai';
+
+  const procurement_status: PrProcurementStatus = isCompleted
+    ? 'selesai'
+    : storedStatus || (ro.pr_po_number ? 'po' : 'belum');
+
+  const received_date =
+    item.pr_arrival_date ||
+    (isCompleted ? ro.received_date || ro.arrival_datetime || null : null);
+
+  return { procurement_status, received_date };
+}
+
 /**
  * Removes client-only properties (like `item_notes` or `id`) that are not
  * columns in `public.asset_requests` so PostgREST does not reject updates

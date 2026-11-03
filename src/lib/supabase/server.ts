@@ -23,7 +23,9 @@ import {
   filterPurchaseRequirementHistory,
   matchesPurchaseRequirementFilter,
   mergeManualAssetEdit,
+  resolveRoPrItemStatus,
   sanitizeAssetRequestDbPayload,
+  PrProcurementStatus,
 } from '../procurement/pr-history';
 import { encodeBranchAndRegion, parseBranchAndRegion } from '../access/app-feature';
 import { matchesRoDateRange, RoDateField } from '../distribution/ro-date-filter';
@@ -3772,16 +3774,21 @@ export async function getPurchaseRequirementItems(
       seenIds.add(itemId);
 
       const manualEdit = cache.manualEdits?.get(itemId);
-      const isCompleted = ro.current_stage === 'READY_STOCK' || ro.status === 'READY_STOCK' || ro.current_stage === 'SELESAI';
-      const storedProcStatus = (manualEdit?.procurement_status || it.procurement_status) as
-        | 'selesai'
-        | 'proses'
-        | 'belum'
-        | 'po'
-        | undefined;
-      const procStatus: 'selesai' | 'proses' | 'belum' | 'po' = isCompleted
-        ? 'selesai'
-        : storedProcStatus || (ro.pr_po_number ? 'po' : 'belum');
+
+      // Status pengadaan dihitung per item, bukan per RO. Sebelumnya seluruh
+      // item PR milik RO ber-tahap READY_STOCK otomatis dianggap "selesai"
+      // padahal bisa jadi hanya sebagian item lain yang Ready Stock.
+      const { procurement_status: procStatus, received_date: itemReceivedDate } = resolveRoPrItemStatus(
+        {
+          quantity_ordered: it.quantity_ordered,
+          quantity_fulfilled: it.quantity_fulfilled,
+          is_arrived_at_warehouse: it.is_arrived_at_warehouse,
+          procurement_status: (manualEdit?.procurement_status ||
+            it.procurement_status) as PrProcurementStatus | undefined,
+          pr_arrival_date: it.pr_arrival_date,
+        },
+        ro
+      );
 
       const assetReq: AssetRequest = {
         id: itemId,
@@ -3819,8 +3826,8 @@ export async function getPurchaseRequirementItems(
         negotiation_proof: null,
         acc_kadiv_procurement: false,
         procurement_status: procStatus,
-        item_delivery_status: isCompleted ? 'Ready Gudang SCGA' : 'On Proses',
-        received_date: ro.arrival_datetime || null,
+        item_delivery_status: procStatus === 'selesai' ? 'Ready Gudang SCGA' : 'On Proses',
+        received_date: itemReceivedDate,
         lead_time_days: 0,
         pic_receiver: ro.pic_receiver || '',
         notes: it.notes || `Sumber dari Request Order ${ro.ro_number}`,
