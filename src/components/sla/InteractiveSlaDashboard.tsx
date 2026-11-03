@@ -33,6 +33,7 @@ import { StandardRegion, matchesRegion, normalizeRegion } from '@/lib/utils/regi
 import { formatDateSlash, formatLeadTime } from '@/lib/utils/date-formatter';
 import BranchReadinessCards from '@/components/sla/BranchReadinessCards';
 import CriticalH3AlertBanner, { CriticalEntity } from '@/components/sla/CriticalH3AlertBanner';
+import OutletMultiSelect from '@/components/sla/OutletMultiSelect';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 import { buildDistributionQueueKeys, resolveReceivedQuantity } from '@/lib/distribution/received-qty';
 
@@ -158,7 +159,7 @@ export default function InteractiveSlaDashboard({
   const [viewMode, setViewMode] = useState<ViewMode>('ITEM');
 
   // Column Level Filters
-  const [selectedBranch, setSelectedBranch] = useState<string>('ALL');
+  const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
   const [selectedStage, setSelectedStage] = useState<string>('ALL');
   const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
   const [selectedStockSource, setSelectedStockSource] = useState<string>('ALL');
@@ -502,7 +503,7 @@ export default function InteractiveSlaDashboard({
     const q = search.toLowerCase().trim();
     return enrichedOrders.filter((o) => {
       if (!matchesRegion(o.region, selectedRegion)) return false;
-      if (selectedBranch !== 'ALL' && o.branch_name !== selectedBranch) return false;
+      if (selectedBranches.length > 0 && !selectedBranches.includes((o.branch_name || '').trim())) return false;
       if (selectedStage !== 'ALL') {
         const st = o.current_stage || o.status;
         if (st !== selectedStage) return false;
@@ -522,13 +523,13 @@ export default function InteractiveSlaDashboard({
       }
       return true;
     });
-  }, [enrichedOrders, selectedRegion, selectedBranch, selectedStage, selectedMonth, selectedStockSource, search]);
+  }, [enrichedOrders, selectedRegion, selectedBranches, selectedStage, selectedMonth, selectedStockSource, search]);
 
   const baseFilteredItems = useMemo(() => {
     const q = search.toLowerCase().trim();
     return enrichedItems.filter((it) => {
       if (!matchesRegion(it.region, selectedRegion)) return false;
-      if (selectedBranch !== 'ALL' && it.branch_name !== selectedBranch) return false;
+      if (selectedBranches.length > 0 && !selectedBranches.includes((it.branch_name || '').trim())) return false;
       if (selectedStage !== 'ALL') {
         const st = it.current_stage || it.status;
         if (st !== selectedStage) return false;
@@ -548,7 +549,7 @@ export default function InteractiveSlaDashboard({
       }
       return true;
     });
-  }, [enrichedItems, selectedRegion, selectedBranch, selectedStage, selectedMonth, selectedStockSource, search]);
+  }, [enrichedItems, selectedRegion, selectedBranches, selectedStage, selectedMonth, selectedStockSource, search]);
 
   // 5. Final Displayed Lists (applying Status Filter)
   const finalFilteredOrders = useMemo(() => {
@@ -647,12 +648,12 @@ export default function InteractiveSlaDashboard({
   const overdueAssetItems = useMemo(() => {
     return initialAssetRequests.filter((it) => {
       if (!matchesRegion(it.region, selectedRegion)) return false;
-      if (selectedBranch !== 'ALL' && it.branch_name !== selectedBranch) return false;
+      if (selectedBranches.length > 0 && !selectedBranches.includes((it.branch_name || '').trim())) return false;
       const status = (it.item_delivery_status || '').toLowerCase();
       const isDone = status.includes('terima outlet') || status.includes('lengkap');
       return !isDone && it.lead_time_days > 14;
     });
-  }, [initialAssetRequests, selectedRegion, selectedBranch]);
+  }, [initialAssetRequests, selectedRegion, selectedBranches]);
 
   // Pagination
   const activeListLength = viewMode === 'ITEM' ? finalFilteredItems.length : finalFilteredOrders.length;
@@ -707,18 +708,18 @@ export default function InteractiveSlaDashboard({
   const isAnyFilterActive = useMemo(() => {
     return (
       selectedRegion !== 'ALL' ||
-      selectedBranch !== 'ALL' ||
+      selectedBranches.length > 0 ||
       selectedStage !== 'ALL' ||
       selectedMonth !== 'ALL' ||
       selectedStockSource !== 'ALL' ||
       statusFilter !== 'ALL' ||
       search.trim() !== ''
     );
-  }, [selectedRegion, selectedBranch, selectedStage, selectedMonth, selectedStockSource, statusFilter, search]);
+  }, [selectedRegion, selectedBranches, selectedStage, selectedMonth, selectedStockSource, statusFilter, search]);
 
   const handleResetFilters = () => {
     setSelectedRegion('ALL');
-    setSelectedBranch('ALL');
+    setSelectedBranches([]);
     setSelectedStage('ALL');
     setSelectedMonth('ALL');
     setSelectedStockSource('ALL');
@@ -799,6 +800,7 @@ export default function InteractiveSlaDashboard({
     // 1. From Branch Opening Summaries
     for (const b of initialBranchSummaries) {
       if (!matchesRegion(b.region, selectedRegion)) continue;
+      if (selectedBranches.length > 0 && !selectedBranches.includes((b.branch_name || '').trim())) continue;
       const isCrit = (b.days_until_opening !== null && b.days_until_opening >= 0 && b.days_until_opening <= 3 && b.readiness_percentage < 100) ||
                      (b.days_until_opening !== null && b.days_until_opening < 0 && b.readiness_percentage < 100);
       if (isCrit) {
@@ -816,6 +818,7 @@ export default function InteractiveSlaDashboard({
     // 2. From Enriched ROs
     for (const ro of enrichedOrders) {
       if (!matchesRegion(ro.region, selectedRegion)) continue;
+      if (selectedBranches.length > 0 && !selectedBranches.includes((ro.branch_name || '').trim())) continue;
       if (ro.slaCategory === 'CRITICAL' || (ro.slaCategory === 'OVERDUE' && ro.fulfillmentPct < 100)) {
         list.push({
           name: ro.branch_name,
@@ -830,7 +833,7 @@ export default function InteractiveSlaDashboard({
     }
 
     return list;
-  }, [initialBranchSummaries, enrichedOrders, selectedRegion]);
+  }, [initialBranchSummaries, enrichedOrders, selectedRegion, selectedBranches]);
 
   return (
     <div className="space-y-6 pb-12">
@@ -858,11 +861,22 @@ export default function InteractiveSlaDashboard({
             value={selectedRegion}
             onChange={(r) => {
               setSelectedRegion(r);
-              setSelectedBranch('ALL');
+              setSelectedBranches([]);
               setCurrentPage(1);
             }}
             syncUrl={true}
           />
+
+          {/* Filter Outlet Global (multi-pilih): berlaku untuk semua tab & seluruh perhitungan KPI */}
+          <OutletMultiSelect
+            options={branchOptions}
+            selected={selectedBranches}
+            onChange={(next) => {
+              setSelectedBranches(next);
+              setCurrentPage(1);
+            }}
+          />
+
           <button
             onClick={handleExportOverdue}
             className="interactive-tap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 text-xs font-semibold hover:bg-rose-100 transition-colors shadow-2xs"
@@ -878,7 +892,7 @@ export default function InteractiveSlaDashboard({
       <CriticalH3AlertBanner
         criticalEntities={criticalEntities}
         onSelectEntity={(branchName, type, id) => {
-          setSelectedBranch(branchName);
+          setSelectedBranches(branchName ? [branchName] : []);
           if (type === 'RO') {
             setViewMode('RO');
             setActiveTab('RO_SLA');
@@ -1162,17 +1176,25 @@ export default function InteractiveSlaDashboard({
       {activeTab === 'BRANCH_READINESS' && (
         <div className="space-y-4 animate-in fade-in duration-200">
           <BranchReadinessCards
-            branchSummaries={initialBranchSummaries}
-            enrichedOrders={enrichedOrders}
+            branchSummaries={initialBranchSummaries.filter(
+              (b) =>
+                selectedBranches.length === 0 ||
+                selectedBranches.includes((b.branch_name || '').trim())
+            )}
+            enrichedOrders={enrichedOrders.filter(
+              (o) =>
+                selectedBranches.length === 0 ||
+                selectedBranches.includes((o.branch_name || '').trim())
+            )}
             selectedRegion={selectedRegion}
             onSelectBranch={(bName) => {
-              setSelectedBranch(bName);
+              setSelectedBranches(bName ? [bName] : []);
               setActiveTab('RO_SLA');
               setViewMode('ITEM');
               setCurrentPage(1);
             }}
             onFilterItemsByBranch={(bName, filter) => {
-              setSelectedBranch(bName);
+              setSelectedBranches(bName ? [bName] : []);
               if (filter === 'CRITICAL') {
                 setStatusFilter('CRITICAL');
               } else {
@@ -1240,32 +1262,9 @@ export default function InteractiveSlaDashboard({
               </div>
             </div>
 
-            {/* BARIS DROPDOWN FILTER KOLOM: CABANG, BULAN, ALOKASI STOK, TAHAP */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t border-[#e0e2ec] dark:border-[#35383a]">
-              {/* 1. Filter Kolom Cabang Outlet */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
-                  <Building2 className="h-3 w-3 text-[#0b57d0]" />
-                  <span>Filter Cabang Outlet:</span>
-                </label>
-                <select
-                  value={selectedBranch}
-                  onChange={(e) => {
-                    setSelectedBranch(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] px-3 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-                >
-                  <option value="ALL">Semua Cabang ({branchOptions.length} Outlet)</option>
-                  {branchOptions.map((br) => (
-                    <option key={br} value={br}>
-                      {br}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 2. Filter Kolom Periode Bulan Order */}
+            {/* BARIS DROPDOWN FILTER KOLOM: BULAN, ALOKASI STOK, TAHAP (outlet dipilih di header) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-2 border-t border-[#e0e2ec] dark:border-[#35383a]">
+              {/* 1. Filter Kolom Periode Bulan Order */}
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
                   <Calendar className="h-3 w-3 text-[#0b57d0]" />
@@ -1288,7 +1287,7 @@ export default function InteractiveSlaDashboard({
                 </select>
               </div>
 
-              {/* 3. Filter Kolom Alokasi Stok Item */}
+              {/* 2. Filter Kolom Alokasi Stok Item */}
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
                   <Box className="h-3 w-3 text-[#0b57d0]" />
@@ -1310,7 +1309,7 @@ export default function InteractiveSlaDashboard({
                 </select>
               </div>
 
-              {/* 4. Filter Kolom Tahap Alur Kerja */}
+              {/* 3. Filter Kolom Tahap Alur Kerja */}
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
                   <Truck className="h-3 w-3 text-[#0b57d0]" />
@@ -1407,9 +1406,9 @@ export default function InteractiveSlaDashboard({
                     Wilayah: {selectedRegion}
                   </span>
                 )}
-                {selectedBranch !== 'ALL' && (
+                {selectedBranches.length > 0 && (
                   <span className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-[#0b57d0] font-semibold border border-blue-200">
-                    Cabang: {selectedBranch}
+                    Outlet ({selectedBranches.length}): {selectedBranches.join(', ')}
                   </span>
                 )}
                 {selectedMonth !== 'ALL' && (
@@ -2059,7 +2058,7 @@ export default function InteractiveSlaDashboard({
                 <span>Pusat Eskalasi Keterlambatan Pengadaan & Distribusi</span>
               </div>
               <p className="text-xs text-rose-900/80 dark:text-rose-200 mt-1">
-                Daftar item RO & pengadaan aset yang telah melewati tanggal permintaan target atau SLA &gt; 14 hari {selectedBranch !== 'ALL' && `(Cabang: ${selectedBranch})`}.
+                Daftar item RO & pengadaan aset yang telah melewati tanggal permintaan target atau SLA &gt; 14 hari {selectedBranches.length > 0 && `(Outlet: ${selectedBranches.join(', ')})`}.
               </p>
             </div>
             <button
@@ -2193,7 +2192,7 @@ export default function InteractiveSlaDashboard({
                 </thead>
                 <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
                   {initialAssetRequests
-                    .filter((it) => matchesRegion(it.region, selectedRegion) && (selectedBranch === 'ALL' || it.branch_name === selectedBranch))
+                    .filter((it) => matchesRegion(it.region, selectedRegion) && (selectedBranches.length === 0 || selectedBranches.includes((it.branch_name || '').trim())))
                     .slice(0, 50)
                     .map((it) => {
                       const isOver = it.lead_time_days > 14;
