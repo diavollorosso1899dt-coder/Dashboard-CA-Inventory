@@ -267,20 +267,53 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   // SO Harian Stock lookup state
   const [soStockItems, setSoStockItems] = useState<SOItem[]>([]);
   const [soSessionDate, setSoSessionDate] = useState<string | null>(null);
+  const [isSoStockLoading, setIsSoStockLoading] = useState(true);
 
   const fetchSoStock = async () => {
     try {
-      const sessions = getAllSessionsSync();
-      if (sessions.length > 0) {
-        const latest = sessions[0];
-        setSoSessionDate(latest.tanggal || null);
-        const { items } = await loadSession(latest.id);
-        if (items && items.length > 0) {
-          setSoStockItems(items);
+      // 1. Data lokal perangkat ini (SO yang disimpan saat offline / sebelum
+      //    koneksi cloud diatur).
+      let localPick: { tanggal: string | null; items: SOItem[] } = { tanggal: null, items: [] };
+      try {
+        const localSessions = getAllSessionsSync();
+        for (const session of localSessions.slice(0, 3)) {
+          const { items } = await loadSession(session.id);
+          if (items && items.length > 0) {
+            localPick = { tanggal: session.tanggal || null, items };
+            break;
+          }
         }
+      } catch (localErr) {
+        console.warn('Gagal membaca sesi SO lokal:', localErr);
       }
+
+      // 2. Data dari Supabase lewat server, sehingga SO yang disimpan di
+      //    perangkat lain tetap terbaca walau browser ini belum pernah
+      //    mengatur koneksi SO Harian (konfigurasinya hanya di localStorage).
+      let cloudPick: { tanggal: string | null; items: SOItem[] } = { tanggal: null, items: [] };
+      try {
+        const res = await fetch('/api/so/stock', { cache: 'no-store' });
+        const json = await res.json();
+        if (json?.success && Array.isArray(json.items) && json.items.length > 0) {
+          cloudPick = { tanggal: json.session?.tanggal || null, items: json.items };
+        }
+      } catch (cloudErr) {
+        console.warn('Gagal memuat stok SO dari server:', cloudErr);
+      }
+
+      // 3. Pakai sesi dengan tanggal terbaru. Jika tanggalnya sama, data lokal
+      //    dianggap lebih baru karena baru saja disimpan di perangkat ini.
+      const useCloud =
+        cloudPick.items.length > 0 &&
+        (!localPick.items.length || (cloudPick.tanggal || '') > (localPick.tanggal || ''));
+      const pick = useCloud ? cloudPick : localPick;
+
+      setSoSessionDate(pick.tanggal);
+      setSoStockItems(pick.items);
     } catch (e) {
       console.warn('Failed to load SO stock:', e);
+    } finally {
+      setIsSoStockLoading(false);
     }
   };
 
@@ -2098,7 +2131,13 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                   </span>
                   <span className="text-[11px] flex items-center gap-1 text-slate-500">
                     <Boxes className="w-3 h-3 text-indigo-500" />
-                    <span>Sinkron Stok Sistem SO Harian {soSessionDate ? `(${soSessionDate})` : ''}</span>
+                    <span>
+                      {isSoStockLoading
+                        ? 'Memuat stok SO Harian...'
+                        : soSessionDate
+                          ? `Sinkron Stok Sistem SO Harian (${soSessionDate})`
+                          : 'Stok SO Harian belum tersedia'}
+                    </span>
                   </span>
                 </div>
 
@@ -2153,7 +2192,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                                   const soStock = getSoStockForItem(it);
                                   if (!soStock.found) {
                                     return (
-                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700" title="Item ini belum terdata pada sesi Stock Opname Harian">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700" title="Item ini belum terdata pada sesi Stock Opname Harian. Simpan sesi SO Harian agar stok sistem bisa dibaca.">
                                         <Boxes className="w-3 h-3 text-slate-400" />
                                         <span>Stok SO: Belum terdata</span>
                                       </span>
