@@ -457,6 +457,9 @@ export interface DispositionRequest {
 // ==========================================
 export type TrashEntityType = 'ASET' | 'OUTLET' | 'ITEM' | 'SURAT_JALAN' | 'DISPOSISI' | 'TRANSFER';
 
+/** Entitas yang dapat dicatat di audit log (lebih luas dari isi Tempat Sampah). */
+export type AuditEntityType = TrashEntityType | 'RO' | 'SO' | 'PENGGUNA' | 'SYSTEM';
+
 export interface TrashItem {
   id: string;
   entity_type: TrashEntityType;
@@ -488,7 +491,7 @@ export interface AuditLogEntry {
   actor_name: string;
   actor_role: string;
   action_type: AuditActionType;
-  entity_type: TrashEntityType | 'PENGGUNA' | 'SYSTEM';
+  entity_type: AuditEntityType;
   entity_id?: string;
   entity_title: string;
   details: string;

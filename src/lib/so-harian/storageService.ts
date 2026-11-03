@@ -191,6 +191,31 @@ export async function saveSession(sessionData: Partial<SOSession>, items: SOItem
           await supabaseClient.from('so_details').upsert(chunk);
         }
       }
+
+      // Catat aksi simpan ke audit trail (pelaku diambil server dari cookie sesi).
+      try {
+        await fetch('/api/audit/logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            actionType: 'UPDATE',
+            entityType: 'SO',
+            entityTitle: `Stock Opname ${completeSession.tanggal}`,
+            details: `Menyimpan sesi Stock Opname Harian ${completeSession.tanggal} (${completeSession.gudang || 'Gudang'}) — ${completeSession.total_items || items.length} item, status ${completeSession.status || 'DRAFT'}.`,
+            options: {
+              entityId: sessionId,
+              newState: {
+                tanggal: completeSession.tanggal,
+                gudang: completeSession.gudang,
+                total_items: completeSession.total_items,
+                status: completeSession.status || 'DRAFT',
+              },
+            },
+          }),
+        });
+      } catch (auditErr) {
+        console.warn('Gagal mencatat audit Stock Opname:', auditErr);
+      }
     } catch (cloudErr) {
       console.warn('Cloud sync failed, data saved locally:', cloudErr);
     }

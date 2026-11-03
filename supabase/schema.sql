@@ -339,3 +339,54 @@ ALTER TABLE public.disposition_requests ADD COLUMN IF NOT EXISTS kondisi TEXT;
 ALTER TABLE public.disposition_requests ADD COLUMN IF NOT EXISTS alasan TEXT;
 ALTER TABLE public.disposition_requests ADD COLUMN IF NOT EXISTS foto_url TEXT;
 
+-- ==============================================================================
+-- 16. Audit Trail & Tempat Sampah (lihat juga supabase/audit-log.sql)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.audit_logs (
+    id TEXT PRIMARY KEY,
+    "timestamp" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    actor_name TEXT NOT NULL DEFAULT 'System',
+    actor_role TEXT NOT NULL DEFAULT 'User',
+    action_type TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT,
+    entity_title TEXT NOT NULL DEFAULT '',
+    details TEXT NOT NULL DEFAULT '',
+    previous_state JSONB,
+    new_state JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON public.audit_logs ("timestamp" DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action_type ON public.audit_logs(action_type);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_type ON public.audit_logs(entity_type);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_id ON public.audit_logs(entity_id);
+
+CREATE TABLE IF NOT EXISTS public.trash_items (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    subtitle TEXT,
+    category TEXT,
+    region TEXT,
+    deleted_by TEXT NOT NULL DEFAULT 'System',
+    deleted_by_role TEXT,
+    deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    notes TEXT,
+    original_data JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_trash_items_deleted_at ON public.trash_items(deleted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trash_items_entity_type ON public.trash_items(entity_type);
+
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.trash_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public all on audit_logs" ON public.audit_logs;
+CREATE POLICY "Allow public all on audit_logs"
+ON public.audit_logs FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public all on trash_items" ON public.trash_items;
+CREATE POLICY "Allow public all on trash_items"
+ON public.trash_items FOR ALL USING (true) WITH CHECK (true);
+

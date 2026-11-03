@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, updateCachedMasterItem } from '@/lib/supabase/server';
 import { setItemSpecificationOverride } from '@/lib/assetSpecHelper';
+import { auditMutation } from '@/lib/audit/record-change';
 import fs from 'fs';
 import path from 'path';
 
@@ -146,6 +147,20 @@ export async function POST(req: NextRequest) {
       } catch (storageErr) {
         console.warn('Could not backup specifications to Supabase Storage:', storageErr);
       }
+    }
+
+    // 5. Catat perubahan spesifikasi item ke audit log
+    try {
+      await auditMutation(req, {
+        entityType: 'ITEM',
+        entityTitle: `Item ${itemName}`,
+        entityId: itemName,
+        actionType: 'UPDATE',
+        details: `Memperbarui spesifikasi item "${itemName}" menjadi: ${specification || '(kosong)'}.`,
+        newState: { specification },
+      });
+    } catch (auditErr) {
+      console.error('Failed recording item specification audit log:', auditErr);
     }
 
     return NextResponse.json({

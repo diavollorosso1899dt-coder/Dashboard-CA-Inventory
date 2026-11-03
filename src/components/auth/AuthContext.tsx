@@ -9,6 +9,7 @@ import {
   matchesLoginIdentifier,
   parseBranchAndRegion,
 } from '@/lib/access/app-feature';
+import { buildActorCookie, clearActorCookie } from '@/lib/auth/actor';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -125,6 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(parsed);
             if (active) setIsLoading(false);
             document.cookie = `ca_auth=true; path=/; max-age=604800; SameSite=Lax`;
+            document.cookie = buildActorCookie(parsed);
 
             // Refresh latest user permissions from /api/users in background without blocking UI render
             try {
@@ -143,6 +145,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     try {
                       localStorage.removeItem(STORAGE_KEY);
                       document.cookie = 'ca_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+                      document.cookie = clearActorCookie();
                     } catch {}
                     if (active) {
                       setUser(null);
@@ -189,6 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(json.data);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(json.data));
         document.cookie = `ca_auth=true; path=/; max-age=604800; SameSite=Lax`;
+        document.cookie = buildActorCookie(json.data);
         return { success: true };
       } else {
         return { success: false, error: json.error || 'Login gagal' };
@@ -203,6 +207,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       localStorage.removeItem(STORAGE_KEY);
       document.cookie = `ca_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+      document.cookie = clearActorCookie();
     } catch (e) {}
     router.push('/login');
   };

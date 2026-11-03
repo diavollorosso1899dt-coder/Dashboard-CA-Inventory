@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getOutlets, saveOutlet } from '@/lib/supabase/server';
+import { getOutlets, saveOutlet, getAdminClient } from '@/lib/supabase/server';
+import { auditMutation } from '@/lib/audit/record-change';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,6 +39,27 @@ export async function POST(req: Request) {
       target_opening: body.target_opening || body.target_opening_date || null,
       notes: body.notes || '',
     });
+
+    try {
+      let previous: any = null;
+      const admin = getAdminClient();
+      if (admin && body.id) {
+        const { data } = await admin.from('outlets').select('*').eq('id', body.id).maybeSingle();
+        previous = data;
+      }
+      await auditMutation(req, {
+        entityType: 'OUTLET',
+        entityTitle: `Outlet ${nama}`,
+        entityId: saved?.id || body.id,
+        previous: previous || undefined,
+        next: saved,
+        details: previous
+          ? `Memperbarui data outlet ${nama} (${region}).`
+          : `Menambahkan outlet baru ${nama} (${region}).`,
+      });
+    } catch (auditErr) {
+      console.error('Failed recording outlet audit log:', auditErr);
+    }
 
     return NextResponse.json({ success: true, data: saved });
   } catch (error: any) {

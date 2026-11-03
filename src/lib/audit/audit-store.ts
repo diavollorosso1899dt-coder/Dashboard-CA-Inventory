@@ -1,7 +1,8 @@
-import { TrashItem, AuditLogEntry, TrashEntityType, AuditActionType } from '@/lib/supabase/types';
+import { TrashItem, AuditLogEntry, AuditEntityType, TrashEntityType, AuditActionType } from '@/lib/supabase/types';
 import { getAdminClient, updateAssetRequest, updateAssetTransfer } from '@/lib/supabase/server';
 
-// In-Memory store fallback with initial seed logs for immediate usability
+// In-memory fallback. Data utama selalu disimpan di Supabase (tabel
+// audit_logs & trash_items); memori hanya dipakai bila koneksi DB gagal.
 interface AuditStoreState {
   trash: TrashItem[];
   logs: AuditLogEntry[];
@@ -11,70 +12,9 @@ const globalForAudit = globalThis as unknown as {
   _auditStore?: AuditStoreState;
 };
 
-const initialSeedLogs: AuditLogEntry[] = [
-  {
-    id: 'log-seed-1',
-    timestamp: new Date(Date.now() - 3600000 * 24).toISOString(),
-    actor_name: 'Super User',
-    actor_role: 'Super User',
-    action_type: 'CREATE',
-    entity_type: 'ASET',
-    entity_id: 'sample-1',
-    entity_title: 'Chiller Undercounter 2 Pintu',
-    details: 'Mendaftarkan item aset baru untuk cabang Mie Ayam Muntjul Karawang (RAB-2026-MUNTJUL-001)',
-  },
-  {
-    id: 'log-seed-2',
-    timestamp: new Date(Date.now() - 3600000 * 12).toISOString(),
-    actor_name: 'Staff Logistik',
-    actor_role: 'User',
-    action_type: 'STATUS_CHANGE',
-    entity_type: 'ASET',
-    entity_id: 'sample-2',
-    entity_title: 'Meja Kasir Stainless 120cm',
-    details: 'Mengubah status pengiriman dari "Belum Ready" menjadi "Ready Antar"',
-    previous_state: { item_delivery_status: 'Belum Ready' },
-    new_state: { item_delivery_status: 'Ready Antar' },
-  },
-  {
-    id: 'log-seed-3',
-    timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
-    actor_name: 'Admin Operasional',
-    actor_role: 'Admin',
-    action_type: 'UPDATE',
-    entity_type: 'SYSTEM',
-    entity_title: 'Rebranding Sistem',
-    details: 'Pembaruan identitas brand menjadi HANTARAN dan konfigurasi column visibility',
-  },
-];
-
-const initialSeedTrash: TrashItem[] = [
-  {
-    id: 'trash-seed-1',
-    entity_type: 'ASET',
-    entity_id: 'old-asset-001',
-    title: 'Kursi Plastik Napolly Hijau (Sample)',
-    subtitle: 'Cabang Mie Ayam Muntjul Karawang • Kategori General',
-    category: 'General',
-    region: 'JABODETABEK',
-    deleted_by: 'Staff Logistik',
-    deleted_by_role: 'User',
-    deleted_at: new Date(Date.now() - 3600000 * 16).toISOString(),
-    notes: 'Item duplikat saat input manual',
-    original_data: {
-      item_name: 'Kursi Plastik Napolly Hijau (Sample)',
-      branch_name: 'Mie Ayam Muntjul Karawang',
-      classification: 'General',
-      quantity_needed: 10,
-      rab_price: 65000,
-      rab_number: 'RAB-2026-MUNTJUL-001',
-    },
-  },
-];
-
 const auditStore: AuditStoreState = globalForAudit._auditStore || {
-  trash: initialSeedTrash,
-  logs: initialSeedLogs,
+  trash: [],
+  logs: [],
 };
 
 if (process.env.NODE_ENV !== 'production') {
@@ -88,7 +28,7 @@ export async function recordAuditLog(
   actorName: string,
   actorRole: string,
   actionType: AuditActionType,
-  entityType: TrashEntityType | 'PENGGUNA' | 'SYSTEM',
+  entityType: AuditEntityType,
   entityTitle: string,
   details: string,
   options?: {
@@ -111,21 +51,29 @@ export async function recordAuditLog(
     new_state: options?.newState,
   };
 
-  auditStore.logs.unshift(newEntry);
-
-  // Keep max 500 recent logs in memory
-  if (auditStore.logs.length > 500) {
-    auditStore.logs = auditStore.logs.slice(0, 500);
-  }
-
-  // Attempt to persist to Supabase audit_logs table if available
+  // Simpan ke Supabase lebih dulu; memori hanya cadangan bila DB gagal.
+  let persisted = false;
   try {
     const admin = getAdminClient();
     if (admin) {
-      await admin.from('audit_logs').insert([newEntry]);
+      const { error } = await admin.from('audit_logs').insert([newEntry]);
+      if (error) {
+        console.error('[audit] Gagal menyimpan log ke Supabase:', error.message);
+      } else {
+        persisted = true;
+      }
+    } else {
+      console.error('[audit] Supabase admin client tidak tersedia; log hanya di memori.');
     }
-  } catch {
-    // Graceful fallback to memory store
+  } catch (err: any) {
+    console.error('[audit] Gagal menyimpan log ke Supabase:', err?.message || err);
+  }
+
+  if (!persisted) {
+    auditStore.logs.unshift(newEntry);
+    if (auditStore.logs.length > 500) {
+      auditStore.logs = auditStore.logs.slice(0, 500);
+    }
   }
 
   return newEntry;
@@ -156,9 +104,17 @@ export async function getAuditLogs(options?: {
       query = query.order('timestamp', { ascending: false }).limit(limit);
       
       const { data, count, error } = await query;
-      if (!error && data && data.length > 0) {
-        return { data: data as AuditLogEntry[], total: count || data.length };
+      if (!error) {
+        const dbRows = (data || []) as AuditLogEntry[];
+        // Sertakan log yang sempat gagal tersimpan ke DB (fallback memori).
+        const seen = new Set(dbRows.map((row) => row.id));
+        const memoryOnly = auditStore.logs.filter((row) => !seen.has(row.id));
+        const combined = memoryOnly.length > 0
+          ? [...dbRows, ...memoryOnly].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, limit)
+          : dbRows;
+        return { data: combined, total: (count || dbRows.length) + memoryOnly.length };
       }
+      console.error('Gagal ambil audit_logs dari Supabase:', error.message);
     }
   } catch (err) {
     console.warn('Gagal ambil audit_logs dari Supabase, fallback ke memory', err);
@@ -195,7 +151,18 @@ export async function revertAuditLog(
   actorName: string,
   actorRole: string
 ): Promise<{ success: boolean; message: string; data?: AuditLogEntry }> {
-  const log = auditStore.logs.find((l) => l.id === logId);
+  let log = auditStore.logs.find((l) => l.id === logId);
+  if (!log) {
+    try {
+      const admin = getAdminClient();
+      if (admin) {
+        const { data, error } = await admin.from('audit_logs').select('*').eq('id', logId).single();
+        if (!error && data) log = data as AuditLogEntry;
+      }
+    } catch (err) {
+      console.warn('[audit] Gagal ambil log untuk revert dari Supabase:', err);
+    }
+  }
   if (!log) {
     return { success: false, message: 'Catatan log tidak ditemukan.' };
   }
@@ -256,9 +223,10 @@ export async function getTrashItems(): Promise<TrashItem[]> {
         .select('*')
         .order('deleted_at', { ascending: false });
         
-      if (!error && data && data.length > 0) {
-        return data as TrashItem[];
+      if (!error) {
+        return (data || []) as TrashItem[];
       }
+      console.error('Gagal ambil trash_items dari Supabase:', error.message);
     }
   } catch (err) {
     console.warn('Gagal ambil trash_items dari Supabase, fallback ke memory', err);
@@ -294,14 +262,24 @@ export async function moveItemToTrash(
 
   auditStore.trash.unshift(trashItem);
 
-  // Attempt to persist to Supabase trash_items table
+  // Persist ke Supabase trash_items
+  let persisted = false;
   try {
     const admin = getAdminClient();
     if (admin) {
-      await admin.from('trash_items').insert([trashItem]);
+      const { error } = await admin.from('trash_items').insert([trashItem]);
+      if (error) {
+        console.error('[audit] Gagal menyimpan trash item ke Supabase:', error.message);
+      } else {
+        persisted = true;
+      }
     }
   } catch (err) {
     console.warn('Gagal memindahkan ke trash_items di Supabase', err);
+  }
+
+  if (persisted) {
+    auditStore.trash = auditStore.trash.filter((item) => item.id !== trashItem.id);
   }
 
   // Record Audit Trail
@@ -396,19 +374,35 @@ export async function permanentDeleteItem(
   actorName: string = 'Super User',
   actorRole: string = 'Super User'
 ): Promise<{ success: boolean; deletedItem?: TrashItem; error?: string }> {
+  let item: TrashItem | undefined;
   const index = auditStore.trash.findIndex((t) => t.id === trashId);
-  if (index === -1) {
-    return { success: false, error: 'Item tidak ditemukan di tempat sampah' };
+  if (index !== -1) {
+    [item] = auditStore.trash.splice(index, 1);
+  } else {
+    try {
+      const admin = getAdminClient();
+      if (admin) {
+        const { data, error } = await admin.from('trash_items').select('*').eq('id', trashId).single();
+        if (!error && data) item = data as TrashItem;
+      }
+    } catch (err) {
+      console.warn('[permanentDeleteItem] Gagal ambil item dari Supabase:', err);
+    }
   }
 
-  const [item] = auditStore.trash.splice(index, 1);
+  if (!item) {
+    return { success: false, error: 'Item tidak ditemukan di tempat sampah' };
+  }
 
   // If hard deleting from Supabase
   try {
     const admin = getAdminClient();
-    if (admin && item.entity_id) {
-      if (item.entity_type === 'ASET') {
-        await admin.from('asset_requests').delete().eq('id', item.entity_id);
+    if (admin) {
+      await admin.from('trash_items').delete().eq('id', trashId);
+      if (item.entity_id) {
+        if (item.entity_type === 'ASET') {
+          await admin.from('asset_requests').delete().eq('id', item.entity_id);
+        }
       }
     }
   } catch (err) {
@@ -433,8 +427,21 @@ export async function emptyAllTrash(
   actorName: string = 'Super User',
   actorRole: string = 'Super User'
 ): Promise<{ count: number }> {
-  const totalDeleted = auditStore.trash.length;
+  let totalDeleted = auditStore.trash.length;
   auditStore.trash = [];
+
+  try {
+    const admin = getAdminClient();
+    if (admin) {
+      const { count } = await admin
+        .from('trash_items')
+        .select('id', { count: 'exact', head: true });
+      if (typeof count === 'number') totalDeleted = count;
+      await admin.from('trash_items').delete().not('id', 'is', null);
+    }
+  } catch (err) {
+    console.warn('[emptyAllTrash] Gagal mengosongkan trash_items di Supabase:', err);
+  }
 
   // Record Audit Trail
   await recordAuditLog(

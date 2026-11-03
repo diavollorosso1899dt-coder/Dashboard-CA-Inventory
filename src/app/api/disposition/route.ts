@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getDispositionRequests, createDispositionRequest, updateDispositionStatus } from '@/lib/supabase/server';
+import { getDispositionRequests, createDispositionRequest, updateDispositionStatus, getAdminClient } from '@/lib/supabase/server';
+import { auditMutation } from '@/lib/audit/record-change';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,18 @@ export async function POST(req: Request) {
       diajukan_oleh: diajukan_oleh || 'Staff Cabang'
     });
 
+    try {
+      await auditMutation(req, {
+        entityType: 'DISPOSISI',
+        entityTitle: `Disposisi ${newReq?.disposition_number || newReq?.kode_aset || nama_aset}`,
+        entityId: newReq?.id,
+        next: newReq,
+        details: `Mengajukan pengembalian aset "${nama_aset}" dari outlet ${outlet_nama} dengan kondisi ${kondisi}.`,
+      });
+    } catch (auditErr) {
+      console.error('Failed recording disposition audit log:', auditErr);
+    }
+
     return NextResponse.json({ success: true, data: newReq });
   } catch (error) {
     return NextResponse.json({ success: false, error: 'Gagal membuat pengajuan pengembalian aset' }, { status: 500 });
@@ -56,6 +69,29 @@ export async function PATCH(req: Request) {
         { status: 500 }
       );
     }
+
+    try {
+      let previous: any = null;
+      const admin = getAdminClient();
+      if (admin) {
+        const { data } = await admin.from('disposition_requests').select('*').eq('id', id).maybeSingle();
+        previous = data;
+      }
+      await auditMutation(req, {
+        entityType: 'DISPOSISI',
+        entityTitle: `Disposisi ${previous?.disposition_number || id}`,
+        entityId: id,
+        previous: previous
+          ? { status: previous.status, approval_notes: previous.approval_notes, approved_by: previous.approved_by }
+          : undefined,
+        next: { status, approval_notes: catatan_admin },
+        actionType: 'STATUS_CHANGE',
+        details: `Memperbarui status disposisi ${previous?.disposition_number || id} menjadi ${status}${catatan_admin ? ` (catatan: ${catatan_admin})` : ''}.`,
+      });
+    } catch (auditErr) {
+      console.error('Failed recording disposition status audit log:', auditErr);
+    }
+
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
     return NextResponse.json({ success: false, error: 'Gagal memperbarui status disposisi' }, { status: 500 });

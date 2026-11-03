@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAssetTransfers, createAssetTransfer, updateAssetTransfer, clearAllAssetTransfers, deleteAssetTransfer } from '@/lib/supabase/server';
+import { getAssetTransfers, createAssetTransfer, updateAssetTransfer, clearAllAssetTransfers, deleteAssetTransfer, getAdminClient } from '@/lib/supabase/server';
 import { recordAuditLog } from '@/lib/audit/audit-store';
+import { resolveActor } from '@/lib/auth/actor';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,10 +21,11 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const created = await createAssetTransfer(body);
+    const actor = resolveActor(req, { name: body.sender_pic, role: body.sender_role });
 
     await recordAuditLog(
-      body.sender_pic || 'Staff SCGA',
-      'Super User',
+      actor.name,
+      actor.role,
       'CREATE',
       'TRANSFER',
       `Mutasi ${created.transfer_number} (${created.from_location} -> ${created.to_location})`,
@@ -50,14 +52,38 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Data mutasi tidak ditemukan' }, { status: 404 });
     }
 
+    let previous: any = null;
+    try {
+      const admin = getAdminClient();
+      if (admin) {
+        const { data } = await admin.from('asset_transfers').select('*').eq('id', id).maybeSingle();
+        previous = data;
+      }
+    } catch {}
+
+    const actor = resolveActor(req, { name: updates.receiver_pic, role: updates.receiver_role });
     await recordAuditLog(
-      updates.receiver_pic || 'Staff Outlet',
-      'outlet_manager',
+      actor.name,
+      actor.role,
       'STATUS_CHANGE',
       'TRANSFER',
       `Konfirmasi / Update Mutasi ${updated.transfer_number}`,
       `Perubahan dokumen transfer. Status: ${updated.status}. Diterima oleh ${updated.receiver_pic || '-'}. Catatan: ${updated.received_notes || '-'}`,
-      { entityId: id }
+      {
+        entityId: id,
+        previousState: previous
+          ? {
+              status: previous.status,
+              receiver_pic: previous.receiver_pic,
+              received_notes: previous.received_notes,
+            }
+          : undefined,
+        newState: {
+          status: updated.status,
+          receiver_pic: updated.receiver_pic,
+          received_notes: updated.received_notes,
+        },
+      }
     );
 
     return NextResponse.json({ success: true, data: updated });
@@ -70,16 +96,17 @@ export async function DELETE(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const id = url.searchParams.get('id');
+    const actor = resolveActor(req);
 
     if (id) {
       await deleteAssetTransfer(id);
       await recordAuditLog(
-        'Super User',
-        'Super User',
+        actor.name,
+        actor.role,
         'PERMANENT_DELETE',
         'TRANSFER',
         `Hapus Dokumen Transfer ${id}`,
-        `Dokumen transfer aset ${id} berhasil dihapus oleh Superuser`,
+        `Dokumen transfer aset ${id} berhasil dihapus oleh ${actor.name}`,
         { entityId: id }
       );
       return NextResponse.json({ success: true, message: `Dokumen transfer ${id} berhasil dihapus` });
@@ -88,8 +115,8 @@ export async function DELETE(req: NextRequest) {
     const result = await clearAllAssetTransfers();
 
     await recordAuditLog(
-      'Administrator',
-      'Manajemen Sampah & Log',
+      actor.name,
+      actor.role,
       'PERMANENT_DELETE',
       'TRANSFER',
       'Bersihkan Seluruh Riwayat Dokumen Pemantauan Transfer Aset',

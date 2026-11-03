@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuditLogs, recordAuditLog, revertAuditLog } from '@/lib/audit/audit-store';
+import { resolveActor } from '@/lib/auth/actor';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,9 +31,11 @@ export async function POST(req: NextRequest) {
 
     const { actorName, actorRole, actionType, entityType, entityTitle, details, options } = body;
 
+    // Ambil pelaku dari cookie sesi bila klien tidak mengirim nama/role.
+    const actor = resolveActor(req, { name: actorName, role: actorRole });
     const entry = await recordAuditLog(
-      actorName,
-      actorRole,
+      actor.name,
+      actor.role,
       actionType,
       entityType,
       entityTitle,

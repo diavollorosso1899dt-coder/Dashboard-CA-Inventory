@@ -1,9 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { syncRequestOrdersFromSheet, cleanDuplicateRequestOrders } from '@/lib/supabase/server';
+import { syncRequestOrdersFromSheet, cleanDuplicateRequestOrders, RoSyncResult } from '@/lib/supabase/server';
 import { RoDateField } from '@/lib/distribution/ro-date-filter';
 import { isSyncRequestAllowed, SYNC_BLOCKED_MESSAGE } from '@/lib/auth/sync-guard';
+import { auditMutation } from '@/lib/audit/record-change';
 
 export const dynamic = 'force-dynamic';
+
+/** Catat ringkasan sync hanya bila ada data yang benar-benar berubah. */
+async function logRoSheetSync(req: NextRequest, result: RoSyncResult): Promise<void> {
+  if (!result?.success || !result.changed) return;
+  try {
+    await auditMutation(req, {
+      entityType: 'RO',
+      entityTitle: 'Sinkronisasi RO dari Google Sheets',
+      actionType: 'UPDATE',
+      details: `Sinkronisasi sheet: ${result.newOrdersAdded} RO baru, ${result.existingOrdersUpdated} RO diperbarui (${result.totalRowsScanned} baris dipindai, ${result.duplicateRowsFiltered} baris duplikat diabaikan).`,
+      newState: {
+        newOrdersAdded: result.newOrdersAdded,
+        existingOrdersUpdated: result.existingOrdersUpdated,
+        uniqueOrdersCount: result.uniqueOrdersCount,
+      },
+    });
+  } catch (err) {
+    console.error('[audit] Gagal mencatat sinkronisasi RO:', err);
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -22,6 +43,7 @@ export async function GET(req: NextRequest) {
       endDate,
       dateField,
     });
+    await logRoSheetSync(req, result);
     return NextResponse.json(result);
   } catch (err: any) {
     return NextResponse.json({ success: false, message: err.message }, { status: 500 });
@@ -57,6 +79,7 @@ export async function POST(req: NextRequest) {
       endDate,
       dateField,
     });
+    await logRoSheetSync(req, result);
     return NextResponse.json(result);
   } catch (err: any) {
     return NextResponse.json({ success: false, message: err.message }, { status: 500 });

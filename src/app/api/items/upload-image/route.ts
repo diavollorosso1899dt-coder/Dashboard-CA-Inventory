@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, updateCachedMasterItem } from '@/lib/supabase/server';
 import { setItemImageOverride } from '@/lib/assetImageHelper';
+import { auditMutation } from '@/lib/audit/record-change';
 import fs from 'fs';
 import path from 'path';
 
@@ -205,6 +206,19 @@ export async function POST(req: NextRequest) {
     // 5. Update runtime server cache segera
     setItemImageOverride(itemName, publicUrl);
     updateCachedMasterItem(itemName, { photoUrl: publicUrl });
+
+    try {
+      await auditMutation(req, {
+        entityType: 'ITEM',
+        entityTitle: `Item ${itemName}`,
+        entityId: itemName,
+        actionType: 'UPDATE',
+        details: `Mengunggah gambar baru untuk item "${itemName}" (${(file.size / 1024).toFixed(1)} KB).`,
+        newState: { photo_url: publicUrl },
+      });
+    } catch (auditErr) {
+      console.error('Failed recording item image audit log:', auditErr);
+    }
 
     return NextResponse.json({
       success: true,

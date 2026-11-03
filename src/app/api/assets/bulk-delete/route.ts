@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/server';
 import { moveItemToTrash } from '@/lib/audit/audit-store';
+import { resolveActor } from '@/lib/auth/actor';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +15,7 @@ export async function POST(req: NextRequest) {
     }
 
     const client = getAdminClient();
+    const actor = resolveActor(req, { name: actorName, role: actorRole });
     let deletedCount = 0;
 
     for (const id of ids) {
@@ -32,8 +34,8 @@ export async function POST(req: NextRequest) {
         title,
         subtitle,
         existingAsset || { id },
-        actorName || 'Super User',
-        actorRole || 'Super User',
+        actor.name,
+        actor.role,
         'Penghapusan massal oleh user'
       );
 

@@ -57,6 +57,7 @@ import { RoDateField, getRoDateByField, matchesRoDateRange } from '@/lib/distrib
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 import { getAllSessionsSync, loadSession } from '@/lib/so-harian/storageService';
 import { SOItem } from '@/lib/so-harian/inventoryEngine';
+import { isRoFinalizedForActiveList } from '@/lib/distribution/ro-visibility';
 
 interface RoManagerViewProps {
   initialOrders?: RequestOrder[];
@@ -93,6 +94,55 @@ const WORKFLOW_STAGES: StageDefinition[] = [
   { key: 'DIBATALKAN', stepNum: 0, label: 'Dibatalkan', sub: 'RO Ditolak', color: 'border-rose-400 bg-rose-50 text-rose-950 dark:border-rose-600 dark:bg-rose-950/50 dark:text-rose-200', shape: 'pill' },
 ];
 
+const STAGE_BADGE_LABEL: Record<string, string> = {
+  REQUEST_ORDER: 'On Proses',
+  INPUT_DATA: 'Input Sistem',
+  PILIH_PROSES: 'Pilih Proses',
+  KELOLA_PR: 'Butuh PR',
+  READY_STOCK: 'Ready Stock',
+  SURAT_JALAN: 'Surat Jalan',
+  ASET_SAMPAI: 'Aset Sampai',
+  CHECKLIST: 'Checklist',
+  CHECKLIST_DONE: 'Checklist Selesai',
+  UPDATE_SLA: 'Update SLA',
+  SELESAI: 'Selesai',
+  DIBATALKAN: 'Dibatalkan',
+};
+
+const STAGE_BADGE_CLASS: Record<string, string> = {
+  REQUEST_ORDER: 'bg-blue-50 text-blue-900 border-blue-200 dark:bg-blue-950/50 dark:text-blue-200 dark:border-blue-700',
+  INPUT_DATA: 'bg-indigo-50 text-indigo-900 border-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-200 dark:border-indigo-700',
+  PILIH_PROSES: 'bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-700',
+  KELOLA_PR: 'bg-orange-50 text-orange-900 border-orange-300 dark:bg-orange-950/50 dark:text-orange-200 dark:border-orange-700',
+  READY_STOCK: 'bg-emerald-50 text-emerald-900 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-200 dark:border-emerald-700',
+  SURAT_JALAN: 'bg-cyan-50 text-cyan-900 border-cyan-300 dark:bg-cyan-950/50 dark:text-cyan-200 dark:border-cyan-700',
+  ASET_SAMPAI: 'bg-teal-50 text-teal-900 border-teal-300 dark:bg-teal-950/50 dark:text-teal-200 dark:border-teal-700',
+  CHECKLIST: 'bg-purple-50 text-purple-900 border-purple-300 dark:bg-purple-950/50 dark:text-purple-200 dark:border-purple-700',
+  CHECKLIST_DONE: 'bg-purple-50 text-purple-900 border-purple-300 dark:bg-purple-950/50 dark:text-purple-200 dark:border-purple-700',
+  UPDATE_SLA: 'bg-slate-100 text-slate-900 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-600',
+  SELESAI: 'bg-green-100 text-green-900 border-green-300 dark:bg-green-950/50 dark:text-green-200 dark:border-green-700',
+  DIBATALKAN: 'bg-rose-100 text-rose-950 border-rose-300 dark:bg-rose-950/60 dark:text-rose-200 dark:border-rose-800',
+};
+
+const ITEM_STATUS_BADGE: Record<string, { label: string; className: string }> = {
+  ON_PROSES: {
+    label: 'On Proses',
+    className: 'bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800',
+  },
+  GUDANG_SCGA: {
+    label: 'Ready Stock',
+    className: 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800',
+  },
+  PR_VENDOR: {
+    label: 'Butuh PR',
+    className: 'bg-orange-100 dark:bg-orange-950/60 text-orange-800 dark:text-orange-300 border-orange-200 dark:border-orange-800',
+  },
+  CANCELLED: {
+    label: 'Dibatalkan',
+    className: 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800',
+  },
+};
+
 const RO_COLUMNS: ColumnItem[] = [
   { id: 'ro_number', label: 'No. RO / ID', alwaysVisible: true },
   { id: 'order_date', label: 'Tanggal Order' },
@@ -119,33 +169,17 @@ export function normalizeRoKey(val?: string | null): string {
 }
 
 /**
- * Status efektif item di Kelola RO:
- * - 'ON_PROSES': Belum ditentukan (status default sebelum diupdate)
- * - 'GUDANG_SCGA': Ready Stock -> Berpindah ke Surat Jalan / Pemantauan Distribusi
- * - 'PR_VENDOR': Belum Tersedia -> Berpindah ke Fitur PR
- * - 'CANCELLED': Tolak / Batal
+ * Status efektif item di Kelola RO.
+ *
+ * Nilai `stock_source` di database adalah hasil keputusan user, jadi selalu
+ * dipakai apa adanya. Sebelumnya status ini "diturunkan" menjadi On Proses
+ * saat RO masih di tahap REQUEST_ORDER, sehingga item yang sudah dialokasikan
+ * (misalnya Ready Stock pada RO yang baru sebagian diproses) tampak belum
+ * diproses dan bisa tertimpa saat modal disimpan ulang.
  */
-export const getItemEffectiveStatus = (it: ROItem, ro?: RequestOrder): 'ON_PROSES' | 'GUDANG_SCGA' | 'PR_VENDOR' | 'CANCELLED' => {
-  if (it.stock_source === 'PR_VENDOR' || it.stock_source === 'CANCELLED') {
+export const getItemEffectiveStatus = (it: ROItem, _ro?: RequestOrder): 'ON_PROSES' | 'GUDANG_SCGA' | 'PR_VENDOR' | 'CANCELLED' => {
+  if (it.stock_source === 'GUDANG_SCGA' || it.stock_source === 'PR_VENDOR' || it.stock_source === 'CANCELLED') {
     return it.stock_source;
-  }
-  if (it.stock_source === 'GUDANG_SCGA') {
-    if (ro) {
-      if (
-        ro.current_stage === 'SURAT_JALAN' ||
-        ro.status === 'IN_DELIVERY' ||
-        ro.notes?.includes('[PROCESSED_FROM_RO]') ||
-        ro.status === 'COMPLETED' ||
-        ro.current_stage === 'SELESAI'
-      ) {
-        return 'GUDANG_SCGA';
-      }
-      // Data sheet default yang belum pernah diproses oleh user dianggap On Proses
-      if (ro.current_stage === 'REQUEST_ORDER' || ro.status === 'INPUT_SYSTEM' || !ro.current_stage) {
-        return 'ON_PROSES';
-      }
-    }
-    return 'GUDANG_SCGA';
   }
   return 'ON_PROSES';
 };
@@ -159,33 +193,28 @@ export const getRoPendingItems = (ro: RequestOrder): ROItem[] => {
 };
 
 /**
- * Helper untuk menentukan apakah dokumen RO sudah selesai diproses dari menu Kelola RO.
- * Setelah seluruh item dipilih statusnya (Ready Stock, Belum Tersedia, Cancel),
- * dokumen RO otomatis hilang dari Kelola RO.
+ * Item yang masih perlu diproses di modal "Pilih Proses".
+ *
+ * Item yang sudah dialokasikan ke Ready Stock (GUDANG_SCGA) sudah masuk ke
+ * Pemantauan Distribusi, jadi tidak ditampilkan lagi di modal. Item tetap
+ * disimpan di RO (riwayat alokasi tidak hilang) dan tetap tampil di tabel
+ * Kelola RO dengan badge statusnya.
+ */
+export const getProcessModalItems = (
+  ro: RequestOrder
+): Array<{ item: ROItem; index: number }> => {
+  return (ro.items || [])
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => getItemEffectiveStatus(item, ro) !== 'GUDANG_SCGA');
+};
+
+/**
+ * Helper untuk menentukan apakah dokumen RO sudah selesai/dibatalkan.
+ * RO yang itemnya sudah dialokasikan (Ready Stock / PR Vendor) TETAP tampil
+ * di Kelola RO supaya riwayat alokasinya tidak hilang.
  */
 export const isRoAllocatedOutOfMenu = (ro: RequestOrder): boolean => {
-  if (ro.notes && ro.notes.includes('[PROCESSED_FROM_RO]')) return true;
-  const stage = ro.current_stage || ro.status;
-  if (
-    stage === 'SURAT_JALAN' ||
-    stage === 'IN_DELIVERY' ||
-    stage === 'KELOLA_PR' ||
-    stage === 'NEED_PR' ||
-    stage === 'READY_STOCK' ||
-    stage === 'ASET_SAMPAI' ||
-    stage === 'CHECKLIST' ||
-    stage === 'CHECKLIST_DONE' ||
-    stage === 'UPDATE_SLA' ||
-    stage === 'SELESAI' ||
-    stage === 'COMPLETED'
-  ) {
-    return true;
-  }
-  const items = ro.items || [];
-  if (items.length > 0 && items.every(it => !isItemPendingInRo(it, ro))) {
-    return true;
-  }
-  return false;
+  return isRoFinalizedForActiveList(ro);
 };
 
 export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerViewProps) {
@@ -421,6 +450,13 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [rejectReasonModalOpen, setRejectReasonModalOpen] = useState(false);
   const [rejectReasonText, setRejectReasonText] = useState('');
   const [toast, setToast] = useState<ToastMessage | null>(null);
+
+  // Item yang tampil di modal Pilih Proses (Ready Stock sudah dialokasikan,
+  // jadi tidak perlu dipilih ulang di modal).
+  const processModalItems = selectedRoForProcess ? getProcessModalItems(selectedRoForProcess) : [];
+  const processModalHiddenReadyCount = selectedRoForProcess
+    ? (selectedRoForProcess.items?.length || 0) - processModalItems.length
+    : 0;
 
   const handleUploadSuccess = (updatedItemName: string, newImageUrl: string) => {
     setItemImageOverride(updatedItemName, newImageUrl);
@@ -817,19 +853,45 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       const targetRawId = selectedRoForProcess.raw_ro_id;
       const targetKey = normalizeRoKey(targetRawId || targetRoNo);
 
-      // Sesuai Flowchart: Jika seluruh item Ditolak/Dibatalkan -> Otomatis Terhapus dari Aplikasi
+      // Semua item ditolak/dibatalkan: dokumen tetap disimpan sebagai riwayat
+      // (tidak dihapus), lalu keluar dari daftar aktif karena sudah final.
       if (allDone && cancelledItems.length === selectedRoForProcess.items.length) {
-        await fetch(`/api/distribution/ro?id=${encodeURIComponent(targetId || targetRoNo)}`, {
-          method: 'DELETE',
+        const cancelNotes = (selectedRoForProcess.notes || '').replace(/\[PROCESSED_FROM_RO\]/g, '').trim();
+
+        const cancelRes = await fetch('/api/distribution/ro', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: selectedRoForProcess.id,
+            updates: {
+              ro_number: selectedRoForProcess.ro_number,
+              items: selectedRoForProcess.items,
+              current_stage: 'DIBATALKAN',
+              status: 'CANCELLED',
+              notes: cancelNotes,
+            },
+          }),
         });
 
-        setOrders(prev => prev.filter(o => {
-          if (targetId && o.id === targetId) return false;
-          if (targetRoNo && o.ro_number === targetRoNo) return false;
-          if (targetRawId && o.raw_ro_id === targetRawId) return false;
-          const oKey = normalizeRoKey(o.raw_ro_id || o.ro_number);
-          if (targetKey && oKey && oKey === targetKey) return false;
-          return true;
+        const cancelJson = await cancelRes.json();
+        if (!cancelJson.success) {
+          throw new Error(cancelJson.error || 'Gagal menyimpan pembatalan RO ke Supabase');
+        }
+
+        setOrders(prev => prev.map(o => {
+          const match = (targetId && o.id === targetId) ||
+                        (targetRoNo && o.ro_number === targetRoNo) ||
+                        (targetRawId && o.raw_ro_id === targetRawId) ||
+                        (targetKey && normalizeRoKey(o.raw_ro_id || o.ro_number) === targetKey);
+          return match
+            ? {
+                ...o,
+                items: selectedRoForProcess.items,
+                current_stage: 'DIBATALKAN',
+                status: 'CANCELLED',
+                notes: cancelNotes,
+              }
+            : o;
         }));
 
         try {
@@ -837,7 +899,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
           window.dispatchEvent(new Event('ca_ro_updated'));
         } catch {}
 
-        setToast({ type: 'info', message: `Seluruh item dibatalkan & dokumen ${selectedRoForProcess.ro_number} otomatis terhapus dari aplikasi.` });
+        setToast({ type: 'info', message: `Seluruh item dibatalkan. Dokumen ${selectedRoForProcess.ro_number} disimpan sebagai riwayat dan keluar dari daftar aktif.` });
         setSelectedRoForProcess(null);
         return;
       }
@@ -884,26 +946,23 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         throw new Error(roPatchJson.error || 'Gagal menyimpan perubahan alokasi ke Supabase');
       }
 
-      if (allDone) {
-        // Hilangkan dokumen RO dari menu Kelola RO seketika jika seluruh item telah dipilih statusnya
-        setOrders(prev => prev.filter(o => {
-          if (targetId && o.id === targetId) return false;
-          if (targetRoNo && o.ro_number === targetRoNo) return false;
-          if (targetRawId && o.raw_ro_id === targetRawId) return false;
-          const oKey = normalizeRoKey(o.raw_ro_id || o.ro_number);
-          if (targetKey && oKey && oKey === targetKey) return false;
-          return true;
-        }));
-      } else {
-        // Masih ada item On Proses: perbarui item di state lokal sehingga item yang sudah dipilih hilang dari tabel
-        setOrders(prev => prev.map(o => {
-          const match = (targetId && o.id === targetId) ||
-                        (targetRoNo && o.ro_number === targetRoNo) ||
-                        (targetRawId && o.raw_ro_id === targetRawId) ||
-                        (targetKey && normalizeRoKey(o.raw_ro_id || o.ro_number) === targetKey);
-          return match ? { ...o, items: selectedRoForProcess.items } : o;
-        }));
-      }
+      // Dokumen RO tetap tampil di Kelola RO; item yang sudah dialokasikan
+      // hanya berpindah tujuan, bukan hilang dari dokumen asalnya.
+      setOrders(prev => prev.map(o => {
+        const match = (targetId && o.id === targetId) ||
+                      (targetRoNo && o.ro_number === targetRoNo) ||
+                      (targetRawId && o.raw_ro_id === targetRawId) ||
+                      (targetKey && normalizeRoKey(o.raw_ro_id || o.ro_number) === targetKey);
+        return match
+          ? {
+              ...o,
+              items: selectedRoForProcess.items,
+              current_stage: nextStage,
+              status: nextStatus,
+              notes: updatedNotes,
+            }
+          : o;
+      }));
 
       // Broadcast event real-time ke menu Pemantauan Distribusi & PR
       try {
@@ -931,7 +990,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       } else {
         setToast({
           type: 'success',
-          message: `Alokasi item berhasil disimpan! Item yang telah dipilih statusnya berpindah ke tujuannya & hilang dari antrean. Tersisa ${pendingItems.length} item On Proses.`,
+          message: `Alokasi item berhasil disimpan! Dokumen tetap ada di Kelola RO; ${readyItems.length + prItems.length} item sudah dialokasikan, tersisa ${pendingItems.length} item On Proses.`,
         });
       }
 
@@ -1740,9 +1799,10 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               ) : (
                 paginatedOrders.map((o) => {
                   const isCancelled = o.status === 'REJECTED' || (o.status as string) === 'CANCELLED' || o.current_stage === 'DIBATALKAN';
-                  const pendingItems = getRoPendingItems(o);
-                  const displayItems = pendingItems.length > 0 ? pendingItems : o.items;
-                  const uniqueItems = getUniqueRoItems(displayItems);
+                  const uniqueItems = getUniqueRoItems(o.items || []);
+                  const roStage = getRoStage(o);
+                  const stageLabel = STAGE_BADGE_LABEL[roStage] || STAGE_BADGE_LABEL.REQUEST_ORDER;
+                  const stageClass = STAGE_BADGE_CLASS[roStage] || STAGE_BADGE_CLASS.REQUEST_ORDER;
 
                   const key = normalizeRoKey(o.raw_ro_id || o.ro_number);
                   const isDupe = (deduplicationMap.get(key)?.length || 0) > 1;
@@ -1788,22 +1848,25 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                         </td>
                       )}
 
-                      {/* Items (Hanya menampilkan item yang masih On Proses) */}
+                      {/* Items: semua item tetap tampil beserta status alokasinya */}
                       {visibleColumns.items !== false && (
                         <td className="py-3.5 px-4 max-w-xs">
                           <div className="space-y-1">
-                            {uniqueItems.slice(0, 3).map((it, idx) => (
+                            {uniqueItems.slice(0, 3).map((it, idx) => {
+                              const itemStatus = getItemEffectiveStatus(it, o);
+                              const badge = ITEM_STATUS_BADGE[itemStatus] ?? ITEM_STATUS_BADGE.ON_PROSES;
+                              return (
                               <div key={idx} className="space-y-0.5">
                                 <div className="flex items-center gap-1.5 text-[11px]">
                                   <Package className="h-3 w-3 text-[#0b57d0] dark:text-[#a8c7fa] shrink-0" />
-                                  <span className={`font-medium truncate ${it.stock_source === 'CANCELLED' ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
+                                  <span className={`font-medium truncate ${itemStatus === 'CANCELLED' ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
                                     {it.item_name}
                                   </span>
                                   <span className="text-[#747775] shrink-0">
                                     (x{it.quantity_ordered} {it.unit || 'unit'})
                                   </span>
-                                  <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                                    On Proses
+                                  <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold border ${badge.className}`}>
+                                    {badge.label}
                                   </span>
                                 </div>
                                 {it.notes && (
@@ -1817,7 +1880,8 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                                   </div>
                                 )}
                               </div>
-                            ))}
+                              );
+                            })}
                             {o.notes && o.notes.replace(/\[PROCESSED_FROM_RO\]/g, '').trim() && (
                               <div className="text-[10px] text-blue-700 dark:text-blue-400 bg-blue-50/70 dark:bg-blue-950/40 px-2 py-0.5 rounded border border-blue-200/60 dark:border-blue-800/60 flex items-center gap-1 mt-1">
                                 <FileText className="w-2.5 h-2.5 shrink-0" />
@@ -1879,16 +1943,12 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                         </td>
                       )}
 
-                      {/* Stage Progress Badge - Default On Proses di Kelola RO */}
+                      {/* Stage Progress Badge - status efektif RO di Kelola RO */}
                       {visibleColumns.stage !== false && (
                         <td className="py-3.5 px-4 whitespace-nowrap">
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            isCancelled
-                              ? 'bg-rose-100 text-rose-950 border border-rose-300 dark:bg-rose-950/60 dark:text-rose-200 dark:border-rose-800'
-                              : 'bg-blue-50 text-blue-900 border border-blue-200 dark:bg-blue-950/50 dark:text-blue-200 dark:border-blue-700'
-                          }`}>
-                            {isCancelled ? <Ban className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" /> : <GitMerge className="h-3.5 w-3.5 text-blue-600" />}
-                            <span>{isCancelled ? 'Dibatalkan' : 'On Proses'}</span>
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${stageClass}`}>
+                            {roStage === 'DIBATALKAN' ? <Ban className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" /> : <GitMerge className="h-3.5 w-3.5" />}
+                            <span>{stageLabel}</span>
                           </span>
                           {isCancelled && o.rejection_reason && (
                             <div className="text-[10px] text-rose-600 dark:text-rose-400 mt-0.5 max-w-[200px] truncate" title={o.rejection_reason}>
@@ -2034,7 +2094,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 pb-1 border-b border-slate-100 dark:border-slate-800">
                   <span className="font-bold text-xs text-slate-700 dark:text-slate-300">
-                    Daftar Permintaan Aset ({selectedRoForProcess.items.length} Item)
+                    Daftar Permintaan Aset ({processModalItems.length} Item)
                   </span>
                   <span className="text-[11px] flex items-center gap-1 text-slate-500">
                     <Boxes className="w-3 h-3 text-indigo-500" />
@@ -2042,8 +2102,25 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                   </span>
                 </div>
 
+                {processModalHiddenReadyCount > 0 && (
+                  <p className="flex items-start gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-400">
+                    <CheckCircle2 className="mt-0.5 w-3 h-3 shrink-0" />
+                    <span>
+                      {processModalHiddenReadyCount} item sudah <strong>Ready Stock (Gudang SCGA)</strong> dan
+                      tidak ditampilkan lagi di modal ini. Item tetap tersimpan di RO dan tampil di tabel
+                      Kelola RO.
+                    </span>
+                  </p>
+                )}
+
+                {processModalItems.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 p-4 text-center text-[11px] text-emerald-700 dark:text-emerald-300">
+                    Semua item RO ini sudah Ready Stock. Tidak ada item yang perlu diproses di modal.
+                  </div>
+                )}
+
                 <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
-                  {selectedRoForProcess.items.map((it, idx) => {
+                  {processModalItems.map(({ item: it, index: idx }) => {
                     const imgUrl = getItemImageUrl(it.item_name);
                     return (
                       <div key={it.id || idx} className="p-3 rounded-xl border border-[#e0e2ec] dark:border-[#35383a] bg-white dark:bg-[#282a2c] space-y-2.5 shadow-2xs">

@@ -5,7 +5,9 @@ import {
   getAdminClient,
   invalidateAssetRequestsCache,
 } from '@/lib/supabase/server';
-import { moveItemToTrash, recordAuditLog } from '@/lib/audit/audit-store';
+import { moveItemToTrash } from '@/lib/audit/audit-store';
+import { auditMutation } from '@/lib/audit/record-change';
+import { resolveActor } from '@/lib/auth/actor';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,32 +63,14 @@ export async function PATCH(
 
     // Log update in audit trail with previous_state and new_state
     try {
-      const actorName = request.headers.get('x-user-name') || 'User';
-      const actorRole = request.headers.get('x-user-role') || 'User';
-      const details = Object.entries(body)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join(', ');
-
-      const previousState: Record<string, any> = {};
-      if (existing) {
-        Object.keys(body).forEach((key) => {
-          previousState[key] = (existing as any)[key];
-        });
-      }
-
-      await recordAuditLog(
-        actorName,
-        actorRole,
-        body.item_delivery_status ? 'STATUS_CHANGE' : 'UPDATE',
-        'ASET',
-        result.data?.item_name || existing?.item_name || 'Aset',
-        `Pembaruan data aset: ${details}`,
-        { 
-          entityId: id, 
-          previousState: Object.keys(previousState).length > 0 ? previousState : undefined,
-          newState: body 
-        }
-      );
+      const merged = existing ? { ...(existing as any), ...body } : body;
+      await auditMutation(request, {
+        entityType: 'ASET',
+        entityTitle: result.data?.item_name || existing?.item_name || 'Aset',
+        entityId: id,
+        previous: existing || undefined,
+        next: merged,
+      });
     } catch (auditErr) {
       console.error('Failed recording audit log:', auditErr);
     }
@@ -107,8 +91,9 @@ export async function DELETE(
   try {
     const { id } = await params;
     const client = getAdminClient();
-    const actorName = request.headers.get('x-user-name') || 'Super User';
-    const actorRole = request.headers.get('x-user-role') || 'Super User';
+    const actor = resolveActor(request);
+    const actorName = actor.name;
+    const actorRole = actor.role;
 
     let existingAsset: any = null;
 
