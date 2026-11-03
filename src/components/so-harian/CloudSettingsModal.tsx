@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { X, Cloud, CheckCircle2, AlertCircle, HelpCircle } from 'lucide-react';
-import { configureSupabase, getSupabaseConfig } from '@/lib/so-harian/storageService';
+import { configureSupabase, getSupabaseConfig, hasEnvSupabaseConfig, useDefaultSupabaseConfig } from '@/lib/so-harian/storageService';
 
 interface CloudSettingsModalProps {
   isOpen: boolean;
@@ -12,6 +12,7 @@ interface CloudSettingsModalProps {
 
 export default function CloudSettingsModal({ isOpen, onClose, onConfigSaved }: CloudSettingsModalProps) {
   const currentConfig = getSupabaseConfig();
+  const envAvailable = hasEnvSupabaseConfig();
   const [supabaseUrl, setSupabaseUrl] = useState(currentConfig.url);
   const [supabaseKey, setSupabaseKey] = useState(currentConfig.anonKey);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -39,6 +40,20 @@ export default function CloudSettingsModal({ isOpen, onClose, onConfigSaved }: C
     } else {
       setStatusMsg({ type: 'error', text: res.error || 'Gagal mengonfigurasi koneksi.' });
     }
+  };
+
+  const handleUseDefault = () => {
+    setStatusMsg(null);
+    const res = useDefaultSupabaseConfig();
+    if (!res.isConfigured) {
+      setStatusMsg({ type: 'error', text: 'Konfigurasi bawaan aplikasi tidak tersedia.' });
+      return;
+    }
+    const cfg = getSupabaseConfig();
+    setSupabaseUrl(cfg.url);
+    setSupabaseKey(cfg.anonKey);
+    setStatusMsg({ type: 'success', text: 'Kembali ke konfigurasi otomatis aplikasi. Cloud sync aktif.' });
+    onConfigSaved(true);
   };
 
   return (
@@ -74,6 +89,23 @@ export default function CloudSettingsModal({ isOpen, onClose, onConfigSaved }: C
               </p>
             </div>
           </div>
+
+          {envAvailable && (
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-emerald-800 dark:text-emerald-300 flex items-start space-x-2">
+              <Cloud className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">
+                  {currentConfig.source === 'env'
+                    ? 'Terhubung otomatis dari konfigurasi aplikasi'
+                    : 'Konfigurasi otomatis tersedia'}
+                </p>
+                <p className="mt-0.5 text-emerald-700 dark:text-emerald-300/80">
+                  Kredensial Supabase sudah disiapkan aplikasi, jadi semua perangkat (PC &amp; HP)
+                  langsung tersinkron tanpa perlu memasukkan URL/anon key manual.
+                </p>
+              </div>
+            </div>
+          )}
 
           {statusMsg && (
             <div
@@ -117,16 +149,26 @@ export default function CloudSettingsModal({ isOpen, onClose, onConfigSaved }: C
 
         {/* Footer */}
         <div className="px-5 py-3 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
-          <button
-            onClick={() => {
-              setSupabaseUrl('');
-              setSupabaseKey('');
-              handleSave();
-            }}
-            className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:text-rose-800"
-          >
-            Reset ke Offline
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                setSupabaseUrl('');
+                setSupabaseKey('');
+                handleSave();
+              }}
+              className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:text-rose-800"
+            >
+              Reset ke Offline
+            </button>
+            {envAvailable && currentConfig.source !== 'env' && (
+              <button
+                onClick={handleUseDefault}
+                className="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:text-sky-800 dark:hover:text-sky-300"
+              >
+                Pakai Konfigurasi Otomatis
+              </button>
+            )}
+          </div>
           <div className="flex space-x-2">
             <button
               onClick={onClose}

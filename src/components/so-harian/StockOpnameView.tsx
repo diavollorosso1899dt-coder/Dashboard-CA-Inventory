@@ -51,6 +51,7 @@ export function StockOpnameView() {
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
   const [isCloudConfigured, setIsCloudConfigured] = useState(false);
+  const [cloudSource, setCloudSource] = useState<'saved' | 'env' | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -68,7 +69,9 @@ export function StockOpnameView() {
   };
 
   useEffect(() => {
-    setIsCloudConfigured(getSupabaseConfig().isConfigured);
+    const cfg = getSupabaseConfig();
+    setIsCloudConfigured(cfg.isConfigured);
+    setCloudSource(cfg.source || null);
   }, []);
 
   // Stok awal hari ini = hasil SO hari sebelumnya (bukan master spreadsheet).
@@ -271,6 +274,13 @@ export function StockOpnameView() {
           {/* Cloud Sync Button */}
           <button
             onClick={() => setIsCloudModalOpen(true)}
+            title={
+              isCloudConfigured
+                ? cloudSource === 'env'
+                  ? 'Cloud sync aktif otomatis dari konfigurasi aplikasi'
+                  : 'Cloud sync aktif dari kredensial yang disimpan di perangkat ini'
+                : 'Data tersimpan lokal di browser ini'
+            }
             className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center space-x-1.5 transition-all ${
               isCloudConfigured
                 ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
@@ -455,7 +465,10 @@ export function StockOpnameView() {
       <CloudSettingsModal
         isOpen={isCloudModalOpen}
         onClose={() => setIsCloudModalOpen(false)}
-        onConfigSaved={(configured) => setIsCloudConfigured(configured)}
+        onConfigSaved={(configured) => {
+          setIsCloudConfigured(configured);
+          setCloudSource(getSupabaseConfig().source || null);
+        }}
       />
 
       <DocViewerModal

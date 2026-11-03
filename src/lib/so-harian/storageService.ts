@@ -28,6 +28,7 @@ const STORAGE_KEYS = {
   SESSIONS: 'so_harian_sessions',
   SESSION_DETAIL_PREFIX: 'so_harian_session_',
   SUPABASE_CONFIG: 'so_harian_supabase_config',
+  SUPABASE_DISABLED: 'so_harian_supabase_disabled',
   ACTIVE_SESSION_ID: 'so_harian_active_session_id',
 };
 
@@ -56,11 +57,30 @@ function getSafeStorage() {
 
 let supabaseClient: SupabaseClient | null = null;
 
+/**
+ * Kredensial Supabase bawaan aplikasi (dari environment).
+ *
+ * Nilai NEXT_PUBLIC_* di-inline saat build, jadi tersedia di browser tanpa
+ * perlu memasukkan URL/anon key secara manual di setiap perangkat.
+ */
+function getEnvSupabaseConfig(): { url: string; anonKey: string; isConfigured: boolean } {
+  const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+  const anonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim();
+  return { url, anonKey, isConfigured: !!(url && anonKey) };
+}
+
+export function hasEnvSupabaseConfig(): boolean {
+  return getEnvSupabaseConfig().isConfigured;
+}
+
 export function configureSupabase(url: string, anonKey: string): { isConfigured: boolean; client?: SupabaseClient; error?: string } {
   const safeStorage = getSafeStorage();
   if (!url || !anonKey) {
     supabaseClient = null;
     safeStorage.removeItem(STORAGE_KEYS.SUPABASE_CONFIG);
+    // Tandai pilihan eksplisit "Offline" supaya konfigurasi environment tidak
+    // langsung mengaktifkan cloud lagi di perangkat ini.
+    safeStorage.setItem(STORAGE_KEYS.SUPABASE_DISABLED, '1');
     return { isConfigured: false };
   }
 
@@ -68,6 +88,7 @@ export function configureSupabase(url: string, anonKey: string): { isConfigured:
     const client = createClient(url, anonKey);
     supabaseClient = client;
     safeStorage.setItem(STORAGE_KEYS.SUPABASE_CONFIG, JSON.stringify({ url, anonKey }));
+    safeStorage.removeItem(STORAGE_KEYS.SUPABASE_DISABLED);
     return { isConfigured: true, client };
   } catch (err: any) {
     console.error('Failed to configure Supabase client:', err);
@@ -75,20 +96,49 @@ export function configureSupabase(url: string, anonKey: string): { isConfigured:
   }
 }
 
-export function getSupabaseConfig(): { url: string; anonKey: string; isConfigured: boolean } {
+/**
+ * Kembali ke kredensial bawaan aplikasi (environment) setelah sebelumnya
+ * di-reset ke offline.
+ */
+export function useDefaultSupabaseConfig(): { isConfigured: boolean } {
+  const safeStorage = getSafeStorage();
+  safeStorage.removeItem(STORAGE_KEYS.SUPABASE_CONFIG);
+  safeStorage.removeItem(STORAGE_KEYS.SUPABASE_DISABLED);
+  supabaseClient = null;
+  initSupabaseFromStorage();
+  return { isConfigured: getSupabaseConfig().isConfigured };
+}
+
+export function getSupabaseConfig(): {
+  url: string;
+  anonKey: string;
+  isConfigured: boolean;
+  source?: 'saved' | 'env';
+} {
   const safeStorage = getSafeStorage();
   const raw = safeStorage.getItem(STORAGE_KEYS.SUPABASE_CONFIG);
-  if (!raw) return { url: '', anonKey: '', isConfigured: false };
-  try {
-    const parsed = JSON.parse(raw);
-    return {
-      url: parsed.url || '',
-      anonKey: parsed.anonKey || '',
-      isConfigured: !!(parsed.url && parsed.anonKey),
-    };
-  } catch {
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.url && parsed?.anonKey) {
+        return { url: parsed.url, anonKey: parsed.anonKey, isConfigured: true, source: 'saved' };
+      }
+    } catch {
+      // Konfigurasi tersimpan rusak; lanjut ke konfigurasi bawaan.
+    }
+  }
+
+  // Pilihan "Reset ke Offline" menang atas konfigurasi environment.
+  if (safeStorage.getItem(STORAGE_KEYS.SUPABASE_DISABLED) === '1') {
     return { url: '', anonKey: '', isConfigured: false };
   }
+
+  const envConfig = getEnvSupabaseConfig();
+  if (envConfig.isConfigured) {
+    return { ...envConfig, source: 'env' };
+  }
+
+  return { url: '', anonKey: '', isConfigured: false };
 }
 
 export function initSupabaseFromStorage() {
@@ -151,74 +201,49 @@ export async function saveSession(sessionData: Partial<SOSession>, items: SOItem
     }
   }
 
-  if (supabaseClient) {
+  // Simpan ke Supabase lewat API server (service role). Tabel SO memakai RLS
+  // yang menolak INSERT dari anon key, jadi penulisan langsung dari browser
+  // selalu gagal. API server juga membuat data tetap tersimpan walau
+  // perangkat belum pernah mengatur koneksi cloud secara manual.
+  if (getSupabaseConfig().isConfigured) {
     try {
-      await supabaseClient.from('so_sessions').upsert({
-        id: sessionId,
-        tanggal: completeSession.tanggal,
-        gudang: completeSession.gudang,
-        petugas: completeSession.petugas,
-        total_items: completeSession.total_items,
-        item_match: completeSession.item_match,
-        item_selisih: (completeSession.item_minus || 0) + (completeSession.item_plus || 0),
-        akurasi_persen: completeSession.akurasi_persen,
-        status: completeSession.status || 'DRAFT',
-        updated_at: now,
+      const res = await fetch('/api/so/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session: completeSession, items }),
       });
-
-      if (items.length > 0) {
-        const detailPayload = items.map(i => ({
-          id: i.id,
-          session_id: sessionId,
-          kode_barang: i.kode_barang,
-          nama_barang: i.nama_barang,
-          kategori: i.kategori || 'Peralatan',
-          satuan: i.satuan,
-          stok_awal: i.stok_awal,
-          qty_penerimaan: i.qty_penerimaan,
-          qty_ro: i.qty_ro,
-          stok_sistem: i.stok_sistem,
-          qty_fisik: i.qty_fisik,
-          selisih: i.selisih,
-          status_selisih: i.status_selisih,
-          catatan: i.catatan,
-        }));
-
-        // Batch upsert in chunks of 300 for blazing speed and zero timeout
-        const BATCH_SIZE = 300;
-        for (let idx = 0; idx < detailPayload.length; idx += BATCH_SIZE) {
-          const chunk = detailPayload.slice(idx, idx + BATCH_SIZE);
-          await supabaseClient.from('so_details').upsert(chunk);
-        }
-      }
-
-      // Catat aksi simpan ke audit trail (pelaku diambil server dari cookie sesi).
-      try {
-        await fetch('/api/audit/logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            actionType: 'UPDATE',
-            entityType: 'SO',
-            entityTitle: `Stock Opname ${completeSession.tanggal}`,
-            details: `Menyimpan sesi Stock Opname Harian ${completeSession.tanggal} (${completeSession.gudang || 'Gudang'}) — ${completeSession.total_items || items.length} item, status ${completeSession.status || 'DRAFT'}.`,
-            options: {
-              entityId: sessionId,
-              newState: {
-                tanggal: completeSession.tanggal,
-                gudang: completeSession.gudang,
-                total_items: completeSession.total_items,
-                status: completeSession.status || 'DRAFT',
-              },
-            },
-          }),
-        });
-      } catch (auditErr) {
-        console.warn('Gagal mencatat audit Stock Opname:', auditErr);
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        throw new Error(json?.error || `HTTP ${res.status}`);
       }
     } catch (cloudErr) {
       console.warn('Cloud sync failed, data saved locally:', cloudErr);
     }
+  }
+
+  // Catat aksi simpan ke audit trail (pelaku diambil server dari cookie sesi).
+  try {
+    await fetch('/api/audit/logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actionType: 'UPDATE',
+        entityType: 'SO',
+        entityTitle: `Stock Opname ${completeSession.tanggal}`,
+        details: `Menyimpan sesi Stock Opname Harian ${completeSession.tanggal} (${completeSession.gudang || 'Gudang'}) — ${completeSession.total_items || items.length} item, status ${completeSession.status || 'DRAFT'}.`,
+        options: {
+          entityId: sessionId,
+          newState: {
+            tanggal: completeSession.tanggal,
+            gudang: completeSession.gudang,
+            total_items: completeSession.total_items,
+            status: completeSession.status || 'DRAFT',
+          },
+        },
+      }),
+    });
+  } catch (auditErr) {
+    console.warn('Gagal mencatat audit Stock Opname:', auditErr);
   }
 
   return sessionId;
@@ -324,10 +349,16 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     safeStorage.removeItem(STORAGE_KEYS.ACTIVE_SESSION_ID);
   }
 
-  if (supabaseClient) {
+  // Hapus juga di Supabase lewat API server (RLS menolak delete dari anon key).
+  if (getSupabaseConfig().isConfigured) {
     try {
-      await supabaseClient.from('so_details').delete().eq('session_id', sessionId);
-      await supabaseClient.from('so_sessions').delete().eq('id', sessionId);
+      const res = await fetch(`/api/so/sessions?id=${encodeURIComponent(sessionId)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        throw new Error(json?.error || `HTTP ${res.status}`);
+      }
     } catch (e) {
       console.warn('Cloud delete failed:', e);
     }
