@@ -854,6 +854,15 @@ export function TrashAndLogView({
             </div>
           </div>
 
+          {/* Info retensi otomatis */}
+          <div className="flex items-start gap-2 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-blue-50/70 dark:bg-blue-950/30 px-3.5 py-2.5 text-[11px] text-blue-700 dark:text-blue-300">
+            <Clock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>
+              Retensi otomatis: log yang lebih lama dari <strong>7 hari</strong> dihapus
+              setiap hari pukul 03.00 WIB (20.00 UTC) oleh cron server.
+            </span>
+          </div>
+
           {/* Audit Logs Table */}
           <div className="rounded-3xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] overflow-hidden shadow-sm">
             <div className="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto relative scrollbar-thin">

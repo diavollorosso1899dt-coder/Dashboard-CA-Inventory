@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuditLogs, recordAuditLog, revertAuditLog } from '@/lib/audit/audit-store';
+import { maybePurgeOldAuditLogs } from '@/lib/audit/retention';
 import { resolveActor } from '@/lib/auth/actor';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
+    // Jaring pengaman: bersihkan log >7 hari paling sering sekali per 6 jam.
+    // Pemicu utama tetap cron /api/audit/cleanup.
+    await maybePurgeOldAuditLogs();
+
     const searchParams = req.nextUrl.searchParams;
     const search = searchParams.get('search') || undefined;
     const actionType = searchParams.get('actionType') || undefined;
