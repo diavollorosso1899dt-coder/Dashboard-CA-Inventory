@@ -562,10 +562,15 @@ export default function InteractiveSlaDashboard({
     return baseFilteredItems.filter((it) => it.slaCategory === statusFilter);
   }, [baseFilteredItems, statusFilter]);
 
-  // 6. DYNAMIC KPI STATS: Explicitly recalculates based on active filters & view mode!
+  // 6. DYNAMIC KPI STATS: mengikuti filter aktif DAN kategori status yang dipilih user
   const kpiStats = useMemo(() => {
+    // Saat user memilih pill kategori (Terlambat/Kritis/Tepat/Selesai), seluruh
+    // angka kartu KPI dihitung dari daftar yang sedang tampil agar konsisten.
+    const scopeOrders = finalFilteredOrders;
+    const scopeItems = finalFilteredItems;
+
     // Context counts
-    const contextTotalRO = baseFilteredOrders.length;
+    const contextTotalRO = scopeOrders.length;
     let completedRoCount = 0;
     let overdueRoCount = 0;
     let criticalRoCount = 0;
@@ -575,7 +580,7 @@ export default function InteractiveSlaDashboard({
     let leadTimeDaysSum = 0;
     let leadTimeCount = 0;
 
-    baseFilteredOrders.forEach((o) => {
+    scopeOrders.forEach((o) => {
       totalItemsOrdered += o.totalQtyOrdered;
       totalItemsFulfilled += o.totalQtyFulfilled;
 
@@ -595,14 +600,14 @@ export default function InteractiveSlaDashboard({
       }
     });
 
-    // Item-level counts in base filtered scope
-    const contextTotalItems = baseFilteredItems.length;
+    // Item-level counts in scoped list
+    const contextTotalItems = scopeItems.length;
     let completedItemCount = 0;
     let overdueItemCount = 0;
     let criticalItemCount = 0;
     let onTimeItemCount = 0;
 
-    baseFilteredItems.forEach((it) => {
+    scopeItems.forEach((it) => {
       if (it.slaCategory === 'COMPLETED') completedItemCount++;
       else if (it.slaCategory === 'OVERDUE') overdueItemCount++;
       else if (it.slaCategory === 'CRITICAL') criticalItemCount++;
@@ -642,7 +647,7 @@ export default function InteractiveSlaDashboard({
 
       avgLeadTimeDays,
     };
-  }, [baseFilteredOrders, baseFilteredItems, finalFilteredOrders, finalFilteredItems, metrics.avg_lead_time_days]);
+  }, [finalFilteredOrders, finalFilteredItems, metrics.avg_lead_time_days]);
 
   // Overdue Items from Asset Requests (> 14 days and still not completed)
   const overdueAssetItems = useMemo(() => {
@@ -1632,7 +1637,7 @@ export default function InteractiveSlaDashboard({
                     ) : (
                       paginatedItems.map((it) => (
                         <tr 
-                          key={it.id}
+                          key={`${it.roId}::${it.id}`}
                           className="hover:bg-[#f0f4f9]/80 dark:hover:bg-[#282a2c]/60 transition-colors cursor-pointer"
                           onClick={() => setSelectedRoDetail(it.parentRo)}
                         >
@@ -2114,7 +2119,7 @@ export default function InteractiveSlaDashboard({
                 </thead>
                 <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
                   {baseFilteredItems.filter((it) => it.slaCategory === 'OVERDUE').slice(0, 30).map((it) => (
-                    <tr key={it.id} className="hover:bg-rose-50/40 dark:hover:bg-rose-950/20">
+                    <tr key={`${it.roId}::${it.id}`} className="hover:bg-rose-50/40 dark:hover:bg-rose-950/20">
                       <td className="py-2.5 px-3 font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">{it.item_name}</td>
                       <td className="py-2.5 px-3 font-semibold text-rose-700 dark:text-rose-400">{it.ro_number}</td>
                       <td className="py-2.5 px-3 font-medium">{it.branch_name}</td>
@@ -2161,7 +2166,7 @@ export default function InteractiveSlaDashboard({
                   </thead>
                   <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
                     {overdueAssetItems.slice(0, 20).map((it) => (
-                      <tr key={it.id} className="hover:bg-rose-50/40 dark:hover:bg-rose-950/20">
+                      <tr key={`${it.id}::${it.external_id || ''}`} className="hover:bg-rose-50/40 dark:hover:bg-rose-950/20">
                         <td className="py-2.5 px-3 whitespace-nowrap">{formatDateSlash(it.order_datetime)}</td>
                         <td className="py-2.5 px-3 font-semibold">{it.branch_name}</td>
                         <td className="py-2.5 px-3">{it.item_name}</td>
@@ -2217,7 +2222,7 @@ export default function InteractiveSlaDashboard({
                     .map((it) => {
                       const isOver = it.lead_time_days > 14;
                       return (
-                        <tr key={it.id} className="hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c]/60">
+                        <tr key={`${it.id}::${it.external_id || ''}`} className="hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c]/60">
                           <td className="py-2.5 px-3.5 whitespace-nowrap">{formatDateSlash(it.order_datetime)}</td>
                           <td className="py-2.5 px-3.5 font-medium">{it.branch_name}</td>
                           <td className="py-2.5 px-3.5 font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">{it.item_name}</td>
