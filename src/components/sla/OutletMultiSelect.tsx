@@ -8,6 +8,8 @@ interface OutletMultiSelectProps {
   selected: string[];
   onChange: (next: string[]) => void;
   label?: string;
+  /** Tombol melebar penuh, dipakai saat diletakkan di dalam grid filter. */
+  fullWidth?: boolean;
 }
 
 /**
@@ -19,6 +21,7 @@ export default function OutletMultiSelect({
   selected = [],
   onChange,
   label = 'Filter outlet atau cabang',
+  fullWidth = false,
 }: OutletMultiSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -82,13 +85,15 @@ export default function OutletMultiSelect({
         aria-expanded={open}
         title="Filter seluruh data & perhitungan SLA berdasarkan satu atau beberapa outlet"
         className={`interactive-tap inline-flex items-center gap-1.5 rounded-full border pl-3 pr-2 py-1.5 text-xs font-semibold shadow-2xs transition-colors ${
+          fullWidth ? 'w-full justify-between' : ''
+        } ${
           selected.length > 0
             ? 'border-[#0b57d0] bg-blue-50 text-[#0b57d0] dark:border-[#a8c7fa] dark:bg-blue-950/60 dark:text-[#a8c7fa]'
             : 'border-[#e0e2ec] bg-white text-[#1f1f1f] hover:bg-slate-50 dark:border-[#444746] dark:bg-[#1a1c1e] dark:text-[#e3e3e3]'
         }`}
       >
         <Store className="h-3.5 w-3.5" />
-        <span className="max-w-[180px] truncate">{summary}</span>
+        <span className={`truncate ${fullWidth ? 'flex-1 text-left' : 'max-w-[180px]'}`}>{summary}</span>
         <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 

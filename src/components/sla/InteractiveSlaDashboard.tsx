@@ -867,15 +867,17 @@ export default function InteractiveSlaDashboard({
             syncUrl={true}
           />
 
-          {/* Filter Outlet Global (multi-pilih): berlaku untuk semua tab & seluruh perhitungan KPI */}
-          <OutletMultiSelect
-            options={branchOptions}
-            selected={selectedBranches}
-            onChange={(next) => {
-              setSelectedBranches(next);
-              setCurrentPage(1);
-            }}
-          />
+          {/* Filter Outlet Global (multi-pilih): tampil di semua tab; di tab RO ada di panel filter */}
+          {activeTab !== 'RO_SLA' && (
+            <OutletMultiSelect
+              options={branchOptions}
+              selected={selectedBranches}
+              onChange={(next) => {
+                setSelectedBranches(next);
+                setCurrentPage(1);
+              }}
+            />
+          )}
 
           <button
             onClick={handleExportOverdue}
@@ -1262,9 +1264,27 @@ export default function InteractiveSlaDashboard({
               </div>
             </div>
 
-            {/* BARIS DROPDOWN FILTER KOLOM: BULAN, ALOKASI STOK, TAHAP (outlet dipilih di header) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-2 border-t border-[#e0e2ec] dark:border-[#35383a]">
-              {/* 1. Filter Kolom Periode Bulan Order */}
+            {/* BARIS DROPDOWN FILTER KOLOM: CABANG (MULTI), BULAN, ALOKASI STOK, TAHAP */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t border-[#e0e2ec] dark:border-[#35383a]">
+              {/* 1. Filter Kolom Cabang Outlet (bisa pilih lebih dari satu) */}
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
+                  <Building2 className="h-3 w-3 text-[#0b57d0]" />
+                  <span>Filter Cabang Outlet (multi):</span>
+                </label>
+                <OutletMultiSelect
+                  options={branchOptions}
+                  selected={selectedBranches}
+                  onChange={(next) => {
+                    setSelectedBranches(next);
+                    setCurrentPage(1);
+                  }}
+                  label="Filter cabang outlet (bisa lebih dari satu)"
+                  fullWidth
+                />
+              </div>
+
+              {/* 2. Filter Kolom Periode Bulan Order */}
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
                   <Calendar className="h-3 w-3 text-[#0b57d0]" />
@@ -1287,7 +1307,7 @@ export default function InteractiveSlaDashboard({
                 </select>
               </div>
 
-              {/* 2. Filter Kolom Alokasi Stok Item */}
+              {/* 3. Filter Kolom Alokasi Stok Item */}
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
                   <Box className="h-3 w-3 text-[#0b57d0]" />
@@ -1309,7 +1329,7 @@ export default function InteractiveSlaDashboard({
                 </select>
               </div>
 
-              {/* 3. Filter Kolom Tahap Alur Kerja */}
+              {/* 4. Filter Kolom Tahap Alur Kerja */}
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
                   <Truck className="h-3 w-3 text-[#0b57d0]" />
