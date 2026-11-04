@@ -210,12 +210,12 @@ export default function DeliveryProofModal({
         throw new Error('Gagal membaca tanda tangan digital.');
       }
 
-      // 2. Foto bukti: kompres dulu supaya ringan, lalu upload.
+      // 2. Foto bukti: kompres ke <100 KB dulu supaya ringan, lalu upload.
       let photoBlob: Blob | undefined;
       let photoFileName = 'bukti-serah-terima.jpg';
       if (photoFile) {
         try {
-          const compressed = await compressImageToMax100KB(photoFile, 400 * 1024);
+          const compressed = await compressImageToMax100KB(photoFile);
           photoBlob = compressed.blob;
           photoFileName = compressed.file.name;
         } catch {
@@ -415,7 +415,7 @@ export default function DeliveryProofModal({
                     Pilih dari Galeri
                   </span>
                   <span className="text-[10px] text-slate-400 leading-tight">
-                    JPG, PNG, WebP (Maks. 5 MB)
+                    JPG, PNG, WebP — otomatis &lt;100 KB
                   </span>
                   <input
                     type="file"
