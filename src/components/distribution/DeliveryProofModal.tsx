@@ -143,6 +143,8 @@ export default function DeliveryProofModal({
   // Handle Photo Capture/Upload
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Reset value supaya memilih file yang sama lagi tetap memicu onChange.
+    e.target.value = '';
     if (!file) return;
 
     if (file.size > 5 * 1024 * 1024) {
@@ -389,20 +391,40 @@ export default function DeliveryProofModal({
                 </button>
               </div>
             ) : (
-              <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition">
-                <UploadCloud className="w-6 h-6 text-slate-400 mb-1" />
-                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                  Ambil Foto Kamera atau Upload Bukti
-                </span>
-                <span className="text-[10px] text-slate-400">JPG, PNG, atau WebP (Maks. 5 MB)</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={handlePhotoUpload}
-                  className="hidden"
-                />
-              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col items-center justify-center gap-1 p-4 text-center border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition">
+                  <Camera className="w-6 h-6 text-teal-500" />
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    Ambil Foto Kamera
+                  </span>
+                  <span className="text-[10px] text-slate-400 leading-tight">
+                    Langsung dari kamera HP
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handlePhotoUpload}
+                    className="hidden"
+                  />
+                </label>
+
+                <label className="flex flex-col items-center justify-center gap-1 p-4 text-center border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition">
+                  <UploadCloud className="w-6 h-6 text-slate-400" />
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    Pilih dari Galeri
+                  </span>
+                  <span className="text-[10px] text-slate-400 leading-tight">
+                    JPG, PNG, WebP (Maks. 5 MB)
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePhotoUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
             )}
           </div>
 
