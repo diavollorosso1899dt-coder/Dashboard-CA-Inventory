@@ -4,6 +4,7 @@ import {
   AUDIT_LOG_RETENTION_DAYS,
   computeAuditLogCutoff,
   normalizeRetentionDays,
+  resolveRetentionDays,
 } from './retention-config';
 import {
   DELETE_BATCH_SIZE,
@@ -12,7 +13,12 @@ import {
   purgeOlderThan,
 } from './retention-core';
 
-export { AUDIT_LOG_RETENTION_DAYS, computeAuditLogCutoff, normalizeRetentionDays };
+export {
+  AUDIT_LOG_RETENTION_DAYS,
+  computeAuditLogCutoff,
+  normalizeRetentionDays,
+  resolveRetentionDays,
+};
 export { DELETE_BATCH_SIZE, MAX_BATCHES };
 
 /**
@@ -30,8 +36,8 @@ export { DELETE_BATCH_SIZE, MAX_BATCHES };
 const OPPORTUNISTIC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export interface PurgeAuditLogsOptions {
-  /** Umur log yang dipertahankan. Default 7 hari, dibatasi 1..3650. */
-  retentionDays?: number;
+  /** Umur log yang dipertahankan. Default dari env atau 7 hari, dibatasi 1..3650. */
+  retentionDays?: number | string;
   /** Hanya hitung, jangan hapus. */
   dryRun?: boolean;
   actorName?: string;
@@ -93,7 +99,7 @@ function createSupabaseRetentionClient(admin: NonNullable<ReturnType<typeof getA
 export async function purgeOldAuditLogs(
   options: PurgeAuditLogsOptions = {}
 ): Promise<PurgeAuditLogsResult> {
-  const retentionDays = normalizeRetentionDays(options.retentionDays);
+  const retentionDays = resolveRetentionDays(options.retentionDays);
   const cutoff = computeAuditLogCutoff(retentionDays);
   const dryRun = options.dryRun === true;
 

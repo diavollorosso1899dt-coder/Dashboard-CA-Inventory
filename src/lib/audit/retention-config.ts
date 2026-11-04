@@ -13,6 +13,17 @@ export function normalizeRetentionDays(value?: number | null): number {
   return Math.min(Math.floor(parsed), 3650);
 }
 
+/**
+ * Tentukan retensi dari nilai eksplisit, lalu env `AUDIT_LOG_RETENTION_DAYS`,
+ * lalu default 7 hari. Nilai tidak valid selalu kembali ke default.
+ */
+export function resolveRetentionDays(value?: number | string | null): number {
+  if (value === undefined || value === null || value === '') {
+    return normalizeRetentionDays(Number(process.env.AUDIT_LOG_RETENTION_DAYS));
+  }
+  return normalizeRetentionDays(Number(value));
+}
+
 /** Hitung batas waktu: log dengan timestamp < cutoff akan dihapus. */
 export function computeAuditLogCutoff(
   retentionDays: number = AUDIT_LOG_RETENTION_DAYS,

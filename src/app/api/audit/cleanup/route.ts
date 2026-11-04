@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { purgeOldAuditLogs, AUDIT_LOG_RETENTION_DAYS } from '@/lib/audit/retention';
+import { purgeOldAuditLogs } from '@/lib/audit/retention';
 import { resolveActor } from '@/lib/auth/actor';
 
 export const dynamic = 'force-dynamic';
@@ -32,7 +32,8 @@ async function handle(req: NextRequest, body?: any) {
 
   const params = req.nextUrl.searchParams;
   const dryRun = params.get('dryRun') === '1' || params.get('dryRun') === 'true' || body?.dryRun === true;
-  const retentionDays = Number(params.get('days') || body?.days || AUDIT_LOG_RETENTION_DAYS);
+  const daysParam = params.get('days') || body?.days;
+  const retentionDays = daysParam ? Number(daysParam) : undefined;
 
   const actor = resolveActor(req);
   const result = await purgeOldAuditLogs({
