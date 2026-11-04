@@ -105,6 +105,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   const [trackingModalSj, setTrackingModalSj] = useState<SuratJalan | null>(null);
   const [trackingModalOutlet, setTrackingModalOutlet] = useState<string>('');
   const [proofPreviewGroup, setProofPreviewGroup] = useState<GroupedSuratJalanRow | null>(null);
+  const [isProofLoading, setIsProofLoading] = useState(false);
 
   const getGroupProof = (group: GroupedSuratJalanRow) => {
     const docs = group.docs || [group.primarySj];
@@ -127,7 +128,84 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
       items.find((it: any) => it?.foto_bukti_url || it?.photo_url)?.foto_bukti_url ||
       items.find((it: any) => it?.photo_url)?.photo_url ||
       '';
-    return { receiverName, signatureUrl, photoUrl };
+    const hasProof = Boolean(
+      signatureUrl ||
+        photoUrl ||
+        (group.primarySj as any).has_proof ||
+        docs.some((d) => (d as any).has_proof) ||
+        items.some((it: any) => it?.has_proof)
+    );
+    return { receiverName, signatureUrl, photoUrl, hasProof };
+  };
+
+  const fetchFullSuratJalan = async (id: string): Promise<SuratJalan | null> => {
+    try {
+      const res = await fetch(`/api/distribution/surat-jalan?id=${encodeURIComponent(id)}`, {
+        cache: 'no-store',
+      });
+      const json = await res.json();
+      return json?.data || null;
+    } catch {
+      return null;
+    }
+  };
+
+  // List SJ tidak lagi membawa base64 foto/TTD. Saat modal dibuka, ambil
+  // dokumen lengkap yang memang punya bukti saja.
+  const hydrateGroupProof = async (group: GroupedSuratJalanRow) => {
+    const docs = group.docs && group.docs.length > 0 ? group.docs : [group.primarySj];
+    const hasRemoteProof = (doc: SuratJalan) =>
+      (doc.items || []).some((it: any) =>
+        ['photo_url', 'foto_bukti_url', 'signature_url', 'tanda_tangan_url'].some(
+          (key) => typeof it?.[key] === 'string' && /^https?:\/\//i.test(it[key])
+        )
+      );
+    const needsProof = (doc: SuratJalan) =>
+      Boolean((doc as any).has_proof) &&
+      !doc.tanda_tangan_url &&
+      !doc.foto_bukti_url &&
+      !hasRemoteProof(doc);
+
+    const ids = Array.from(
+      new Set([
+        ...docs.filter(needsProof).map((d) => d.id),
+        ...(needsProof(group.primarySj) ? [group.primarySj.id] : []),
+      ])
+    );
+    if (ids.length === 0) return group;
+
+    const fetched = (await Promise.all(ids.map(fetchFullSuratJalan))).filter(
+      Boolean
+    ) as SuratJalan[];
+    if (fetched.length === 0) return group;
+
+    const byId = new Map(fetched.map((doc) => [doc.id, doc]));
+    const nextDocs = docs.map((doc) => byId.get(doc.id) || doc);
+    const nextPrimary = byId.get(group.primarySj.id) || group.primarySj;
+    return {
+      ...group,
+      docs: nextDocs,
+      primarySj: nextPrimary,
+      items: nextDocs.flatMap((doc) => doc.items || []),
+    };
+  };
+
+  const openProofPreview = async (group: GroupedSuratJalanRow) => {
+    setIsProofLoading(true);
+    try {
+      setProofPreviewGroup(await hydrateGroupProof(group));
+    } finally {
+      setIsProofLoading(false);
+    }
+  };
+
+  const openDetail = async (group: GroupedSuratJalanRow) => {
+    setIsProofLoading(true);
+    try {
+      setDetailModalGroup(await hydrateGroupProof(group));
+    } finally {
+      setIsProofLoading(false);
+    }
   };
 
   const activeCount = useMemo(() => {
@@ -1151,7 +1229,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                                   </span>
                                   <button
                                     type="button"
-                                    onClick={() => setDetailModalGroup(group)}
+                                    onClick={() => void openDetail(group)}
                                     className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
                                   >
                                     <span>
@@ -1185,8 +1263,19 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                         {/* 5. Foto & TTD Penerima */}
                         <td className="py-3 px-3 text-center">
                           {(() => {
-                            const { photoUrl, signatureUrl } = getGroupProof(group);
+                            const { photoUrl, signatureUrl, hasProof } = getGroupProof(group);
                             if (!photoUrl && !signatureUrl) {
+                              if (hasProof) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => void openProofPreview(group)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1e1f20] px-2 py-1 text-[10px] font-bold text-indigo-600 dark:text-indigo-300 hover:border-indigo-400 transition-all cursor-pointer"
+                                  >
+                                    Lihat Bukti
+                                  </button>
+                                );
+                              }
                               return (
                                 <span className="text-[11px] italic text-[#747775]">
                                   Belum ada foto / TTD
@@ -1198,7 +1287,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                                 {photoUrl && (
                                   <button
                                     type="button"
-                                    onClick={() => setProofPreviewGroup(group)}
+                                    onClick={() => void openProofPreview(group)}
                                     className="group flex flex-col items-center gap-0.5 p-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1e1f20] hover:border-indigo-400 transition-all cursor-pointer shadow-2xs"
                                     title="Klik untuk memperbesar Foto Bukti Penerimaan"
                                   >
@@ -1216,7 +1305,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                                 {signatureUrl && (
                                   <button
                                     type="button"
-                                    onClick={() => setProofPreviewGroup(group)}
+                                    onClick={() => void openProofPreview(group)}
                                     className="group flex flex-col items-center gap-0.5 p-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1e1f20] hover:border-emerald-400 transition-all cursor-pointer shadow-2xs"
                                     title="Klik untuk memperbesar TTD Penerima"
                                   >
@@ -1368,7 +1457,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                                     {group.items.length > 3 && (
                                       <button
                                         type="button"
-                                        onClick={() => setDetailModalGroup(group)}
+                                        onClick={() => void openDetail(group)}
                                         className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
                                       >
                                         <span>+{group.items.length - 3} item lainnya...</span>
@@ -1439,7 +1528,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                               </Link>
 
                               <button
-                                onClick={() => setDetailModalGroup(group)}
+                                onClick={() => void openDetail(group)}
                                 className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors cursor-pointer"
                                 title="Lihat Detail Rincian Barang"
                               >
@@ -1530,14 +1619,25 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                             })()}
                           </div>
                           {(() => {
-                            const { photoUrl, signatureUrl } = getGroupProof(group);
-                            if (!photoUrl && !signatureUrl) return null;
+                            const { photoUrl, signatureUrl, hasProof } = getGroupProof(group);
+                            if (!photoUrl && !signatureUrl) {
+                              if (!hasProof) return null;
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => void openProofPreview(group)}
+                                  className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-2 py-1 text-[10px] font-bold text-indigo-600 dark:text-indigo-300 hover:border-indigo-400 cursor-pointer"
+                                >
+                                  Lihat Bukti Foto/TTD
+                                </button>
+                              );
+                            }
                             return (
                               <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800/80 grid grid-cols-2 gap-2">
                                 {photoUrl && (
                                   <button
                                     type="button"
-                                    onClick={() => setProofPreviewGroup(group)}
+                                    onClick={() => void openProofPreview(group)}
                                     className="flex flex-col items-center p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 hover:border-indigo-400 cursor-pointer"
                                   >
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1554,7 +1654,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                                 {signatureUrl && (
                                   <button
                                     type="button"
-                                    onClick={() => setProofPreviewGroup(group)}
+                                    onClick={() => void openProofPreview(group)}
                                     className="flex flex-col items-center p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 hover:border-emerald-400 cursor-pointer"
                                   >
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1591,7 +1691,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                             </span>
                             <button
                               type="button"
-                              onClick={() => setDetailModalGroup(group)}
+                              onClick={() => void openDetail(group)}
                               className="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
                             >
                               <Boxes className="w-3.5 h-3.5" />
@@ -1619,7 +1719,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                           </span>
                           <button
                             type="button"
-                            onClick={() => setDetailModalGroup(group)}
+                            onClick={() => void openDetail(group)}
                             className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
                           >
                             <Eye className="w-3 h-3" />
@@ -1908,6 +2008,14 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
           defaultReceiverName={user?.full_name || ''}
           onConfirm={handleConfirmDeliveryWithProof}
         />
+      )}
+
+      {isProofLoading && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
+          <div className="rounded-xl bg-white dark:bg-[#1e1f20] px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200 shadow-xl">
+            Memuat bukti foto &amp; TTD...
+          </div>
+        </div>
       )}
 
       {/* MODAL PRATINJAU FOTO & TTD PENERIMA */}

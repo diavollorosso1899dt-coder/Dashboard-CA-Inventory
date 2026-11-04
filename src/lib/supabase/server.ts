@@ -1784,7 +1784,10 @@ export async function deleteUserProfile(userIdOrEmail: string): Promise<boolean>
 // ==============================================================================
 // 2. MONITORING: TRANSFER ASET & INPUT ASET
 // ==============================================================================
-const TRANSFERS_CACHE_TTL_MS = 5 * 60 * 1000;
+// Riwayat transfer lama masih bisa menyimpan foto/TTD base64. Satu kali fetch
+// bisa belasan MB, jadi TTL lebih panjang + invalidasi eksplisit setiap mutasi
+// membuat halaman tidak menarik ulang payload besar terus-menerus.
+const TRANSFERS_CACHE_TTL_MS = 15 * 60 * 1000;
 
 export function invalidateTransfersCache() {
   global.__TRANSFERS_CACHE__ = undefined;
@@ -1807,7 +1810,9 @@ function triggerTransfersFetch(): Promise<AssetTransfer[]> {
       if (admin) {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 10000);
+          // Payload transfer bisa >15 MB (foto bukti base64). Timeout 10 detik
+          // membuat fetch SELALU gagal dan diulang di setiap navigasi.
+          const timer = setTimeout(() => controller.abort(), 60000);
           const { data, error } = await admin
             .from('asset_transfers')
             .select('*')
@@ -1854,6 +1859,55 @@ export async function getAssetTransfers(force = false): Promise<AssetTransfer[]>
   }
 
   return triggerTransfersFetch();
+}
+
+/**
+ * Field bukti (foto & tanda tangan) bisa berupa data URL base64 (data lama)
+ * di dalam `asset_transfers.items`. Untuk halaman yang hanya butuh metadata
+ * transfer, field ini dibuang agar payload tidak membengkak; data baru sudah
+ * berupa URL Storage yang ringan.
+ */
+const TRANSFER_PROOF_FIELD_KEYS = [
+  'photo_url',
+  'foto_bukti_url',
+  'signature_url',
+  'tanda_tangan_url',
+] as const;
+
+export function stripTransferProofPayload(transfers: AssetTransfer[]): AssetTransfer[] {
+  let changed = false;
+
+  const lightTransfers = transfers.map((transfer) => {
+    const items = Array.isArray(transfer.items) ? transfer.items : [];
+    let itemChanged = false;
+
+    const lightItems = items.map((rawItem) => {
+      const item = rawItem as unknown as Record<string, unknown>;
+      const hasProof = TRANSFER_PROOF_FIELD_KEYS.some(
+        (key) => typeof item[key] === 'string' && (item[key] as string).length > 0
+      );
+      if (!hasProof) return rawItem;
+
+      itemChanged = true;
+      const copy: Record<string, unknown> = { ...item };
+      for (const key of TRANSFER_PROOF_FIELD_KEYS) delete copy[key];
+      return copy as unknown as typeof rawItem;
+    });
+
+    if (!itemChanged) return transfer;
+    changed = true;
+    return { ...transfer, items: lightItems };
+  });
+
+  return changed ? lightTransfers : transfers;
+}
+
+/**
+ * Varian ringan `getAssetTransfers` untuk halaman list/monitoring yang tidak
+ * menampilkan foto bukti atau tanda tangan.
+ */
+export async function getAssetTransfersLite(force = false): Promise<AssetTransfer[]> {
+  return stripTransferProofPayload(await getAssetTransfers(force));
 }
 
 export async function createAssetTransfer(payload: Partial<AssetTransfer>): Promise<AssetTransfer> {
@@ -3143,7 +3197,9 @@ function triggerSjFetch(): Promise<SuratJalan[]> {
       if (admin) {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 10000);
+          // Baris SJ lama masih menyimpan foto bukti base64; 10 detik tidak cukup
+          // sehingga fetch selalu abort dan diulang di setiap permintaan.
+          const timer = setTimeout(() => controller.abort(), 60000);
           const { data, error } = await admin
             .from('surat_jalan')
             .select('*')
@@ -3184,26 +3240,130 @@ function triggerSjFetch(): Promise<SuratJalan[]> {
   return global.__SJ_PENDING__;
 }
 
-export async function getSuratJalanList(force = false): Promise<SuratJalan[]> {
+/**
+ * Buang base64 foto/TTD dari payload daftar SJ. URL Storage dipertahankan
+ * karena ringan, sedangkan data lama berbentuk base64 diganti penanda
+ * `has_proof` dan diambil per dokumen saat user membuka bukti.
+ */
+const SURAT_JALAN_PROOF_FIELD_KEYS = [
+  'photo_url',
+  'foto_bukti_url',
+  'signature_url',
+  'tanda_tangan_url',
+] as const;
+
+/** `inline` = base64 lama (berat), `remote` = URL Storage (ringan, aman dikirim). */
+function proofValueKind(value: unknown): 'inline' | 'remote' | 'none' {
+  if (typeof value !== 'string' || value.length === 0) return 'none';
+  if (value.startsWith('data:')) return 'inline';
+  if (/^https?:\/\//i.test(value)) return 'remote';
+  return 'none';
+}
+
+export function stripSuratJalanProofPayload(docs: SuratJalan[]): SuratJalan[] {
+  return docs.map((doc) => {
+    const rawDoc = doc as unknown as Record<string, unknown>;
+    const rawItems = Array.isArray(doc.items) ? (doc.items as unknown as Record<string, unknown>[]) : [];
+
+    let hasProof = SURAT_JALAN_PROOF_FIELD_KEYS.some(
+      (key) => proofValueKind(rawDoc[key]) !== 'none'
+    );
+
+    // Base64 dibuang, tetapi URL Storage dipertahankan supaya daftar SJ bisa
+    // langsung menampilkan thumbnail tanpa permintaan tambahan.
+    const lightItems = rawItems.map((item) => {
+      const kinds = SURAT_JALAN_PROOF_FIELD_KEYS.map(
+        (key) => [key, proofValueKind(item[key])] as const
+      );
+      if (kinds.some(([, kind]) => kind !== 'none')) hasProof = true;
+      if (!kinds.some(([, kind]) => kind === 'inline')) return item;
+
+      const copy = { ...item };
+      for (const [key, kind] of kinds) {
+        if (kind === 'inline') delete copy[key];
+      }
+      return copy;
+    });
+
+    const lightDoc: Record<string, unknown> = { ...rawDoc, items: lightItems };
+    for (const key of SURAT_JALAN_PROOF_FIELD_KEYS) {
+      if (proofValueKind(lightDoc[key]) === 'inline') delete lightDoc[key];
+    }
+    if (hasProof) lightDoc.has_proof = true;
+    return lightDoc as unknown as SuratJalan;
+  });
+}
+
+/**
+ * Ringkasan status SJ untuk dashboard KPI. Hanya mengambil kolom kecil
+ * (tanpa `items` yang menyimpan foto bukti base64) sehingga tidak perlu
+ * mengunduh belasan MB hanya untuk menghitung jumlah dokumen.
+ */
+export async function getSuratJalanStatusRows(
+  region: RegionType = 'ALL'
+): Promise<Array<{ id: string; status: SuratJalan['status']; region?: RegionType }>> {
+  const admin = getAdminClient();
+  if (admin) {
+    try {
+      let query = admin.from('surat_jalan').select('id,status,region');
+      if (region !== 'ALL') query = query.eq('region', region);
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        return data as Array<{ id: string; status: SuratJalan['status']; region?: RegionType }>;
+      }
+    } catch (err: any) {
+      console.error('[getSuratJalanStatusRows error]:', err?.message);
+    }
+  }
+
+  // Fallback: cache/list ringan tanpa memicu unduhan transfer.
+  try {
+    const all = await getSuratJalanList(false, { allowTransferFetch: false });
+    const filtered = region === 'ALL' ? all : all.filter((sj) => sj.region === region);
+    return filtered.map((sj) => ({
+      id: sj.id,
+      status: sj.status,
+      region: (sj.region as RegionType | undefined) || undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function getSuratJalanList(
+  force = false,
+  options?: { allowTransferFetch?: boolean }
+): Promise<SuratJalan[]> {
   const now = Date.now();
-  let sjFromDb: SuratJalan[];
+  let sjPromise: Promise<SuratJalan[]>;
   if (!force && global.__SJ_CACHE__ !== undefined) {
     if (now - global.__SJ_CACHE__.timestamp >= SJ_CACHE_TTL_MS && !global.__SJ_PENDING__) {
       void triggerSjFetch();
     }
-    sjFromDb = global.__SJ_CACHE__.items;
+    sjPromise = Promise.resolve(global.__SJ_CACHE__.items);
   } else {
-    sjFromDb = await triggerSjFetch();
+    sjPromise = triggerSjFetch();
   }
 
-  let transfers: AssetTransfer[] = [];
-  try {
-    // Ikuti mode baca yang sama: data Surat Jalan dan Transfer saling
-    // melengkapi, jadi keduanya harus segar saat halaman status dibuka.
-    transfers = await getAssetTransfers(force);
-  } catch (err: any) {
-    console.error('[getSuratJalanList merge transfers error]:', err?.message);
-  }
+  const transfersPromise: Promise<AssetTransfer[]> = (() => {
+    if (options?.allowTransferFetch === false) {
+      // Halaman yang tidak memerlukan data transfer (mis. agregat dashboard)
+      // memakai cache yang ada dan memanaskan cache di background, agar tidak
+      // menunggu unduhan base64 belasan MB.
+      const cached = global.__TRANSFERS_CACHE__?.items || cache.transfers || [];
+      // Jangan memicu unduhan 18 MB hanya untuk halaman yang tidak memakai
+      // detail transfer; cache akan diisi oleh halaman SLA/monitoring.
+      return Promise.resolve(cached);
+    }
+    // Data Surat Jalan dan Transfer saling melengkapi. Ambil keduanya paralel
+    // supaya halaman status tidak menunggu dua unduhan besar secara berurutan.
+    return getAssetTransfers(force).catch((err: any) => {
+      console.error('[getSuratJalanList merge transfers error]:', err?.message);
+      return [] as AssetTransfer[];
+    });
+  })();
+
+  const [sjFromDb, transfers] = await Promise.all([sjPromise, transfersPromise]);
 
   const outlets = global.__OUTLETS_CACHE__?.items || cache.outlets;
   const requestOrders = global.__RO_CACHE__?.items || cache.requestOrders;
@@ -3225,7 +3385,22 @@ export async function getSuratJalanList(force = false): Promise<SuratJalan[]> {
 }
 
 export async function getSuratJalanById(id: string): Promise<SuratJalan | null> {
-  const all = await getSuratJalanList(true);
+  // Baca satu dokumen langsung dari DB: baris SJ menyimpan base64 besar,
+  // jadi jangan menarik seluruh daftar hanya untuk satu dokumen.
+  const admin = getAdminClient();
+  if (admin) {
+    try {
+      const query = isUuid(id)
+        ? admin.from('surat_jalan').select('*').eq('id', id)
+        : admin.from('surat_jalan').select('*').eq('sj_number', id);
+      const { data, error } = await query.maybeSingle();
+      if (!error && data) return data as SuratJalan;
+    } catch (err: any) {
+      console.error('[getSuratJalanById error]:', err?.message);
+    }
+  }
+
+  const all = await getSuratJalanList(false);
   return all.find((sj) => sj.id === id || sj.sj_number === id) || null;
 }
 

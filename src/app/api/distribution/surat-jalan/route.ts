@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   getSuratJalanList, 
+  getSuratJalanById,
+  stripSuratJalanProofPayload,
   createSuratJalan, 
   updateSuratJalanStatus, 
   deleteSuratJalan, 
@@ -11,11 +13,21 @@ import { auditMutation } from '@/lib/audit/record-change';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const data = await getSuratJalanList(true);
+    const id = new URL(req.url).searchParams.get('id');
+    if (id) {
+      const data = await getSuratJalanById(id);
+      return NextResponse.json(
+        { data },
+        { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
+      );
+    }
+
+    const data = await getSuratJalanList(false, { allowTransferFetch: false });
     return NextResponse.json(
-      { data },
+      // List tidak mengirim base64 foto/TTD; UI mengambil per dokumen saat bukti dibuka.
+      { data: stripSuratJalanProofPayload(data) },
       { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
     );
   } catch (err: any) {

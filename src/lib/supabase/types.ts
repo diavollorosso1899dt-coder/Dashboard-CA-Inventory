@@ -377,6 +377,8 @@ export interface SJItem {
   satuan?: string;
   notes?: string;
   catatan?: string;
+  /** Penanda ringan: bukti foto/TTD tersedia tetapi tidak ikut dikirim di list. */
+  has_proof?: boolean;
 }
 
 export interface SuratJalan {
@@ -413,6 +415,8 @@ export interface SuratJalan {
   catatan?: string;
   created_at: string;
   updated_at?: string;
+  /** Penanda ringan: bukti tersedia di DB, tapi base64-nya tidak dikirim di list. */
+  has_proof?: boolean;
 }
 
 // ==========================================

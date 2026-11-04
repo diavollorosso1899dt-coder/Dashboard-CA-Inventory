@@ -15,6 +15,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { SuratJalan } from '@/lib/supabase/types';
+import { compressImageToMax100KB } from '@/lib/imageCompressor';
 
 interface DeliveryProofModalProps {
   isOpen: boolean;
@@ -41,6 +42,7 @@ export default function DeliveryProofModal({
   const [hasSignature, setHasSignature] = useState(false);
   const [receiverName, setReceiverName] = useState(defaultReceiverName || suratJalan.receiver_name || suratJalan.penerima_nama || '');
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [notes, setNotes] = useState('Seluruh item barang diterima lengkap dan dalam kondisi baik.');
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -153,6 +155,28 @@ export default function DeliveryProofModal({
       setPhotoPreview(reader.result as string);
     };
     reader.readAsDataURL(file);
+    setPhotoFile(file);
+  };
+
+  /** Upload bukti ke Supabase Storage; DB hanya menyimpan URL publiknya. */
+  const uploadProofFile = async (file: File | Blob, fileName: string): Promise<string> => {
+    const uploadFile =
+      typeof File !== 'undefined' && file instanceof File
+        ? file
+        : new File([file], fileName, { type: file.type || 'image/png' });
+
+    const form = new FormData();
+    form.append('file', uploadFile);
+
+    const res = await fetch('/api/distribution/proof-upload', {
+      method: 'POST',
+      body: form,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.url) {
+      throw new Error(json?.error || 'Gagal mengunggah bukti ke Storage.');
+    }
+    return json.url as string;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -168,14 +192,46 @@ export default function DeliveryProofModal({
     }
 
     const canvas = canvasRef.current;
-    const signatureUrl = canvas ? canvas.toDataURL('image/png') : '';
+    if (!canvas) {
+      setErrorMsg('Area tanda tangan tidak tersedia. Muat ulang halaman lalu coba lagi.');
+      return;
+    }
 
     setSubmitting(true);
+    setErrorMsg('');
     try {
+      // 1. Tanda tangan: canvas -> PNG -> Supabase Storage.
+      const signatureBlob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((blob) => resolve(blob), 'image/png');
+      });
+      if (!signatureBlob) {
+        throw new Error('Gagal membaca tanda tangan digital.');
+      }
+
+      // 2. Foto bukti: kompres dulu supaya ringan, lalu upload.
+      let photoBlob: Blob | undefined;
+      let photoFileName = 'bukti-serah-terima.jpg';
+      if (photoFile) {
+        try {
+          const compressed = await compressImageToMax100KB(photoFile, 400 * 1024);
+          photoBlob = compressed.blob;
+          photoFileName = compressed.file.name;
+        } catch {
+          // Format yang tidak bisa didekode browser (mis. HEIC) diunggah apa adanya.
+          photoBlob = photoFile;
+          photoFileName = photoFile.name || photoFileName;
+        }
+      }
+
+      const [signatureUrl, photoUrl] = await Promise.all([
+        uploadProofFile(signatureBlob, 'tanda-tangan-penerima.png'),
+        photoBlob ? uploadProofFile(photoBlob, photoFileName) : Promise.resolve(undefined),
+      ]);
+
       await onConfirm({
         receiverName: receiverName.trim(),
         signatureUrl,
-        photoUrl: photoPreview || undefined,
+        photoUrl,
         notes: notes.trim(),
       });
       onClose();
@@ -322,7 +378,10 @@ export default function DeliveryProofModal({
                 <img src={photoPreview} alt="Bukti serah terima" className="w-full h-44 object-cover" />
                 <button
                   type="button"
-                  onClick={() => setPhotoPreview(null)}
+                  onClick={() => {
+                    setPhotoPreview(null);
+                    setPhotoFile(null);
+                  }}
                   className="absolute top-2 right-2 p-1.5 rounded-xl bg-black/60 hover:bg-rose-600 text-white transition shadow-sm"
                   title="Hapus foto bukti"
                 >
@@ -378,7 +437,7 @@ export default function DeliveryProofModal({
               className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-md shadow-emerald-600/20 transition flex items-center gap-1.5 disabled:opacity-50 active:scale-95 cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{submitting ? 'Menyimpan...' : `Selesaikan Semua (${items.length || 1} Item)`}</span>
+              <span>{submitting ? 'Mengunggah bukti...' : `Selesaikan Semua (${items.length || 1} Item)`}</span>
             </button>
           </div>
         </form>

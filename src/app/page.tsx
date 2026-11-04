@@ -4,7 +4,7 @@ import { UpcomingOpeningsCard } from '@/components/dashboard/UpcomingOpeningsCar
 import { DashboardLiveProvider } from '@/components/dashboard/DashboardLiveProvider';
 import { ExecutiveKpiCards } from '@/components/dashboard/ExecutiveKpiCards';
 import { AssetDataTable } from '@/components/tracker/AssetDataTable';
-import { getAssetRequests, getRequestOrders, getSuratJalanList } from '@/lib/supabase/server';
+import { getAssetRequests, getRequestOrders, getSuratJalanStatusRows } from '@/lib/supabase/server';
 import { RegionType } from '@/lib/supabase/types';
 import { buildBranchOpeningSummaries } from '@/lib/dashboard/branch-summaries';
 import { getDaysRemaining } from '@/lib/utils/date-formatter';
@@ -20,16 +20,17 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const { region: rawRegion } = await searchParams;
   const region = (rawRegion as RegionType) || 'ALL';
 
-  const [assetResponse, allRos, allSj] = await Promise.all([
+  const [assetResponse, allRos, sjRows] = await Promise.all([
     getAssetRequests({ region, limit: 10000, fresh: true }),
     getRequestOrders(true),
-    getSuratJalanList(true),
+    // Hanya kolom status/region: jangan unduh items SJ yang berisi base64.
+    getSuratJalanStatusRows(region),
   ]);
 
   const branchSummaries = buildBranchOpeningSummaries(assetResponse.data, getDaysRemaining);
 
   const filteredRos = region === 'ALL' ? allRos : allRos.filter((r) => r.region === region);
-  const filteredSj = region === 'ALL' ? allSj : allSj.filter((s) => s.region === region);
+  const filteredSj = sjRows;
 
   const roStats = {
     total: filteredRos.length,

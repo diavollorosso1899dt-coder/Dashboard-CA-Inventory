@@ -1,5 +1,5 @@
 import React from 'react';
-import { calculateDashboardMetrics, getAssetRequests, getRequestOrders, getBranchOpeningSummaries, getAssetTransfers } from '@/lib/supabase/server';
+import { calculateDashboardMetrics, getAssetRequests, getRequestOrders, getBranchOpeningSummaries, getAssetTransfersLite } from '@/lib/supabase/server';
 import { RegionType } from '@/lib/supabase/types';
 import InteractiveSlaDashboard from '@/components/sla/InteractiveSlaDashboard';
 
@@ -23,7 +23,7 @@ export default async function SlaAnalyticsPage({ searchParams }: PageProps) {
     getAssetRequests({ region, limit: 3000, fresh: true }),
     getRequestOrders(true),
     getBranchOpeningSummaries(region, true),
-    getAssetTransfers(true),
+    getAssetTransfersLite(),
   ]);
 
   return (
