@@ -79,3 +79,40 @@ test('run kedaluwarsa di-expire lalu run baru dibuat', async () => {
   assert.equal(store.state.expired.length, 1);
   assert.equal(store.state.expired[0].id, 'run-lama');
 });
+
+test('kalah balapan insert (kode 23505) dianggap locked', async () => {
+  const store = makeStore();
+  const winner = {
+    id: 'run-pemenang',
+    started_at: '2026-11-05T10:00:00.000Z',
+    status: 'RUNNING',
+    trigger: 'MANUAL',
+    dry_run: false,
+  };
+  let calls = 0;
+  store.findRunning = async () => {
+    calls += 1;
+    return calls === 1 ? null : winner;
+  };
+  store.createRun = async () => {
+    const error = new Error('duplicate key value violates unique constraint');
+    error.code = '23505';
+    throw error;
+  };
+
+  const result = await acquireRun(store, input, new Date('2026-11-05T10:00:00.000Z'));
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'locked');
+  assert.equal(result.run.id, 'run-pemenang');
+});
+
+test('error lain saat createRun tetap dilempar', async () => {
+  const store = makeStore();
+  store.createRun = async () => {
+    throw new Error('koneksi database putus');
+  };
+  await assert.rejects(
+    () => acquireRun(store, input, new Date('2026-11-05T10:00:00.000Z')),
+    /koneksi database putus/
+  );
+});
