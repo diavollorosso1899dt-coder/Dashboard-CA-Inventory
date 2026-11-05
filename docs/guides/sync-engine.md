@@ -10,9 +10,17 @@
 
 ## Pemicu
 
-- Manual: tombol di `/sync`.
-- Cron: setiap hari 19.00 UTC = 02.00 WIB.
-- Webhook: `POST /api/sync` dengan header `x-sync-token`.
+- Manual: tombol di `/sync` atau "Sync Data" di header.
+- Cron: setiap hari 19.00 UTC = 02.00 WIB (hanya berjalan di deployment Vercel).
+- Webhook: `POST /api/sync` dengan header `x-sync-token` dan body
+  `{"trigger":"WEBHOOK"}`. Pemicu ini di-debounce 5 menit.
+
+Tidak ada sync otomatis di lingkungan lokal (`npm run dev`): penjadwal hanya
+ada di Vercel Cron. Agar baris baru langsung masuk setelah sheet diedit,
+pasang webhook Apps Script (contoh skrip ada di halaman `/sync`), buat trigger
+`On edit`/`On change` untuk fungsi tersebut, dan isi env `SYNC_TOKEN` di server.
+Tanpa `SYNC_TOKEN`, webhook akan ditolak `401`.
+Frekuensi cron dapat dinaikkan di `vercel.json` bila paket Vercel mengizinkan.
 
 ## Dry-run
 

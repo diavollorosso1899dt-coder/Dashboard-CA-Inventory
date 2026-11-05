@@ -113,10 +113,15 @@ export default function SyncPage() {
 
   const handleTriggerSync = () => run();
 
-  const webhookScriptCode = `function onEditOrNewRow(e) {
+  const webhookScriptCode = `// Fungsi ini TIDAK berjalan otomatis dari namanya.
+// Setelah menempel skrip, buat trigger: ikon jam > Add Trigger
+//   Function     : syncKeHantaran
+//   Event source : From spreadsheet
+//   Event type   : On edit (atau On change / On form submit)
+function syncKeHantaran(e) {
   // Masukkan URL domain dashboard Anda
   var webhookUrl = "https://your-dashboard-domain.com/api/sync";
-  
+
   var options = {
     "method": "POST",
     "headers": {
@@ -125,9 +130,12 @@ export default function SyncPage() {
       // hanya menerima sync manual dari dashboard yang sudah login.
       "x-sync-token": "ISI_TOKEN_RAHASIA"
     },
+    // WEBHOOK membuat sync di-debounce 5 menit agar satu kali edit tidak
+    // memicu sync berulang-ulang.
+    "payload": JSON.stringify({ trigger: "WEBHOOK" }),
     "muteHttpExceptions": true
   };
-  
+
   try {
     UrlFetchApp.fetch(webhookUrl, options);
   } catch(err) {
@@ -307,7 +315,8 @@ export default function SyncPage() {
         </div>
         <p className="text-xs text-[#444746] dark:text-[#c4c7c5]">
           Jika ingin Google Sheets mentrigger pembaruan setiap ada baris baru, pasang skrip ini pada
-          menu <strong>Extensions &gt; Apps Script</strong> di spreadsheet:
+          menu <strong>Extensions &gt; Apps Script</strong>, lalu buat trigger
+          <em> On edit</em> untuk fungsi <code>syncKeHantaran</code> (lihat komentar di skrip):
         </p>
 
         <pre className="rounded-2xl bg-[#1e1f20] dark:bg-[#131314] p-3.5 text-[11px] text-[#6dd58c] font-mono overflow-x-auto border border-[#444746]">
