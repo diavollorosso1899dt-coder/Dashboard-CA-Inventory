@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { syncRequestOrdersFromSheet, cleanDuplicateRequestOrders, RoSyncResult } from '@/lib/supabase/server';
-import { RoDateField } from '@/lib/distribution/ro-date-filter';
+import { runSync, SYNC_SOURCES, SupabaseSyncStore } from '@/lib/sync-engine';
+import { cleanDuplicateRequestOrders, type RoSyncResult } from '@/lib/supabase/server';
 import { isSyncRequestAllowed, SYNC_BLOCKED_MESSAGE } from '@/lib/auth/sync-guard';
 import { auditMutation } from '@/lib/audit/record-change';
 
@@ -26,67 +26,65 @@ async function logRoSheetSync(req: NextRequest, result: RoSyncResult): Promise<v
   }
 }
 
-export async function GET(req: NextRequest) {
-  try {
-    if (!isSyncRequestAllowed(req)) {
-      return NextResponse.json({ success: false, message: SYNC_BLOCKED_MESSAGE }, { status: 401 });
-    }
-
-    const clearOld = req.nextUrl.searchParams.get('clear') === 'true';
-    const startDate = req.nextUrl.searchParams.get('startDate') || undefined;
-    const endDate = req.nextUrl.searchParams.get('endDate') || undefined;
-    const rawField = req.nextUrl.searchParams.get('dateField');
-    const dateField: RoDateField = rawField === 'request_date' ? 'request_date' : 'order_date';
-    const result = await syncRequestOrdersFromSheet({
-      clearOldSheetData: clearOld,
-      startDate,
-      endDate,
-      dateField,
-    });
-    await logRoSheetSync(req, result);
-    return NextResponse.json(result);
-  } catch (err: any) {
-    return NextResponse.json({ success: false, message: err.message }, { status: 500 });
+async function runRo(req: NextRequest, body?: any) {
+  if (!isSyncRequestAllowed(req)) {
+    return NextResponse.json({ success: false, message: SYNC_BLOCKED_MESSAGE }, { status: 401 });
   }
+
+  const clearOld = req.nextUrl.searchParams.get('clear') === 'true';
+  const startDate = body?.startDate ?? req.nextUrl.searchParams.get('startDate') ?? undefined;
+  const endDate = body?.endDate ?? req.nextUrl.searchParams.get('endDate') ?? undefined;
+  const dateField = body?.dateField ?? req.nextUrl.searchParams.get('dateField') ?? 'order_date';
+
+  const result = await runSync(
+    {
+      sources: ['request-orders'],
+      trigger: 'MANUAL',
+      sourceOptions: {
+        'request-orders': {
+          clearOldSheetData: clearOld,
+          startDate,
+          endDate,
+          dateField: dateField === 'request_date' ? 'request_date' : 'order_date',
+        },
+      },
+    },
+    { store: new SupabaseSyncStore(), sources: SYNC_SOURCES }
+  );
+
+  const ro = result.sources.find((s) => s.key === 'request-orders');
+  const mapped: RoSyncResult = {
+    success: ro?.status === 'SUCCESS',
+    totalRowsScanned: ro?.rowsFetched || 0,
+    duplicateRowsFiltered: ro?.rowsSkipped || 0,
+    uniqueOrdersCount: Number(ro?.details?.uniqueOrdersCount) || 0,
+    newOrdersAdded: ro?.rowsInserted || 0,
+    existingOrdersUpdated: ro?.rowsUpdated || 0,
+    changed: result.changed,
+    message: ro?.message || result.message,
+    regions: ro?.details?.regions as RoSyncResult['regions'],
+    dryRun: result.dryRun,
+  };
+
+  await logRoSheetSync(req, mapped);
+  return NextResponse.json(mapped);
+}
+
+export async function GET(req: NextRequest) {
+  return runRo(req);
 }
 
 export async function POST(req: NextRequest) {
+  let body: any = null;
   try {
-    if (!isSyncRequestAllowed(req)) {
-      return NextResponse.json({ success: false, message: SYNC_BLOCKED_MESSAGE }, { status: 401 });
-    }
-
-    const clearOld = req.nextUrl.searchParams.get('clear') === 'true';
-    let startDate = req.nextUrl.searchParams.get('startDate') || undefined;
-    let endDate = req.nextUrl.searchParams.get('endDate') || undefined;
-    let rawField = req.nextUrl.searchParams.get('dateField');
-
-    try {
-      const body = await req.json();
-      if (body) {
-        if (body.startDate !== undefined) startDate = body.startDate || undefined;
-        if (body.endDate !== undefined) endDate = body.endDate || undefined;
-        if (body.dateField !== undefined) rawField = body.dateField;
-      }
-    } catch {
-      // No JSON body provided; query params are used
-    }
-
-    const dateField: RoDateField = rawField === 'request_date' ? 'request_date' : 'order_date';
-    const result = await syncRequestOrdersFromSheet({
-      clearOldSheetData: clearOld,
-      startDate,
-      endDate,
-      dateField,
-    });
-    await logRoSheetSync(req, result);
-    return NextResponse.json(result);
-  } catch (err: any) {
-    return NextResponse.json({ success: false, message: err.message }, { status: 500 });
+    body = await req.json();
+  } catch {
+    body = null;
   }
+  return runRo(req, body);
 }
 
-export async function DELETE(req: NextRequest) {
+export async function DELETE() {
   try {
     const res = await cleanDuplicateRequestOrders();
     return NextResponse.json({
