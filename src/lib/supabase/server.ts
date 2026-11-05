@@ -429,12 +429,16 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
   totalUpdated: number;
   message: string;
   durationMs: number;
+  regions?: {
+    JABODETABEK: { ok: boolean; count: number; error?: string };
+    KALBAR: { ok: boolean; count: number; error?: string };
+  };
 }> {
   const startTime = Date.now();
   const force = options.force ?? false;
 
   try {
-    const { items, stats, contentHash } = await fetchAllSheetsData();
+    const { items, stats, contentHash, regions } = await fetchAllSheetsData();
     const admin = getAdminClient();
 
     // If content has not changed since last sync and not forced, return immediately (< 300ms)
@@ -448,6 +452,7 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
         totalUpdated: 0,
         message: 'Data spreadsheet up-to-date (tidak ada baris baru).',
         durationMs: duration,
+        regions,
       };
     }
 
@@ -481,6 +486,8 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
             // instance lain yang memakai cache-signature tahu harus re-fetch.
             return {
               ...mergeManualAssetEdit(rest, manualEdit),
+              last_seen_at: syncTimestamp,
+              is_stale: false,
               updated_at: syncTimestamp,
             };
           });
@@ -542,6 +549,7 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
         totalUpdated: updated,
         message: `Berhasil mensinkronisasi ${stats.totalCount} baris data ke Supabase (JABO: ${stats.jaboCount}, KALBAR: ${stats.kalbarCount}).`,
         durationMs: Date.now() - startTime,
+        regions,
       };
     } else {
       // 2. Local Cache Mode (Supabase not yet configured or offline)
@@ -579,6 +587,7 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
         totalUpdated: cache.manualEdits.size,
         message: `Berhasil memuat ${stats.totalCount} data dari Google Sheets (JABO: ${stats.jaboCount}, KALBAR: ${stats.kalbarCount}). Database Supabase siap dikoneksikan.`,
         durationMs: duration,
+        regions,
       };
     }
   } catch (error: any) {
@@ -591,6 +600,10 @@ export async function syncGoogleSheetsToSupabase(options: { force?: boolean } = 
       totalUpdated: 0,
       message: error?.message || 'Gagal melakukan sinkronisasi Google Sheets',
       durationMs: duration,
+      regions: {
+        JABODETABEK: { ok: false, count: 0, error: error?.message || 'Gagal sync' },
+        KALBAR: { ok: false, count: 0, error: error?.message || 'Gagal sync' },
+      },
     };
   }
 }
@@ -2837,6 +2850,10 @@ export interface RoSyncResult {
   /** True only when at least one RO row was actually inserted or modified in the database. */
   changed: boolean;
   message: string;
+  regions?: Partial<
+    Record<'JABODETABEK' | 'KALBAR', { ok: boolean; count: number; error?: string }>
+  >;
+  dryRun?: boolean;
 }
 
 // Deterministic JSON serialization (sorted keys, undefined dropped) so that values read back
@@ -2871,11 +2888,16 @@ export async function syncRequestOrdersFromSheet(
     startDate?: string | null;
     endDate?: string | null;
     dateField?: RoDateField;
+    dryRun?: boolean;
   } = {}
 ): Promise<RoSyncResult> {
+  const regionHealth: Partial<
+    Record<'JABODETABEK' | 'KALBAR', { ok: boolean; count: number; error?: string }>
+  > = {};
+
   try {
     const admin = getAdminClient();
-    if (options.clearOldSheetData && admin) {
+    if (!options.dryRun && options.clearOldSheetData && admin) {
       try {
         await admin.from('request_orders').delete().eq('source_type', 'GOOGLE_SHEET');
       } catch (delErr: any) {
@@ -2892,6 +2914,7 @@ export async function syncRequestOrdersFromSheet(
     const syncedSources: string[] = [];
 
     for (const source of RO_SOURCES) {
+      const rowsBefore = totalRowsScanned;
       try {
         const response = await fetch(source.url, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
@@ -2900,12 +2923,20 @@ export async function syncRequestOrdersFromSheet(
 
         if (!response.ok) {
           console.warn(`[RO Sync] Gagal mengunduh spreadsheet ${source.name} (HTTP ${response.status})`);
+          regionHealth[source.region] = {
+            ok: false,
+            count: 0,
+            error: `HTTP ${response.status}`,
+          };
           continue;
         }
 
         const csvText = await response.text();
         const rawLines = csvText.split('\n');
-        if (rawLines.length <= 1) continue;
+        if (rawLines.length <= 1) {
+          regionHealth[source.region] = { ok: true, count: 0 };
+          continue;
+        }
 
         const cols = detectRoColumns(rawLines[0], source.region);
         syncedSources.push(source.name);
@@ -2998,8 +3029,18 @@ export async function syncRequestOrdersFromSheet(
             stock_source: 'ON_PROSES',
           });
         }
+
+        regionHealth[source.region] = {
+          ok: true,
+          count: totalRowsScanned - rowsBefore,
+        };
       } catch (sourceErr: any) {
         console.error(`[RO Sync] Error processing source ${source.name}:`, sourceErr);
+        regionHealth[source.region] = {
+          ok: false,
+          count: totalRowsScanned - rowsBefore,
+          error: sourceErr?.message || String(sourceErr),
+        };
       }
     }
 
@@ -3009,7 +3050,7 @@ export async function syncRequestOrdersFromSheet(
     uniqueOrders.forEach((o) => (totalItems += o.items.length));
 
     // Upsert into Supabase request_orders table with smart preservation of existing user progress
-    if (admin && uniqueOrders.length > 0) {
+    if (!options.dryRun && admin && uniqueOrders.length > 0) {
       // PostgREST caps responses at 1000 rows, so page through all existing orders.
       // If any page fails we skip the DB write this cycle, otherwise existing orders
       // would be misclassified as new and their progress overwritten.
@@ -3068,6 +3109,7 @@ export async function syncRequestOrdersFromSheet(
       });
 
       const chunkSize = 100;
+      const runStartedAt = new Date().toISOString();
       const writeChunks = async (rows: any[], label: string) => {
         let ok = 0;
         const writeTimestamp = new Date().toISOString();
@@ -3076,7 +3118,12 @@ export async function syncRequestOrdersFromSheet(
             .slice(i, i + chunkSize)
             // updated_at ikut ditulis agar cache-signature di instance lain
             // mendeteksi perubahan hasil sync dan tidak menyajikan data lama.
-            .map((row) => ({ ...row, updated_at: writeTimestamp }));
+            .map((row) => ({
+              ...row,
+              updated_at: writeTimestamp,
+              last_seen_at: runStartedAt,
+              is_stale: false,
+            }));
           const { error: upsertErr } = await admin
             .from('request_orders')
             .upsert(chunk, { onConflict: 'ro_number', defaultToNull: false });
@@ -3101,7 +3148,7 @@ export async function syncRequestOrdersFromSheet(
         cache.requestOrders = sortedMerged;
         global.__RO_CACHE__ = { items: sortedMerged, timestamp: Date.now() };
       }
-    } else if (!options.startDate && !options.endDate) {
+    } else if (!options.dryRun && !options.startDate && !options.endDate) {
       const sortedUnique = sortOrdersNewestFirst(deduplicateOrderItems(uniqueOrders));
       cache.requestOrders = sortedUnique;
       global.__RO_CACHE__ = { items: sortedUnique, timestamp: Date.now() };
@@ -3120,6 +3167,8 @@ export async function syncRequestOrdersFromSheet(
       newOrdersAdded: totalItems,
       existingOrdersUpdated: 0,
       changed: dbRowsWritten > 0,
+      regions: regionHealth,
+      dryRun: options.dryRun === true,
       message: `Sinkronisasi Multiregion (${syncedSources.join(' & ') || 'RO Sheet'})${rangeLabel} Berhasil! ${totalRowsScanned} baris dipindai, ${duplicateRowsFiltered} duplikat disaring. Ditemukan ${totalItems} item unik dalam ${uniqueOrders.length} dokumen RO.`,
     };
   } catch (err: any) {
@@ -3132,6 +3181,8 @@ export async function syncRequestOrdersFromSheet(
       newOrdersAdded: 0,
       existingOrdersUpdated: 0,
       changed: false,
+      regions: regionHealth,
+      dryRun: options.dryRun === true,
       message: err.message || 'Gagal menyinkronkan data RO dari spreadsheet.',
     };
   }
@@ -4048,7 +4099,9 @@ const MASTER_ASSET_GOOGLE_SHEET_CSV_URL =
 let cachedMasterCatalog: MasterAssetItem[] | null = null;
 let masterCatalogLastFetched = 0;
 
-export async function syncMasterAssetCatalogFromSheet(): Promise<{
+export async function syncMasterAssetCatalogFromSheet(
+  options: { dryRun?: boolean } = {}
+): Promise<{
   success: boolean;
   totalItems: number;
   classifications: string[];
@@ -4103,12 +4156,12 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
               if (row.photo_url) {
                 dbImages[name] = row.photo_url;
                 dbImages[lower] = row.photo_url;
-                setItemImageOverride(name, row.photo_url);
+                if (!options.dryRun) setItemImageOverride(name, row.photo_url);
               }
               if (row.specification) {
                 dbSpecs[name] = row.specification;
                 dbSpecs[lower] = row.specification;
-                setItemSpecificationOverride(name, row.specification);
+                if (!options.dryRun) setItemSpecificationOverride(name, row.specification);
               }
             }
           }
@@ -4179,11 +4232,13 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
         }
       }
 
-      if (photoUrl) {
-        setItemImageOverride(rawName, photoUrl);
-      }
-      if (customSpec) {
-        setItemSpecificationOverride(rawName, customSpec);
+      if (!options.dryRun) {
+        if (photoUrl) {
+          setItemImageOverride(rawName, photoUrl);
+        }
+        if (customSpec) {
+          setItemSpecificationOverride(rawName, customSpec);
+        }
       }
 
       const key = rawName.toLowerCase();
@@ -4248,8 +4303,10 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
                     ? supabaseSpecs[rItemName]
                     : getItemSpecification(rItemName) || '';
 
-                if (rPhoto) setItemImageOverride(rItemName, rPhoto);
-                if (rSpec) setItemSpecificationOverride(rItemName, rSpec);
+                if (!options.dryRun) {
+                  if (rPhoto) setItemImageOverride(rItemName, rPhoto);
+                  if (rSpec) setItemSpecificationOverride(rItemName, rSpec);
+                }
 
                 items.push({
                   id: `mat-ro-${items.length + 1}`,
@@ -4312,8 +4369,10 @@ export async function syncMasterAssetCatalogFromSheet(): Promise<{
     }
 
     items.sort((a, b) => a.item_name.localeCompare(b.item_name));
-    cachedMasterCatalog = items;
-    masterCatalogLastFetched = Date.now();
+    if (!options.dryRun) {
+      cachedMasterCatalog = items;
+      masterCatalogLastFetched = Date.now();
+    }
 
     return {
       success: true,

@@ -431,17 +431,35 @@ export async function fetchKalbarData(): Promise<{ items: AssetRequest[]; rawTex
 export async function fetchAllSheetsData(): Promise<{
   items: AssetRequest[];
   stats: { jaboCount: number; kalbarCount: number; totalCount: number };
+  regions: {
+    JABODETABEK: { ok: boolean; count: number; error?: string };
+    KALBAR: { ok: boolean; count: number; error?: string };
+  };
   contentHash: string;
 }> {
   const [jaboRes, kalbarRes] = await Promise.all([
-    fetchJaboData().catch((err) => {
-      console.error('Error fetching JABO sheet:', err);
-      return { items: [] as AssetRequest[], rawText: '' };
-    }),
-    fetchKalbarData().catch((err) => {
-      console.error('Error fetching KALBAR sheet:', err);
-      return { items: [] as AssetRequest[], rawText: '' };
-    }),
+    fetchJaboData()
+      .then((res) => ({ ok: true, ...res }))
+      .catch((err) => {
+        console.error('Error fetching JABO sheet:', err);
+        return {
+          ok: false,
+          items: [] as AssetRequest[],
+          rawText: '',
+          error: err?.message || String(err),
+        };
+      }),
+    fetchKalbarData()
+      .then((res) => ({ ok: true, ...res }))
+      .catch((err) => {
+        console.error('Error fetching KALBAR sheet:', err);
+        return {
+          ok: false,
+          items: [] as AssetRequest[],
+          rawText: '',
+          error: err?.message || String(err),
+        };
+      }),
   ]);
 
   const combined = [...jaboRes.items, ...kalbarRes.items];
@@ -453,6 +471,18 @@ export async function fetchAllSheetsData(): Promise<{
       jaboCount: jaboRes.items.length,
       kalbarCount: kalbarRes.items.length,
       totalCount: combined.length,
+    },
+    regions: {
+      JABODETABEK: {
+        ok: jaboRes.ok,
+        count: jaboRes.items.length,
+        error: 'error' in jaboRes ? jaboRes.error : undefined,
+      },
+      KALBAR: {
+        ok: kalbarRes.ok,
+        count: kalbarRes.items.length,
+        error: 'error' in kalbarRes ? kalbarRes.error : undefined,
+      },
     },
     contentHash,
   };
