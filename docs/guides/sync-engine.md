@@ -29,7 +29,7 @@ Dry-run tidak mengubah tabel bisnis, Storage, cache katalog, atau riwayat run.
 
 ## Hasil verifikasi
 
-- Unit test: **146 test lulus** (`node --test "src/lib/**/*.test.mjs"`).
+- Unit test: **152 test lulus** (`node --test "src/lib/**/*.test.mjs"`).
 - `npx tsc --noEmit`: lulus.
 - `npm run build`: lulus.
 - Dry-run lokal (`GET /api/sync?dryRun=1`): HTTP 200, status `SUCCESS`.
@@ -37,14 +37,30 @@ Dry-run tidak mengubah tabel bisnis, Storage, cache katalog, atau riwayat run.
   - RO: 1.430 baris dipindai, 1.424 item unik, 765 dokumen RO.
   - Master katalog: 2.384 item.
 - Tanpa cookie/token: HTTP 401.
-- Apply dev (non-dry-run): **belum dijalankan** karena `supabase/sync-engine.sql` menunggu persetujuan.
-- Uji lock: belum dijalankan (butuh tabel `sync_runs`).
+- Migration `supabase/sync-engine.sql` sudah dijalankan; `/api/sync/status` dan
+  `/api/sync/history` mengembalikan HTTP 200.
+- Apply dev (non-dry-run) lulus: run `SUCCESS`, 3/3 sumber sukses, riwayat
+  `sync_runs` dan `sync_run_sources` terisi.
+  - Aset: 47 baris stabil, `is_stale = 0`, `last_seen_at` terisi semua.
+  - RO: 765 dari 769 baris cocok dengan sheet (`last_seen_at` terisi), 4 baris
+    yang tidak ada lagi di sheet ditandai `is_stale = true` dan tidak dihapus.
+  - Progres manual RO tetap 64 baris sebelum dan sesudah sync.
+  - Master katalog: 2.384 item disegarkan.
+- Uji lock (dua `POST /api/sync` paralel): satu `200 SUCCESS`, satu
+  `409` dengan `reason: "locked"`.
+- Endpoint lama tetap kompatibel:
+  - `POST /api/items/sync-sheet` → `success`, 2.384 item, dependensi aset ikut segar.
+  - `POST /api/distribution/ro/sync-sheet` → bentuk respons lama utuh, audit log tertulis.
+- Sync ulang tanpa perubahan sheet melaporkan `newOrdersAdded = 0`,
+  `existingOrdersUpdated = 0`, dan tidak menandai stale.
 
 ## Catatan operasional
 
 - Jangan menjalankan dua sync manual saat cron sedang berjalan.
 - Jika status `PARTIAL`, periksa sumber yang gagal di halaman `/sync`.
 - Baris stale tetap tampil di aplikasi sampai fitur filter stale diaktifkan.
+- Sync RO dengan filter tanggal tidak menandai baris di luar rentang sebagai stale.
+- Sync ulang saat isi sheet belum berubah tidak menulis ulang data dan tidak menandai stale.
 - Migration hanya dijalankan sekali; aman diulang karena memakai `IF NOT EXISTS`.
 - Sebelum migration dijalankan, endpoint status/riwayat akan mengembalikan pesan
   "Tabel sync engine belum tersedia". Dry-run tetap aman karena tidak menyentuh tabel.
