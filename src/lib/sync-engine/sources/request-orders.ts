@@ -33,9 +33,13 @@ export const requestOrdersSource: SyncSource = {
       };
     }
 
-    const rowsStale = ctx.dryRun
-      ? 0
-      : await markRoRowsStale(ctx.runStartedAt, result.regions || {});
+    // Sync dengan rentang tanggal hanya membaca sebagian sheet. Baris di luar
+    // rentang bukan berarti hilang, jadi jangan ditandai stale.
+    const rangeLimited = Boolean(options.startDate || options.endDate);
+    const rowsStale =
+      ctx.dryRun || rangeLimited
+        ? 0
+        : await markRoRowsStale(ctx.runStartedAt, result.regions || {});
 
     return {
       status: 'SUCCESS',
@@ -49,6 +53,7 @@ export const requestOrdersSource: SyncSource = {
         regions: result.regions,
         changed: result.changed,
         uniqueOrdersCount: result.uniqueOrdersCount,
+        rangeLimited,
       },
     };
   },

@@ -39,7 +39,12 @@ export const assetRequestsSource: SyncSource = {
       };
     }
 
-    const rowsStale = await markAssetRowsStale(ctx.runStartedAt, result.regions || {});
+    // `changed === false` berarti sync dilewati karena isi sheet sama persis
+    // (content hash) atau Supabase tidak bisa ditulis. Jangan tandai stale:
+    // baris lama bukan berarti hilang dari sheet.
+    const rowsStale = result.changed
+      ? await markAssetRowsStale(ctx.runStartedAt, result.regions || {})
+      : 0;
     return {
       status: 'SUCCESS',
       rowsFetched: result.totalFetched,

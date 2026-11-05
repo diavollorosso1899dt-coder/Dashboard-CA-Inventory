@@ -3050,6 +3050,8 @@ export async function syncRequestOrdersFromSheet(
     uniqueOrders.forEach((o) => (totalItems += o.items.length));
 
     // Upsert into Supabase request_orders table with smart preservation of existing user progress
+    let newOrdersAdded = 0;
+    let existingOrdersUpdated = 0;
     if (!options.dryRun && admin && uniqueOrders.length > 0) {
       // PostgREST caps responses at 1000 rows, so page through all existing orders.
       // If any page fails we skip the DB write this cycle, otherwise existing orders
@@ -3139,6 +3141,27 @@ export async function syncRequestOrdersFromSheet(
       if (existingFetchOk) {
         const written = (await writeChunks(newRows, 'new')) + (await writeChunks(changedRows, 'update'));
         dbRowsWritten = written;
+        newOrdersAdded = newRows.length;
+        existingOrdersUpdated = changedRows.length;
+
+        // Baris yang isinya tidak berubah tidak ikut di-upsert. Tanpa langkah ini
+        // last_seen_at-nya tetap null/lama dan penandaan stale akan salah
+        // menganggap semua RO hilang dari sheet.
+        const seenRoNumbers = mergedOrders
+          .map((o: any) => o.ro_number)
+          .filter((n: any): n is string => typeof n === 'string' && n.length > 0);
+        const touchChunkSize = 100;
+        for (let i = 0; i < seenRoNumbers.length; i += touchChunkSize) {
+          const slice = seenRoNumbers.slice(i, i + touchChunkSize);
+          const { error: touchErr } = await admin
+            .from('request_orders')
+            .update({ last_seen_at: runStartedAt, is_stale: false })
+            .in('ro_number', slice);
+          if (touchErr) {
+            console.warn('[RO Sync] Gagal memperbarui last_seen_at:', touchErr.message);
+            break;
+          }
+        }
       }
 
       if (options.startDate || options.endDate) {
@@ -3164,8 +3187,8 @@ export async function syncRequestOrdersFromSheet(
       totalRowsScanned,
       duplicateRowsFiltered,
       uniqueOrdersCount: uniqueOrders.length,
-      newOrdersAdded: totalItems,
-      existingOrdersUpdated: 0,
+      newOrdersAdded,
+      existingOrdersUpdated,
       changed: dbRowsWritten > 0,
       regions: regionHealth,
       dryRun: options.dryRun === true,
