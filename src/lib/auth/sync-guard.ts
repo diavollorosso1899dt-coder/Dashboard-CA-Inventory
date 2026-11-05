@@ -9,6 +9,7 @@
  * - Pemanggilan dari UI yang sudah login membawa cookie `ca_auth=true`.
  * - Otomasi/webhook harus mengirim header `x-sync-token` (atau `?token=`)
  *   yang sama dengan env `SYNC_TOKEN`.
+ * - Vercel Cron mengirim `Authorization: Bearer <CRON_SECRET>`.
  */
 export interface SyncRequestLike {
   headers: { get(name: string): string | null };
@@ -20,6 +21,11 @@ export const SYNC_BLOCKED_MESSAGE =
   'Sinkronisasi dikunci. Masuk lewat dashboard untuk sync manual, atau kirim header x-sync-token yang sesuai.';
 
 export function isSyncRequestAllowed(request: SyncRequestLike): boolean {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret && request.headers.get('authorization') === `Bearer ${cronSecret}`) {
+    return true;
+  }
+
   const expectedToken = process.env.SYNC_TOKEN;
   if (expectedToken) {
     const provided =
