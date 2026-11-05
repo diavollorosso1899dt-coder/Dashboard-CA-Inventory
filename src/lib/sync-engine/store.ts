@@ -14,6 +14,14 @@ function client() {
   return admin;
 }
 
+/** Ubah error "tabel belum ada" menjadi instruksi yang bisa ditindaklanjuti. */
+function schemaHint(message: string): string {
+  if (/Could not find the table|relation .* does not exist|42P01/i.test(message)) {
+    return 'Tabel sync engine belum tersedia. Jalankan supabase/sync-engine.sql di Supabase SQL Editor terlebih dahulu.';
+  }
+  return message;
+}
+
 export class SupabaseSyncStore implements SyncStore {
   async findRunning(): Promise<SyncRunRecord | null> {
     const { data, error } = await client()
@@ -23,7 +31,7 @@ export class SupabaseSyncStore implements SyncStore {
       .order('started_at', { ascending: true })
       .limit(1)
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(schemaHint(error.message));
     return (data as SyncRunRecord | null) ?? null;
   }
 
@@ -33,7 +41,7 @@ export class SupabaseSyncStore implements SyncStore {
       .update({ status: 'FAILED', finished_at: finishedAt, message })
       .eq('id', id)
       .eq('status', 'RUNNING');
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(schemaHint(error.message));
   }
 
   async createRun(input: {
@@ -55,7 +63,7 @@ export class SupabaseSyncStore implements SyncStore {
       })
       .select('id,started_at,status,trigger,dry_run')
       .single();
-    if (error) throw error;
+    if (error) throw new Error(schemaHint(error.message));
     return data as SyncRunRecord;
   }
 
@@ -81,7 +89,7 @@ export class SupabaseSyncStore implements SyncStore {
         message: patch.message,
       })
       .eq('id', id);
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(schemaHint(error.message));
   }
 
   async recordSource(
@@ -105,7 +113,7 @@ export class SupabaseSyncStore implements SyncStore {
       started_at: startedAt,
       finished_at: finishedAt,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(schemaHint(error.message));
   }
 
   async lastRunStartedAt(dryRun: boolean): Promise<string | null> {
@@ -117,7 +125,7 @@ export class SupabaseSyncStore implements SyncStore {
       .order('started_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(schemaHint(error.message));
     return data?.started_at ?? null;
   }
 
@@ -140,7 +148,7 @@ export class SupabaseSyncStore implements SyncStore {
       .select('*, sync_run_sources(*)')
       .order('started_at', { ascending: false })
       .limit(limit);
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(schemaHint(error.message));
     return data || [];
   }
 }
