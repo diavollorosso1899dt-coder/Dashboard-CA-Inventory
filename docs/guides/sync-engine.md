@@ -61,6 +61,28 @@ Dry-run tidak mengubah tabel bisnis, Storage, cache katalog, atau riwayat run.
   - `POST /api/distribution/ro/sync-sheet` → bentuk respons lama utuh, audit log tertulis.
 - Sync ulang tanpa perubahan sheet melaporkan `newOrdersAdded = 0`,
   `existingOrdersUpdated = 0`, dan tidak menandai stale.
+- Uji webhook lokal (`POST /api/sync`, body `{"trigger":"WEBHOOK","sources":["request-orders"]}`):
+  - Token salah → HTTP `401`.
+  - Panggilan pertama → HTTP `200`, `status: "SUCCESS"`, `trigger: "WEBHOOK"`.
+  - Panggilan kedua dalam 5 menit → HTTP `200`, `skipped: true`,
+    `reason: "debounced"`, dan tidak membuat run baru.
+
+## Memasang webhook produksi
+
+1. Isi `SYNC_TOKEN` di Vercel → Settings → Environment Variables (Production),
+   lalu redeploy. Opsional: `SYNC_WEBHOOK_DEBOUNCE_MINUTES=1` agar edit beruntun
+   tidak banyak terlewat (cron harian tetap menjadi jaring pengaman).
+2. Buka spreadsheet → Extensions → Apps Script, tempel skrip dari halaman
+   `/sync` (`syncKeHantaran`), ganti `webhookUrl` dan `x-sync-token`.
+3. Buat trigger: **Triggers → Add Trigger**, function `syncKeHantaran`,
+   event source **From spreadsheet**, event type **On edit** (atau
+   **On change** / **On form submit**), lalu setujui otorisasi.
+4. Verifikasi di `/sync`: run baru harus bertanda `WEBHOOK`. Jika `401`, token
+   tidak cocok; jika tidak ada run, cek eksekusi Apps Script dan Deployment
+   Protection Vercel.
+
+`On edit` tidak terpicu oleh perubahan programatik atau Google Form; untuk itu
+gunakan **On change** atau **On form submit**.
 
 ## Catatan operasional
 
