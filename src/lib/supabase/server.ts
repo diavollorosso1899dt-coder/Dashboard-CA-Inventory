@@ -35,6 +35,12 @@ import {
 } from '../distribution/confirm-surat-jalan';
 import { mergeRoForSync } from '../distribution/ro-sync-merge';
 import {
+  RO_TOMBSTONE_SOURCE,
+  addTombstones,
+  canonicalTombstoneKey,
+  loadTombstoneKeys,
+} from '../sync-engine/tombstones';
+import {
   extractUnknownColumnFromError,
   mapAssetTransferToSuratJalan,
   mergeAssetTransfersLists,
@@ -2616,7 +2622,7 @@ export function markRoDeleted(key?: string | null): void {
   if (clean) global.__DELETED_RO_KEYS__.add(clean);
 }
 
-export async function deleteRequestOrder(id: string): Promise<boolean> {
+export async function deleteRequestOrder(id: string, actorName?: string): Promise<boolean> {
   const admin = getAdminClient();
   const cachedOrder =
     (global.__RO_CACHE__?.items || []).find((r: RequestOrder) => r.id === id || r.ro_number === id) ||
@@ -2646,6 +2652,25 @@ export async function deleteRequestOrder(id: string): Promise<boolean> {
       }
     } catch (err: any) {
       console.error('[Supabase deleteRequestOrder exception]:', err.message);
+    }
+
+    // Catat tombstone agar sync berikutnya tidak memasukkan RO ini lagi.
+    // Penanda di memori saja tidak cukup: hilang saat redeploy / pindah instance.
+    try {
+      const saved = await addTombstones(
+        admin,
+        RO_TOMBSTONE_SOURCE,
+        [
+          { key: roNumber, display: roNumber },
+          { key: rawRoId, display: roNumber },
+        ],
+        { reason: 'Dihapus manual dari dashboard', createdBy: actorName }
+      );
+      if (saved === 0) {
+        console.warn('[Supabase deleteRequestOrder] Tombstone tidak tersimpan untuk', roNumber);
+      }
+    } catch (err: any) {
+      console.error('[Supabase deleteRequestOrder tombstone]:', err.message);
     }
   }
 
@@ -2897,6 +2922,8 @@ export async function syncRequestOrdersFromSheet(
 
   try {
     const admin = getAdminClient();
+    // RO yang pernah dihapus manual tidak boleh dimasukkan lagi oleh sheet.
+    const tombstoneKeys = await loadTombstoneKeys(admin);
     if (!options.dryRun && options.clearOldSheetData && admin) {
       try {
         await admin.from('request_orders').delete().eq('source_type', 'GOOGLE_SHEET');
@@ -2979,7 +3006,12 @@ export async function syncRequestOrdersFromSheet(
           seenFingerprints.add(fingerprint);
 
           const roNumber = `RO-${effectiveRoId}`;
-          if (isRoDeleted(roNumber) || isRoDeleted(effectiveRoId)) {
+          if (
+            isRoDeleted(roNumber) ||
+            isRoDeleted(effectiveRoId) ||
+            tombstoneKeys.has(canonicalTombstoneKey(effectiveRoId)) ||
+            tombstoneKeys.has(canonicalTombstoneKey(roNumber))
+          ) {
             continue;
           }
           const region: 'JABODETABEK' | 'KALBAR' = source.region;

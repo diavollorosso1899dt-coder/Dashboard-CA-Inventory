@@ -4,16 +4,18 @@
 
 1. Review `supabase/sync-engine.sql`.
 2. Jalankan migration di Supabase SQL Editor setelah disetujui.
-3. Isi `SYNC_TOKEN` dan `CRON_SECRET` di Vercel.
-4. Deploy `main`.
-5. Pastikan cron `/api/sync` muncul di Vercel → Settings → Cron Jobs.
+3. Jalankan juga `supabase/ro-tombstones.sql` (daftar RO yang diblokir dari sync).
+4. Isi `SYNC_TOKEN` dan `CRON_SECRET` di Vercel.
+5. Deploy `main`.
+6. Pastikan cron `/api/sync` muncul di Vercel → Settings → Cron Jobs.
 
 ## Pemicu
 
 - Manual: tombol di `/sync` atau "Sync Data" di header.
 - Cron: setiap hari 19.00 UTC = 02.00 WIB (hanya berjalan di deployment Vercel).
 - Webhook: `POST /api/sync` dengan header `x-sync-token` dan body
-  `{"trigger":"WEBHOOK"}`. Pemicu ini di-debounce 5 menit.
+  `{"trigger":"WEBHOOK"}`. Pemicu ini di-debounce sesuai env
+  `SYNC_WEBHOOK_DEBOUNCE_MINUTES` (default 5 menit; produksi memakai 1 menit).
 
 Tidak ada sync otomatis di lingkungan lokal (`npm run dev`): penjadwal hanya
 ada di Vercel Cron. Agar baris baru langsung masuk setelah sheet diedit,
@@ -21,6 +23,21 @@ pasang webhook Apps Script (contoh skrip ada di halaman `/sync`), buat trigger
 `On edit`/`On change` untuk fungsi tersebut, dan isi env `SYNC_TOKEN` di server.
 Tanpa `SYNC_TOKEN`, webhook akan ditolak `401`.
 Frekuensi cron dapat dinaikkan di `vercel.json` bila paket Vercel mengizinkan.
+
+## Tombstone (RO yang dihapus manual)
+
+RO yang dihapus dari dashboard tidak boleh muncul lagi walau barisnya masih ada
+di sheet. Penandanya disimpan di tabel `sync_tombstones` (migration
+`supabase/ro-tombstones.sql`), bukan hanya di memori proses.
+
+- Kunci disimpan dalam bentuk kanonik lewat `canonicalTombstoneKey()`:
+  `RO-0005` → `0005`. Sync melewati baris dengan kunci yang cocok.
+- Daftar dibaca sekali per sync dengan cache 30 detik (`loadTombstoneKeys`).
+  Kalau tabel belum ada, sync tetap jalan tanpa filter dan hanya menulis
+  peringatan di log.
+- Halaman `/sync` menampilkan daftar blokir. Tombol **Pulihkan** menghapus
+  penanda sehingga RO tersebut masuk lagi pada sync berikutnya.
+- API: `GET /api/sync/tombstones`, `DELETE /api/sync/tombstones/<id>`.
 
 ## Dry-run
 
