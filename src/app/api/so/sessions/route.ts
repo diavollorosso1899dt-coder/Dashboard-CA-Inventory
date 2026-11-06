@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/server';
+import { normalizeSoRegion, resolveSessionRegion } from '@/lib/so-harian/region';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,8 +37,12 @@ export async function POST(req: NextRequest) {
 
     const sessionId = String(session.id);
     const now = new Date().toISOString();
-    const sessionPayload = {
+    const region =
+      normalizeSoRegion(session.region) ||
+      resolveSessionRegion({ region: session.region, id: sessionId });
+    const sessionPayload: any = {
       id: sessionId,
+      region,
       tanggal: session.tanggal || now.slice(0, 10),
       gudang: session.gudang ?? null,
       petugas: session.petugas ?? null,
@@ -54,7 +59,21 @@ export async function POST(req: NextRequest) {
       created_at: session.created_at || now,
     };
 
-    const { error: sessionError } = await admin.from('so_sessions').upsert(sessionPayload);
+    let { error: sessionError } = await admin.from('so_sessions').upsert(sessionPayload);
+
+    if (
+      sessionError &&
+      /region/i.test(sessionError.message || '') &&
+      /(column|schema cache)/i.test(sessionError.message || '')
+    ) {
+      console.warn(
+        '[so/sessions] Kolom region belum ada. Menyimpan tanpa region; jalankan supabase/so-region.sql.'
+      );
+      const fallbackPayload = { ...sessionPayload };
+      delete fallbackPayload.region;
+      ({ error: sessionError } = await admin.from('so_sessions').upsert(fallbackPayload));
+    }
+
     if (sessionError) throw new Error(sessionError.message);
 
     if (items.length > 0) {
