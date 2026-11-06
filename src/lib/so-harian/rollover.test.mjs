@@ -140,3 +140,35 @@ test('mergeDailyInventory menandai sumber stok awal pada setiap item', () => {
   const legacy = mergeDailyInventory(new Map([['X', 1]]));
   assert.equal(legacy[0].stok_awal_sumber, 'MASTER');
 });
+
+test('pickPreviousSession tidak mencampur region', () => {
+  const sessions = [
+    { id: 'so-jabodetabek-2026-11-05', tanggal: '2026-11-05', region: 'JABODETABEK' },
+    { id: 'so-kalbar-2026-11-05', tanggal: '2026-11-05', region: 'KALBAR' },
+    { id: 'so-kalbar-2026-11-04', tanggal: '2026-11-04', region: 'KALBAR' },
+    { id: 'so-2026-11-03', tanggal: '2026-11-03' },
+  ];
+
+  assert.equal(
+    pickPreviousSession(sessions, '2026-11-06', 'KALBAR')?.id,
+    'so-kalbar-2026-11-05'
+  );
+  assert.equal(
+    pickPreviousSession(sessions, '2026-11-06', 'JABODETABEK')?.id,
+    'so-jabodetabek-2026-11-05'
+  );
+  // Sesi legacy tidak boleh menjadi sumber rollover region mana pun.
+  assert.equal(pickPreviousSession(sessions, '2026-11-04', 'KALBAR'), null);
+});
+
+test('pickPreviousSession mendeteksi region dari ID sesi', () => {
+  const sessions = [
+    { id: 'so-kalbar-2026-11-05', tanggal: '2026-11-05' },
+    { id: 'so-jabodetabek-2026-11-05', tanggal: '2026-11-05' },
+  ];
+
+  assert.equal(
+    pickPreviousSession(sessions, '2026-11-06', 'JABODETABEK')?.id,
+    'so-jabodetabek-2026-11-05'
+  );
+});
