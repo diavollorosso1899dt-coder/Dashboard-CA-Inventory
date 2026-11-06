@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Boxes,
   UploadCloud,
@@ -122,18 +122,51 @@ export function StockOpnameView({ initialRegion = null }: StockOpnameViewProps) 
     if (pathname) router.replace(`${pathname}?region=${next}`);
   };
 
-  const handleRegionChange = (next: string) => {
+  // Mengembalikan true bila region benar-benar diterapkan, sehingga pemanggil
+  // (mis. sinkronisasi URL) bisa mengembalikan URL bila pengguna membatalkan.
+  const handleRegionChange = (next: string): boolean => {
+    // Akun yang dikunci selalu memakai region profil; jangan pernah pindah.
+    if (isRegionLocked) return false;
     const normalized = normalizeSoRegion(next);
-    if (!normalized || normalized === region) return;
+    if (!normalized || normalized === region) return false;
     // Akun yang dikunci tidak boleh ditanya konfirmasi; region profil memaksa.
     if (!isRegionLocked && items.length > 0) {
       const ok = window.confirm(
         `Pindah ke ${normalized}? ${items.length} item yang belum disimpan akan ditinggalkan.`
       );
-      if (!ok) return;
+      if (!ok) return false;
     }
     applyRegion(normalized);
+    return true;
   };
+
+  // URL bisa berubah tanpa remount: pil region global di Navbar, tombol
+  // back/forward, atau tautan lain. Tanpa sinkronisasi ini state tetap di
+  // region lama padahal URL (dan Navbar) sudah menunjuk region lain, sehingga
+  // sesi bisa tersimpan ke region yang tidak sesuai dengan yang ditampilkan.
+  const lastUrlRegionRef = useRef<string | null>(initialRegion);
+  useEffect(() => {
+    const previous = lastUrlRegionRef.current;
+    lastUrlRegionRef.current = initialRegion;
+    if (previous === initialRegion) return;
+
+    const next = normalizeSoRegion(initialRegion);
+    if (next && next !== region) {
+      const applied = handleRegionChange(next);
+      if (applied) return;
+      // Dibatalkan atau dikunci: kembalikan URL ke region yang benar-benar aktif.
+      if (pathname) router.replace(`${pathname}?region=${region}`);
+      return;
+    }
+
+    // URL tanpa region atau berisi nilai yang tidak valid (mis. ALL): tulis
+    // region aktif agar kontrol global tidak menampilkan region yang salah.
+    if (!next && initialRegion !== null && pathname) {
+      router.replace(`${pathname}?region=${region}`);
+    }
+    // Hanya dipicu saat nilai URL berubah; nilai lain dibaca dari render terkini.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialRegion]);
 
   // Pulihkan region tersimpan setelah mount. Dilewati bila URL sudah menentukan
   // region atau akun dikunci ke satu region.
@@ -145,12 +178,17 @@ export function StockOpnameView({ initialRegion = null }: StockOpnameViewProps) 
     try {
       stored = localStorage.getItem(SO_ACTIVE_REGION_KEY);
     } catch {
-      return;
+      stored = null;
     }
 
     const next = normalizeSoRegion(stored);
-    if (!next || next === region) return;
-    applyRegion(next);
+    if (next && next !== region) {
+      applyRegion(next);
+      return;
+    }
+    // Tidak ada region tersimpan: samakan URL dengan region default agar pil
+    // region global menampilkan region yang sedang dipakai.
+    if (pathname) router.replace(`${pathname}?region=${region}`);
     // Hanya berjalan sekali setelah mount; region awal sudah dipakai sebagai basis.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
