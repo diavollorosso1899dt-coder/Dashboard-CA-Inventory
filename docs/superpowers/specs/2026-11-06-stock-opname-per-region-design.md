@@ -360,10 +360,11 @@ Unit test baru/updated:
    - `pickPreviousSession` mengabaikan sesi region lain.
    - Sesi tanggal sama tidak dipakai.
 3. Test filter PR/SLA (fungsi murni) memakai `matchesRegion`.
-4. Test parser kolom master:
-   - Layout `SKU, Nama Item Barang, Akun, Jumlah, Harga, Total, Status` → qty
-     diambil dari `Jumlah` dan nilainya > 0.
-   - Baris dengan kolom tambahan di kanan tetap menghasilkan qty yang sama.
+4. Verifikasi manual parser master:
+   - Tarik master JABO Perlengkapan; qty terbaca > 0 (bukan 0) dan jumlah item
+     wajar.
+   - Tarik master JABO Peralatan dan kedua master KALBAR; qty tidak berubah
+     dari perilaku sebelumnya.
 
 Verifikasi manual:
 
