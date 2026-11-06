@@ -37,6 +37,7 @@ import { getItemImageUrl } from '@/lib/assetImageHelper';
 import { formatDateOnly } from '@/lib/utils/date-formatter';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
 import AreaFilterPills from '@/components/ui/AreaFilterPills';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import { normalizeRegion, matchesRegion, StandardRegion } from '@/lib/utils/region-helper';
 import { useAuth } from '@/components/auth/AuthContext';
 import { applyConfirmedItemsToRequestOrders } from '@/lib/distribution/confirm-surat-jalan';
@@ -427,6 +428,20 @@ export function TransferAssetView({
     });
     return map;
   }, [outlets, requestOrders, monitoringAssets]);
+
+  // Opsi dropdown lokasi pada form surat jalan (bisa dicari dengan mengetik).
+  const outletNameOptions = useMemo(
+    () => (outlets || []).map((o) => o.branch_name).filter(Boolean),
+    [outlets]
+  );
+  const originLocationOptions = useMemo(
+    () => ['Gudang Pusat SCGA', ...outletNameOptions],
+    [outletNameOptions]
+  );
+  const destinationLocationOptions = useMemo(
+    () => [...outletNameOptions, 'Gudang Pusat SCGA'],
+    [outletNameOptions]
+  );
 
   // Ekstrak item Ready Stock dari Kelola RO secara Real-Time
   const roReadyAssets = useMemo(() => {
@@ -1921,45 +1936,32 @@ export function TransferAssetView({
                   <label className="block text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-1">
                     Lokasi Asal (Pengirim)
                   </label>
-                  <select
+                  <SearchableSelect
                     value={fromLocation}
-                    onChange={(e) => {
-                      setFromLocation(e.target.value);
-                      setSourceType(e.target.value === 'Gudang Pusat SCGA' ? 'GUDANG_PUSAT' : 'OUTLET');
+                    options={originLocationOptions}
+                    onChange={(next) => {
+                      setFromLocation(next);
+                      setSourceType(next === 'Gudang Pusat SCGA' ? 'GUDANG_PUSAT' : 'OUTLET');
                     }}
-                    className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] px-3 py-2 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-                  >
-                    <option value="Gudang Pusat SCGA">Gudang Pusat SCGA</option>
-                    {outlets.map((o) => (
-                      <option key={o.id} value={o.branch_name}>
-                        {o.branch_name}
-                      </option>
-                    ))}
-                  </select>
+                    ariaLabel="Lokasi asal pengirim"
+                    placeholder="Cari lokasi asal..."
+                  />
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-1">
                     Lokasi Outlet Tujuan (Penerima)
                   </label>
-                  <select
+                  <SearchableSelect
                     value={toLocation}
-                    onChange={(e) => {
-                      setToLocation(e.target.value);
-                      setDestinationType(e.target.value === 'Gudang Pusat SCGA' ? 'GUDANG_PUSAT' : 'OUTLET');
+                    options={destinationLocationOptions}
+                    onChange={(next) => {
+                      setToLocation(next);
+                      setDestinationType(next === 'Gudang Pusat SCGA' ? 'GUDANG_PUSAT' : 'OUTLET');
                     }}
-                    className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] px-3 py-2 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-                  >
-                    {toLocation && !outlets.some((o) => o.branch_name === toLocation) && toLocation !== 'Gudang Pusat SCGA' && (
-                      <option value={toLocation}>{toLocation}</option>
-                    )}
-                    {outlets.map((o) => (
-                      <option key={o.id} value={o.branch_name}>
-                        {o.branch_name}
-                      </option>
-                    ))}
-                    <option value="Gudang Pusat SCGA">Gudang Pusat SCGA</option>
-                  </select>
+                    ariaLabel="Lokasi outlet tujuan penerima"
+                    placeholder="Cari outlet tujuan..."
+                  />
                 </div>
 
                 <div>
