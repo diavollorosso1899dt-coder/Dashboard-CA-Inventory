@@ -10,8 +10,8 @@ Menggantikan keputusan "satu gudang / baseline global" pada spec
 1. Stock Opname Harian berjalan terpisah untuk **JABODETABEK** dan **KALBAR**.
 2. Setiap region punya sesi, stok awal, RO, penerimaan, rollover, dan riwayat sendiri.
 3. Region ditentukan otomatis dari profil pengguna; Super User dapat berpindah region.
-4. Link master yang sekarang dipakai menjadi milik **KALBAR**. Link JABODETABEK
-   disiapkan menyusul lewat kolom isian di UI.
+4. Link master yang sekarang dipakai menjadi milik **KALBAR**. Link master
+   **JABODETABEK** sudah tersedia dan menjadi default region tersebut.
 5. Penerimaan Harian mengambil **PR Ready Stock** untuk kedua region, difilter
    berdasarkan region.
 
@@ -25,7 +25,7 @@ Menggantikan keputusan "satu gudang / baseline global" pada spec
 | Sumber penerimaan | PR Ready Stock untuk kedua region, difilter `region` |
 | Sumber stok awal | Master terpisah per region |
 | Link lama | Menjadi default **KALBAR** |
-| Link JABODETABEK | Kosong sampai sheet disiapkan; UI memberi peringatan |
+| Link JABODETABEK | Sudah tersedia (Peralatan & Perlengkapan), menjadi default region JABO |
 | Sesi lama tanpa region | Tetap terlihat sebagai "Sesi lama", tidak dipakai rollover |
 | Identitas sesi | `so-<slug-region>-<YYYY-MM-DD>` |
 | Penyimpanan region | Kolom `region` di `so_sessions` + derivasi dari ID sebagai fallback |
@@ -209,10 +209,10 @@ Prioritas JABODETABEK:
 
 ```
 NEXT_PUBLIC_SO_SHEET_<TYPE>_JABO_URL
-  ?? ''
+  ?? fallback JABO
 ```
 
-Fallback lama yang sekarang dipakai (menjadi default KALBAR):
+Fallback yang sekarang dipakai (menjadi default KALBAR):
 
 - Penerimaan:
   `https://docs.google.com/spreadsheets/d/1neWHHRIjYm3Q4gsoV6Id258jcj5QvOFwhS84PMJL0lE/edit?gid=352107216#gid=352107216`
@@ -221,12 +221,39 @@ Fallback lama yang sekarang dipakai (menjadi default KALBAR):
 - Perlengkapan:
   `https://docs.google.com/spreadsheets/d/1fiRhYHPDgSadKIDLlnqyD9K-ZBXg2_3vlyqI-4jdNfc/edit?gid=1129207194#gid=1129207194`
 
+Fallback JABODETABEK:
+
+- Peralatan:
+  `https://docs.google.com/spreadsheets/d/1fiRhYHPDgSadKIDLlnqyD9K-ZBXg2_3vlyqI-4jdNfc/edit?gid=1721157388#gid=1721157388`
+- Perlengkapan Tetap:
+  `https://docs.google.com/spreadsheets/d/1fiRhYHPDgSadKIDLlnqyD9K-ZBXg2_3vlyqI-4jdNfc/edit?gid=737037942#gid=737037942`
+- Penerimaan: `''` (memakai PR Ready Stock; link manual opsional)
+
+Catatan: master JABO memakai dokumen yang sama dengan KALBAR tetapi **gid
+berbeda**, sehingga keduanya tetap terpisah. Kolom yang terverifikasi:
+`SKU, Nama Item Barang, Akun, Jumlah, Harga, Total, Status`.
+
+**Perbedaan layout yang wajib ditangani.** Tab Perlengkapan JABO memiliki satu
+kolom **Satuan** yang tidak diberi label pada baris header:
+
+```
+header : SKU, Nama Item Barang, Akun, Jumlah, Harga, Total, Status, ,
+data   : BGTGR-P00017, Akrilik Nomer Meja, Perlengkapan Tetap, pcs, 66, 11.797,09, 778.607,76, 0, Aktif
+```
+
+Kolom berlabel `Jumlah` (index 3) berisi `pcs`, sedangkan qty sebenarnya ada di
+index 4. Parser `fetch-sheet` saat ini membaca index 3 sehingga qty akan menjadi
+**0**. Implementasi harus mendeteksi pergeseran ini: bila nilai pada kolom qty
+non-numerik dan kolom berikutnya numerik, pakai kolom berikutnya sebagai qty dan
+nilai non-numerik sebagai `satuan`. Perilaku ini harus aman untuk tab lain yang
+layout-nya normal (KALBAR Peralatan/Perlengkapan dan JABO Peralatan).
+
 ### 8.2 Penyimpanan lokal
 
 - Key baru: `so_sheet_urls_v2`, bentuk
   `{ JABODETABEK: {...}, KALBAR: {...} }`.
 - Migrasi sekali: jika `so_sheet_urls_v2` belum ada, isi dari `so_sheet_urls`
-  lama ke **KALBAR**, lalu isi JABODETABEK dari ENV/default (biasanya kosong).
+  lama ke **KALBAR**, lalu isi JABODETABEK dari ENV/default JABO.
 - Key lama tidak dihapus agar bisa dipulihkan manual.
 
 ### 8.3 UI
@@ -241,6 +268,8 @@ Semua URL bersifat per region dan hanya menampilkan nilai region aktif:
 | RO (mode Link) | Link RO |
 
 - Label region ditampilkan jelas, mis. "Stok Awal: Peralatan — KALBAR".
+- Kedua region sudah memiliki default link master, sehingga field terisi saat
+  pertama dibuka. Peringatan di bawah hanya muncul bila field dikosongkan.
 - Jika URL region aktif kosong:
   - Input menampilkan placeholder.
   - Muncul peringatan "Master <REGION> belum disiapkan".
@@ -340,11 +369,17 @@ Unit test baru/updated:
    - `pickPreviousSession` mengabaikan sesi region lain.
    - Sesi tanggal sama tidak dipakai.
 3. Test filter PR/SLA (fungsi murni) memakai `matchesRegion`.
+4. Test parser kolom master:
+   - Layout normal 7 kolom → qty diambil dari `Jumlah`.
+   - Layout dengan kolom Satuan tak berlabel (JABO Perlengkapan) → `satuan`
+     terisi dan qty diambil dari kolom setelahnya.
+   - Nilai qty non-numerik pada layout normal tidak boleh menggeser kolom.
 
 Verifikasi manual:
 
-1. KALBAR: master langsung terisi dari link lama; JABODETABEK menampilkan
-   peringatan kosong.
+1. KALBAR dan JABODETABEK: master langsung terisi dari link default masing-masing
+   region; nilai tidak saling tertukar. Khusus JABO Perlengkapan, qty harus
+   terbaca > 0 dan `satuan` terisi (mis. `pcs`), bukan 0.
 2. Tarik PR Ready Stock di JABO dan KALBAR; jumlah/isi berbeda dan sesuai region.
 3. Tarik Monitoring SLA di kedua region; tidak ada RO region lain yang masuk.
 4. Simpan sesi JABO dan KALBAR pada tanggal yang sama → dua baris `so_sessions`
@@ -357,7 +392,7 @@ Verifikasi manual:
 
 1. Implementasi di branch `dev`.
 2. Jalankan `supabase/so-region.sql` di Supabase SQL Editor.
-3. Uji di lokal: KALBAR dengan link lama, JABO dengan master kosong.
+3. Uji di lokal: kedua region memakai master default-nya masing-masing.
 4. Uji simpan dua region dan rollover.
 5. Setelah disetujui, merge `dev` → `main` dan deploy.
 
