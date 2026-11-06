@@ -162,6 +162,11 @@ export function StockOpnameView({ initialRegion = null }: StockOpnameViewProps) 
     setRegion(locked);
     setItems([]);
     setLoadedSessionMeta(null);
+    setActiveTab('UPLOAD');
+    setPreviousSessionStock(new Map());
+    setPreviousSessionItems([]);
+    setPreviousSessionDate(null);
+    setPreviousSessionStatus(null);
     setSessionData((prev) => ({
       ...prev,
       region: locked,
