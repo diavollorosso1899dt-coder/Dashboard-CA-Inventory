@@ -13,6 +13,7 @@ interface AreaFilterPillsProps {
   syncUrl?: boolean;
   showIcon?: boolean;
   label?: string;
+  allowAll?: boolean;
   className?: string;
 }
 
@@ -22,6 +23,7 @@ export default function AreaFilterPills({
   syncUrl = true,
   showIcon = false,
   label,
+  allowAll = true,
   className = '',
 }: AreaFilterPillsProps) {
   const router = useRouter();
@@ -98,18 +100,20 @@ export default function AreaFilterPills({
         </span>
       )}
       <div className="inline-flex items-center rounded-full bg-[#e9eef6] dark:bg-[#282a2c] p-1 text-xs">
-        <button
-          type="button"
-          onClick={() => handleSelect('ALL')}
-          className={`rounded-full px-3 py-1 font-medium transition-all ${
-            currentRegion === 'ALL'
-              ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
-              : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
-          }`}
-          title="Tampilkan semua area (Jabodetabek & Kalbar)"
-        >
-          Semua
-        </button>
+        {allowAll && (
+          <button
+            type="button"
+            onClick={() => handleSelect('ALL')}
+            className={`rounded-full px-3 py-1 font-medium transition-all ${
+              currentRegion === 'ALL'
+                ? 'bg-[#0b57d0] text-white shadow-sm dark:bg-[#a8c7fa] dark:text-[#041e49]'
+                : 'text-[#444746] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-white'
+            }`}
+            title="Tampilkan semua area (Jabodetabek & Kalbar)"
+          >
+            Semua
+          </button>
+        )}
         <button
           type="button"
           onClick={() => handleSelect('JABODETABEK')}
