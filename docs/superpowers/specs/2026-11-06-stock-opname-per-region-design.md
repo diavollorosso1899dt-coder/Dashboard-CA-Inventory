@@ -233,20 +233,11 @@ Catatan: master JABO memakai dokumen yang sama dengan KALBAR tetapi **gid
 berbeda**, sehingga keduanya tetap terpisah. Kolom yang terverifikasi:
 `SKU, Nama Item Barang, Akun, Jumlah, Harga, Total, Status`.
 
-**Perbedaan layout yang wajib ditangani.** Tab Perlengkapan JABO memiliki satu
-kolom **Satuan** yang tidak diberi label pada baris header:
-
-```
-header : SKU, Nama Item Barang, Akun, Jumlah, Harga, Total, Status, ,
-data   : BGTGR-P00017, Akrilik Nomer Meja, Perlengkapan Tetap, pcs, 66, 11.797,09, 778.607,76, 0, Aktif
-```
-
-Kolom berlabel `Jumlah` (index 3) berisi `pcs`, sedangkan qty sebenarnya ada di
-index 4. Parser `fetch-sheet` saat ini membaca index 3 sehingga qty akan menjadi
-**0**. Implementasi harus mendeteksi pergeseran ini: bila nilai pada kolom qty
-non-numerik dan kolom berikutnya numerik, pakai kolom berikutnya sebagai qty dan
-nilai non-numerik sebagai `satuan`. Perilaku ini harus aman untuk tab lain yang
-layout-nya normal (KALBAR Peralatan/Perlengkapan dan JABO Peralatan).
+Tab Perlengkapan JABO sempat memiliki kolom `Satuan` tak berlabel sehingga qty
+terbaca 0. Per **2026-11-06** sheet sudah diperbaiki dan diverifikasi: baris
+header dan data sama-sama 8 kolom, `Jumlah` berisi angka (mis. `66`), dan kolom
+tambahan di kanan (`0`, `Aktif`) diabaikan parser. Tidak diperlukan heuristik
+pergeseran kolom; parser `fetch-sheet` yang ada sudah membaca qty dengan benar.
 
 ### 8.2 Penyimpanan lokal
 
@@ -370,16 +361,15 @@ Unit test baru/updated:
    - Sesi tanggal sama tidak dipakai.
 3. Test filter PR/SLA (fungsi murni) memakai `matchesRegion`.
 4. Test parser kolom master:
-   - Layout normal 7 kolom → qty diambil dari `Jumlah`.
-   - Layout dengan kolom Satuan tak berlabel (JABO Perlengkapan) → `satuan`
-     terisi dan qty diambil dari kolom setelahnya.
-   - Nilai qty non-numerik pada layout normal tidak boleh menggeser kolom.
+   - Layout `SKU, Nama Item Barang, Akun, Jumlah, Harga, Total, Status` → qty
+     diambil dari `Jumlah` dan nilainya > 0.
+   - Baris dengan kolom tambahan di kanan tetap menghasilkan qty yang sama.
 
 Verifikasi manual:
 
 1. KALBAR dan JABODETABEK: master langsung terisi dari link default masing-masing
    region; nilai tidak saling tertukar. Khusus JABO Perlengkapan, qty harus
-   terbaca > 0 dan `satuan` terisi (mis. `pcs`), bukan 0.
+   terbaca > 0 (mis. `66`), bukan 0.
 2. Tarik PR Ready Stock di JABO dan KALBAR; jumlah/isi berbeda dan sesuai region.
 3. Tarik Monitoring SLA di kedua region; tidak ada RO region lain yang masuk.
 4. Simpan sesi JABO dan KALBAR pada tanggal yang sama → dua baris `so_sessions`
