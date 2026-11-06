@@ -269,13 +269,13 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [soSessionDate, setSoSessionDate] = useState<string | null>(null);
   const [isSoStockLoading, setIsSoStockLoading] = useState(true);
 
-  const fetchSoStock = async () => {
+  const fetchSoStock = async (targetRegion: 'JABODETABEK' | 'KALBAR') => {
+    setIsSoStockLoading(true);
     try {
-      // 1. Data lokal perangkat ini (SO yang disimpan saat offline / sebelum
-      //    koneksi cloud diatur).
+      // 1. Data lokal perangkat ini untuk region yang sama.
       let localPick: { tanggal: string | null; items: SOItem[] } = { tanggal: null, items: [] };
       try {
-        const localSessions = getAllSessionsSync();
+        const localSessions = getAllSessionsSync(targetRegion);
         for (const session of localSessions.slice(0, 3)) {
           const { items } = await loadSession(session.id);
           if (items && items.length > 0) {
@@ -287,12 +287,10 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         console.warn('Gagal membaca sesi SO lokal:', localErr);
       }
 
-      // 2. Data dari Supabase lewat server, sehingga SO yang disimpan di
-      //    perangkat lain tetap terbaca walau browser ini belum pernah
-      //    mengatur koneksi SO Harian (konfigurasinya hanya di localStorage).
+      // 2. Data dari Supabase lewat server, difilter region.
       let cloudPick: { tanggal: string | null; items: SOItem[] } = { tanggal: null, items: [] };
       try {
-        const res = await fetch('/api/so/stock', { cache: 'no-store' });
+        const res = await fetch(`/api/so/stock?region=${targetRegion}`, { cache: 'no-store' });
         const json = await res.json();
         if (json?.success && Array.isArray(json.items) && json.items.length > 0) {
           cloudPick = { tanggal: json.session?.tanggal || null, items: json.items };
@@ -316,10 +314,6 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       setIsSoStockLoading(false);
     }
   };
-
-  useEffect(() => {
-    fetchSoStock();
-  }, []);
 
   const getSoStockForItem = (it: ROItem): { stok_sistem: number; qty_fisik?: number | null; satuan?: string; found: boolean } => {
     if (!soStockItems || soStockItems.length === 0) {
@@ -506,6 +500,17 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   // New RO form state
   const [branchName, setBranchName] = useState(outletList[0]?.branch_name || outletList[0]?.nama || '');
   const [region, setRegion] = useState<'JABODETABEK' | 'KALBAR'>('JABODETABEK');
+
+  const soStockRegion: 'JABODETABEK' | 'KALBAR' =
+    selectedRegion === 'JABODETABEK' || selectedRegion === 'KALBAR'
+      ? selectedRegion
+      : region;
+
+  useEffect(() => {
+    fetchSoStock(soStockRegion);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soStockRegion]);
+
   const [outletSearch, setOutletSearch] = useState('');
   const [requesterName, setRequesterName] = useState('Staff Logistik CA');
   const [targetDeliveryDate, setTargetDeliveryDate] = useState('');
