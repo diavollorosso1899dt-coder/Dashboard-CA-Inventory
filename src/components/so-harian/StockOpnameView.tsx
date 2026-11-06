@@ -43,7 +43,9 @@ import {
   SO_ACTIVE_REGION_KEY,
   buildSoSessionId,
   normalizeSoRegion,
+  parseSoSessionId,
   resolveActiveSoRegion,
+  resolveSessionRegion,
   type SoRegion,
 } from '@/lib/so-harian/region';
 
@@ -194,8 +196,8 @@ export function StockOpnameView({ initialRegion = null }: StockOpnameViewProps) 
 
     async function loadPreviousSession() {
       try {
-        const sessions = await getAllSessions();
-        const previous = pickPreviousSession(sessions, sessionData.tanggal);
+        const sessions = await getAllSessions(region);
+        const previous = pickPreviousSession(sessions, sessionData.tanggal, region);
         if (!previous) {
           if (active) {
             setPreviousSessionStock(new Map());
@@ -223,7 +225,7 @@ export function StockOpnameView({ initialRegion = null }: StockOpnameViewProps) 
     return () => {
       active = false;
     };
-  }, [sessionData.tanggal]);
+  }, [sessionData.tanggal, region]);
 
   const handleCompilationSuccess = (compiledItems: SOItem[], metadata: any) => {
     setItems(compiledItems);
@@ -254,30 +256,38 @@ export function StockOpnameView({ initialRegion = null }: StockOpnameViewProps) 
       return;
     }
 
+    if (loadedSessionMeta && parseSoSessionId(loadedSessionMeta.id).legacy) {
+      showToast(
+        'Sesi lama tanpa region bersifat arsip dan tidak bisa ditimpa. Pilih tanggal/region lain untuk menyimpan sesi baru.',
+        'error'
+      );
+      return;
+    }
+
     setIsSaving(true);
     try {
       const summary = calculateSessionSummary(items);
-      // Satu tanggal = satu sesi. Jika user mengubah tanggal (mis. tab dibiarkan
-      // terbuka melewati tengah malam), simpan ke id tanggal yang dipilih agar
-      // hasil SO hari lain tidak tertimpa.
       const dateKey =
         String(sessionData.tanggal || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
       const sameAsLoaded =
         loadedSessionMeta && String(loadedSessionMeta.tanggal || '').slice(0, 10) === dateKey;
-      const targetId = sameAsLoaded ? loadedSessionMeta.id : `so-${dateKey}`;
+      const targetId = sameAsLoaded
+        ? loadedSessionMeta.id
+        : buildSoSessionId(region, dateKey);
 
       const payload: Partial<SOSession> = {
         ...sessionData,
         id: targetId,
         tanggal: dateKey,
+        region,
         akurasi_persen: summary.akurasiPersen,
         status: summary.itemUnchecked === 0 ? 'COMPLETED' : 'IN_PROGRESS',
       };
 
       const savedId = await saveSession(payload, items);
-      setSessionData((prev) => ({ ...prev, id: savedId, tanggal: dateKey }));
+      setSessionData((prev) => ({ ...prev, id: savedId, tanggal: dateKey, region }));
       setLoadedSessionMeta({ id: savedId, tanggal: dateKey });
-      showToast('Sesi SO harian berhasil disimpan ke sistem!', 'success');
+      showToast(`Sesi SO ${region} tanggal ${dateKey} berhasil disimpan!`, 'success');
     } catch (err: any) {
       showToast(`Gagal menyimpan: ${err.message}`, 'error');
     } finally {
@@ -291,7 +301,10 @@ export function StockOpnameView({ initialRegion = null }: StockOpnameViewProps) 
       return;
     }
     const blob = exportSoReportToExcel(sessionData, items);
-    downloadBlob(blob, `Rekap_SO_${sessionData.tanggal || 'Harian'}_${sessionData.gudang || 'Gudang'}.xlsx`);
+    downloadBlob(
+      blob,
+      `Rekap_SO_${region}_${sessionData.tanggal || 'Harian'}_${sessionData.gudang || 'Gudang'}.xlsx`
+    );
     showToast('Laporan SO Excel berhasil diunduh.', 'success');
   };
 
@@ -309,13 +322,27 @@ export function StockOpnameView({ initialRegion = null }: StockOpnameViewProps) 
 
   const handleOpenFromHistory = async (sessionId: string) => {
     const { session, items: loadedItems } = await loadSession(sessionId);
-    if (session) {
-      setSessionData(session);
-      setItems(loadedItems);
-      setLoadedSessionMeta({ id: session.id, tanggal: session.tanggal });
-      setActiveTab('SO_TABLE');
-      showToast(`Memuat sesi SO tanggal ${session.tanggal}`, 'success');
+    if (!session) return;
+
+    const sessionRegion = resolveSessionRegion(session);
+    if (sessionRegion && sessionRegion !== region) {
+      setRegion(sessionRegion);
+      try {
+        localStorage.setItem(SO_ACTIVE_REGION_KEY, sessionRegion);
+      } catch {
+        // abaikan
+      }
+      if (pathname) router.replace(`${pathname}?region=${sessionRegion}`);
     }
+
+    setSessionData({ ...session, region: sessionRegion ?? undefined });
+    setItems(loadedItems);
+    setLoadedSessionMeta({ id: session.id, tanggal: session.tanggal });
+    setActiveTab('SO_TABLE');
+    showToast(
+      `Memuat sesi SO ${sessionRegion || 'tanpa region'} tanggal ${session.tanggal}`,
+      'success'
+    );
   };
 
   const handlePrintFromHistory = (session: SOSession, histItems: SOItem[]) => {
@@ -575,6 +602,7 @@ export function StockOpnameView({ initialRegion = null }: StockOpnameViewProps) 
         {/* Tab 3: History */}
         {activeTab === 'HISTORY' && (
           <HistorySection
+            region={region}
             onOpenSession={handleOpenFromHistory}
             onPrintSession={handlePrintFromHistory}
           />
