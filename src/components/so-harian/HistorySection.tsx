@@ -15,16 +15,23 @@ import {
 } from 'lucide-react';
 import { getAllSessions, deleteSession, loadSession, SOSession } from '@/lib/so-harian/storageService';
 import { exportSoReportToExcel, downloadBlob } from '@/lib/so-harian/excelService';
+import {
+  filterSessionsByRegion,
+  resolveSessionRegion,
+  type SoRegion,
+} from '@/lib/so-harian/region';
 
 interface HistorySectionProps {
+  region: SoRegion;
   onOpenSession: (sessionId: string) => void;
   onPrintSession: (session: SOSession, items: any[]) => void;
 }
 
-export default function HistorySection({ onOpenSession, onPrintSession }: HistorySectionProps) {
+export default function HistorySection({ region, onOpenSession, onPrintSession }: HistorySectionProps) {
   const [sessions, setSessions] = useState<SOSession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showLegacy, setShowLegacy] = useState(false);
 
   const fetchSessions = async () => {
     setIsLoading(true);
@@ -49,10 +56,13 @@ export default function HistorySection({ onOpenSession, onPrintSession }: Histor
   const handleExportExcel = async (session: SOSession) => {
     const { items } = await loadSession(session.id);
     const blob = exportSoReportToExcel(session, items);
-    downloadBlob(blob, `Laporan_SO_${session.tanggal || 'Harian'}_${session.gudang || 'Gudang'}.xlsx`);
+    downloadBlob(
+      blob,
+      `Laporan_SO_${resolveSessionRegion(session) || region}_${session.tanggal || 'Harian'}_${session.gudang || 'Gudang'}.xlsx`
+    );
   };
 
-  const filteredSessions = sessions.filter((s) => {
+  const matchesSearch = (s: SOSession) => {
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
     return (
@@ -60,7 +70,12 @@ export default function HistorySection({ onOpenSession, onPrintSession }: Histor
       (s.gudang || '').toLowerCase().includes(term) ||
       (s.petugas || '').toLowerCase().includes(term)
     );
-  });
+  };
+
+  const regionSessions = filterSessionsByRegion(sessions, region);
+  const legacySessions = sessions.filter((s) => resolveSessionRegion(s) === null);
+  const filteredSessions = regionSessions.filter(matchesSearch);
+  const filteredLegacy = legacySessions.filter(matchesSearch);
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
@@ -114,6 +129,9 @@ export default function HistorySection({ onOpenSession, onPrintSession }: Histor
                     <h3 className="font-bold text-slate-800 dark:text-white text-sm">{s.tanggal}</h3>
                     <span className="text-[10px] bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold px-2 py-0.5 rounded-full">
                       {s.gudang}
+                    </span>
+                    <span className="text-[10px] bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 font-bold px-2 py-0.5 rounded-full">
+                      {resolveSessionRegion(s) || region}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Petugas: {s.petugas}</p>
@@ -178,6 +196,64 @@ export default function HistorySection({ onOpenSession, onPrintSession }: Histor
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {legacySessions.length > 0 && (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-amber-200/90 dark:border-amber-800/60 p-4 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setShowLegacy((value) => !value)}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">
+                Sesi lama tanpa region ({legacySessions.length})
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                Arsip sebelum pemisahan region. Tidak dipakai untuk rollover region mana pun.
+              </p>
+            </div>
+            <span className="text-xs font-bold text-amber-700 dark:text-amber-300">
+              {showLegacy ? 'Sembunyikan' : 'Tampilkan'}
+            </span>
+          </button>
+
+          {showLegacy && (
+            <div className="mt-3 space-y-2">
+              {filteredLegacy.length === 0 ? (
+                <p className="text-xs text-slate-400">Tidak ada sesi lama yang cocok dengan pencarian.</p>
+              ) : (
+                filteredLegacy.map((s) => (
+                  <div
+                    key={s.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2"
+                  >
+                    <div className="text-xs">
+                      <span className="font-bold text-slate-800 dark:text-slate-100">{s.tanggal}</span>
+                      <span className="ml-2 text-slate-500 dark:text-slate-400">{s.gudang}</span>
+                      <span className="ml-2 text-slate-400">{s.total_items ?? 0} SKU</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => onOpenSession(s.id)}
+                        className="px-3 py-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 rounded-xl text-xs font-bold"
+                      >
+                        Buka
+                      </button>
+                      <button
+                        onClick={() => handleDelete(s.id, s.tanggal)}
+                        className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl"
+                        title="Hapus Sesi"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

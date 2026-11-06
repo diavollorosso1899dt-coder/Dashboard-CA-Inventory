@@ -1,5 +1,10 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { SOItem } from './inventoryEngine';
+import {
+  filterSessionsByRegion,
+  resolveSessionRegion,
+  type SoRegion,
+} from './region.ts';
 
 /**
  * Storage & Cloud Sync Service for SO Harian
@@ -13,6 +18,7 @@ export interface SOSession {
   tanggal: string;
   gudang: string;
   petugas: string;
+  region?: SoRegion | null;
   total_items?: number;
   item_match?: number;
   item_minus?: number;
@@ -158,6 +164,7 @@ export async function saveSession(sessionData: Partial<SOSession>, items: SOItem
   initSupabaseFromStorage();
 
   const sessionId = sessionData.id || `so-${Date.now()}`;
+  const inferredRegion = resolveSessionRegion(sessionData);
   const now = new Date().toISOString();
 
   const completeSession: SOSession = {
@@ -166,6 +173,7 @@ export async function saveSession(sessionData: Partial<SOSession>, items: SOItem
     petugas: 'Petugas Gudang',
     ...sessionData,
     id: sessionId,
+    region: inferredRegion ?? undefined,
     updated_at: now,
     created_at: sessionData.created_at || now,
     total_items: items.length,
@@ -229,11 +237,12 @@ export async function saveSession(sessionData: Partial<SOSession>, items: SOItem
       body: JSON.stringify({
         actionType: 'UPDATE',
         entityType: 'SO',
-        entityTitle: `Stock Opname ${completeSession.tanggal}`,
-        details: `Menyimpan sesi Stock Opname Harian ${completeSession.tanggal} (${completeSession.gudang || 'Gudang'}) — ${completeSession.total_items || items.length} item, status ${completeSession.status || 'DRAFT'}.`,
+        entityTitle: `Stock Opname ${completeSession.region || 'Tanpa Region'} ${completeSession.tanggal}`,
+        details: `Menyimpan sesi Stock Opname Harian ${completeSession.region || 'Tanpa Region'} ${completeSession.tanggal} (${completeSession.gudang || 'Gudang'}) — ${completeSession.total_items || items.length} item, status ${completeSession.status || 'DRAFT'}.`,
         options: {
           entityId: sessionId,
           newState: {
+            region: completeSession.region,
             tanggal: completeSession.tanggal,
             gudang: completeSession.gudang,
             total_items: completeSession.total_items,
@@ -299,18 +308,19 @@ export async function loadSession(sessionId: string): Promise<{ session: SOSessi
   return { session, items };
 }
 
-export function getAllSessionsSync(): SOSession[] {
+export function getAllSessionsSync(region?: SoRegion): SOSession[] {
   const safeStorage = getSafeStorage();
   const raw = safeStorage.getItem(STORAGE_KEYS.SESSIONS);
   if (!raw) return [];
   try {
-    return JSON.parse(raw);
+    const sessions: SOSession[] = JSON.parse(raw);
+    return region ? filterSessionsByRegion(sessions, region) : sessions;
   } catch {
     return [];
   }
 }
 
-export async function getAllSessions(): Promise<SOSession[]> {
+export async function getAllSessions(region?: SoRegion): Promise<SOSession[]> {
   initSupabaseFromStorage();
   const localList = getAllSessionsSync();
 
@@ -325,16 +335,19 @@ export async function getAllSessions(): Promise<SOSession[]> {
         const map = new Map<string, SOSession>();
         for (const s of localList) map.set(s.id, s);
         for (const s of cloudList) map.set(s.id, s);
-        const merged = Array.from(map.values()).sort((a, b) => (b.tanggal || '').localeCompare(a.tanggal || ''));
+        const merged = Array.from(map.values()).sort((a, b) =>
+          (b.tanggal || '').localeCompare(a.tanggal || '')
+        );
+        // Simpan daftar penuh, bukan hasil filter, agar cache region lain tetap utuh.
         getSafeStorage().setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(merged));
-        return merged;
+        return region ? filterSessionsByRegion(merged, region) : merged;
       }
     } catch (err) {
       console.warn('Cloud session list fetch failed:', err);
     }
   }
 
-  return localList;
+  return region ? filterSessionsByRegion(localList, region) : localList;
 }
 
 export async function deleteSession(sessionId: string): Promise<boolean> {

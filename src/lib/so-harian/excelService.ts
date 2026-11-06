@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { SOItem } from './inventoryEngine';
+import { resolveSessionRegion } from './region.ts';
 
 /**
  * Excel Parser and Template Generator Service for SO Harian
@@ -348,6 +349,7 @@ export function exportSoReportToExcel(session: any = {}, items: SOItem[] = []): 
   const workbook = XLSX.utils.book_new();
 
   const summaryRows = [
+    { Informasi: 'Region', Nilai: resolveSessionRegion(session) || '-' },
     { Informasi: 'Tanggal SO', Nilai: session.tanggal || new Date().toISOString().split('T')[0] },
     { Informasi: 'Gudang', Nilai: session.gudang || 'Gudang Utama' },
     { Informasi: 'Petugas Pemeriksa', Nilai: session.petugas || 'Petugas Gudang' },

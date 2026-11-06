@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRequestOrders, getAssetTransfers } from '@/lib/supabase/server';
 import { AssetTransfer, TransferItem } from '@/lib/supabase/types';
+import { normalizeSoRegion } from '@/lib/so-harian/region';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,6 +9,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const filter = searchParams.get('filter') || 'fulfilled'; // 'fulfilled' | 'received' | 'all'
+    const region = normalizeSoRegion(searchParams.get('region'));
 
     const [roOrders, transfers] = await Promise.all([
       getRequestOrders(true),
@@ -48,6 +50,7 @@ export async function GET(req: NextRequest) {
     let totalQty = 0;
 
     (roOrders || []).forEach((ro) => {
+      if (region && normalizeSoRegion(ro.region) !== region) return;
       (ro.items || []).forEach((it, idx) => {
         const assetKey = (it.id || '').toLowerCase().trim();
         const branchItemKey = `${(ro.branch_name || '').toLowerCase().trim()}:::${(it.item_name || '').toLowerCase().trim()}`;
@@ -115,6 +118,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      region: region || 'ALL',
       count: items.length,
       totalQty,
       filter,

@@ -10,6 +10,7 @@
  */
 
 import type { SOItem } from './inventoryEngine';
+import { resolveSessionRegion, type SoRegion } from './region.ts';
 
 export type OpeningStockSource = 'SO_SEBELUMNYA' | 'MASTER' | 'MANUAL';
 
@@ -28,6 +29,7 @@ export interface SessionLike {
   id: string;
   tanggal?: string | null;
   status?: string | null;
+  region?: string | null;
 }
 
 export interface OpeningStockDetail {
@@ -69,10 +71,12 @@ export function localDateString(date: Date = new Date()): string {
  */
 export function pickPreviousSession<T extends SessionLike>(
   sessions: T[] = [],
-  currentDate?: string | null
+  currentDate?: string | null,
+  region?: SoRegion | null
 ): T | null {
   const cutoff = normalizeSessionDate(currentDate) || localDateString();
   const candidates = (sessions || [])
+    .filter((session) => !region || resolveSessionRegion(session) === region)
     .map((session) => ({ session, date: normalizeSessionDate(session?.tanggal) }))
     .filter((entry): entry is { session: T; date: string } => Boolean(entry.date) && entry.date! < cutoff)
     .sort((a, b) => b.date.localeCompare(a.date));

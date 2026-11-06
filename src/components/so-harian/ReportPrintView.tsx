@@ -3,6 +3,7 @@
 import React from 'react';
 import { SOItem } from '@/lib/so-harian/inventoryEngine';
 import { SOSession } from '@/lib/so-harian/storageService';
+import { resolveSessionRegion } from '@/lib/so-harian/region';
 
 interface ReportPrintViewProps {
   session?: Partial<SOSession>;
@@ -38,6 +39,7 @@ export default function ReportPrintView({ session = {}, items = [], isPrinting =
         <div className="text-right text-xs">
           <p><strong>Tanggal SO:</strong> {session.tanggal || new Date().toISOString().split('T')[0]}</p>
           <p><strong>Gudang:</strong> {session.gudang || 'Gudang Utama'}</p>
+          <p><strong>Region:</strong> {resolveSessionRegion(session) || '—'}</p>
           <p><strong>Waktu Cetak:</strong> {new Date().toLocaleString('id-ID')}</p>
         </div>
       </div>
