@@ -501,10 +501,18 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [branchName, setBranchName] = useState(outletList[0]?.branch_name || outletList[0]?.nama || '');
   const [region, setRegion] = useState<'JABODETABEK' | 'KALBAR'>('JABODETABEK');
 
-  const soStockRegion: 'JABODETABEK' | 'KALBAR' =
-    selectedRegion === 'JABODETABEK' || selectedRegion === 'KALBAR'
-      ? selectedRegion
-      : region;
+  // Stok SO harus mengikuti region RO yang sedang diproses. Saat filter area
+  // "Semua", region RO adalah satu-satunya sumber yang benar; memakai region
+  // form akan menampilkan stok JABODETABEK untuk RO KALBAR.
+  const soStockRegion: 'JABODETABEK' | 'KALBAR' = (() => {
+    const fromRo = normalizeRegion(selectedRoForProcess?.region);
+    if (fromRo === 'JABODETABEK' || fromRo === 'KALBAR') return fromRo;
+
+    const fromFilter = normalizeRegion(selectedRegion);
+    if (fromFilter === 'JABODETABEK' || fromFilter === 'KALBAR') return fromFilter;
+
+    return region;
+  })();
 
   useEffect(() => {
     fetchSoStock(soStockRegion);
