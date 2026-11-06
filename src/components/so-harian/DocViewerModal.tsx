@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS public.so_sessions (
     tanggal DATE NOT NULL DEFAULT CURRENT_DATE,
     gudang VARCHAR(100) DEFAULT 'Gudang Utama',
     petugas VARCHAR(100) DEFAULT 'Petugas Gudang',
+    region TEXT, -- 'JABODETABEK' | 'KALBAR' | NULL (sesi lama)
     total_items INTEGER DEFAULT 0,
     item_match INTEGER DEFAULT 0,
     item_selisih INTEGER DEFAULT 0,
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS public.so_details (
 );
 
 CREATE INDEX IF NOT EXISTS idx_so_sessions_tanggal ON public.so_sessions(tanggal DESC);
+CREATE INDEX IF NOT EXISTS so_sessions_region_tanggal_idx ON public.so_sessions(region, tanggal DESC);
 CREATE INDEX IF NOT EXISTS idx_so_details_session_id ON public.so_details(session_id);
 CREATE INDEX IF NOT EXISTS idx_so_details_kode_barang ON public.so_details(kode_barang);`;
 
