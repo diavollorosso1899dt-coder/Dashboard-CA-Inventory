@@ -31,8 +31,11 @@ import {
   OpeningStockDetail,
 } from '@/lib/so-harian/rollover';
 import DataPreviewModal from './DataPreviewModal';
+import { matchesRegion } from '@/lib/utils/region-helper';
+import type { SoRegion } from '@/lib/so-harian/region';
 
 interface UploadSectionProps {
+  region: SoRegion;
   onCompilationSuccess: (compiledItems: SOItem[], metadata: any) => void;
   previousSessionStock?: Map<string, number>;
   previousSessionItems?: SOItem[];
@@ -40,21 +43,60 @@ interface UploadSectionProps {
   previousSessionStatus?: string | null;
 }
 
-// Default permanent URLs from ENV with reliable fallbacks
-const DEFAULT_SHEET_URLS: Record<string, string> = {
+type SoSheetType = 'PENERIMAAN' | 'PERALATAN' | 'PERLENGKAPAN' | 'RO';
+type SoSheetUrls = Record<SoSheetType, string>;
+
+const KALBAR_FALLBACKS: SoSheetUrls = {
   RO: '',
   PENERIMAAN:
-    process.env.NEXT_PUBLIC_SO_SHEET_PENERIMAAN_URL ||
     'https://docs.google.com/spreadsheets/d/1neWHHRIjYm3Q4gsoV6Id258jcj5QvOFwhS84PMJL0lE/edit?gid=352107216#gid=352107216',
   PERALATAN:
-    process.env.NEXT_PUBLIC_SO_SHEET_PERALATAN_URL ||
     'https://docs.google.com/spreadsheets/d/1fiRhYHPDgSadKIDLlnqyD9K-ZBXg2_3vlyqI-4jdNfc/edit?gid=1727080084#gid=1727080084',
   PERLENGKAPAN:
-    process.env.NEXT_PUBLIC_SO_SHEET_PERLENGKAPAN_URL ||
     'https://docs.google.com/spreadsheets/d/1fiRhYHPDgSadKIDLlnqyD9K-ZBXg2_3vlyqI-4jdNfc/edit?gid=1129207194#gid=1129207194',
 };
 
+const JABO_FALLBACKS: SoSheetUrls = {
+  RO: '',
+  PENERIMAAN: '',
+  PERALATAN:
+    'https://docs.google.com/spreadsheets/d/1fiRhYHPDgSadKIDLlnqyD9K-ZBXg2_3vlyqI-4jdNfc/edit?gid=1721157388#gid=1721157388',
+  PERLENGKAPAN:
+    'https://docs.google.com/spreadsheets/d/1fiRhYHPDgSadKIDLlnqyD9K-ZBXg2_3vlyqI-4jdNfc/edit?gid=737037942#gid=737037942',
+};
+
+const DEFAULT_SHEET_URLS: Record<SoRegion, SoSheetUrls> = {
+  JABODETABEK: {
+    RO: process.env.NEXT_PUBLIC_SO_SHEET_RO_JABO_URL || JABO_FALLBACKS.RO,
+    PENERIMAAN:
+      process.env.NEXT_PUBLIC_SO_SHEET_PENERIMAAN_JABO_URL || JABO_FALLBACKS.PENERIMAAN,
+    PERALATAN:
+      process.env.NEXT_PUBLIC_SO_SHEET_PERALATAN_JABO_URL || JABO_FALLBACKS.PERALATAN,
+    PERLENGKAPAN:
+      process.env.NEXT_PUBLIC_SO_SHEET_PERLENGKAPAN_JABO_URL || JABO_FALLBACKS.PERLENGKAPAN,
+  },
+  KALBAR: {
+    RO:
+      process.env.NEXT_PUBLIC_SO_SHEET_RO_KALBAR_URL ||
+      process.env.NEXT_PUBLIC_SO_SHEET_RO_URL ||
+      KALBAR_FALLBACKS.RO,
+    PENERIMAAN:
+      process.env.NEXT_PUBLIC_SO_SHEET_PENERIMAAN_KALBAR_URL ||
+      process.env.NEXT_PUBLIC_SO_SHEET_PENERIMAAN_URL ||
+      KALBAR_FALLBACKS.PENERIMAAN,
+    PERALATAN:
+      process.env.NEXT_PUBLIC_SO_SHEET_PERALATAN_KALBAR_URL ||
+      process.env.NEXT_PUBLIC_SO_SHEET_PERALATAN_URL ||
+      KALBAR_FALLBACKS.PERALATAN,
+    PERLENGKAPAN:
+      process.env.NEXT_PUBLIC_SO_SHEET_PERLENGKAPAN_KALBAR_URL ||
+      process.env.NEXT_PUBLIC_SO_SHEET_PERLENGKAPAN_URL ||
+      KALBAR_FALLBACKS.PERLENGKAPAN,
+  },
+};
+
 export default function UploadSection({
+  region,
   onCompilationSuccess,
   previousSessionStock = new Map(),
   previousSessionItems = [],
@@ -82,41 +124,70 @@ export default function UploadSection({
   const [isSjLoading, setIsSjLoading] = useState(false);
 
   // Sheet URLs for LINK mode with localStorage persistence (no need to re-paste every time app opens)
-  const [sheetUrls, setSheetUrls] = useState<Record<string, string>>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('so_sheet_urls');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          return {
-            RO: parsed.RO ?? DEFAULT_SHEET_URLS.RO,
-            PENERIMAAN: parsed.PENERIMAAN || DEFAULT_SHEET_URLS.PENERIMAAN,
-            PERALATAN: parsed.PERALATAN || DEFAULT_SHEET_URLS.PERALATAN,
-            PERLENGKAPAN: parsed.PERLENGKAPAN || DEFAULT_SHEET_URLS.PERLENGKAPAN,
-          };
-        }
-      } catch (e) {
-        // fallback
+  const [sheetUrls, setSheetUrls] = useState<SoSheetUrls>(() => {
+    const defaults = DEFAULT_SHEET_URLS[region];
+    if (typeof window === 'undefined') return defaults;
+
+    try {
+      const savedV2 = localStorage.getItem('so_sheet_urls_v2');
+      if (savedV2) {
+        const parsed = JSON.parse(savedV2);
+        const regionUrls = parsed?.[region] || {};
+        return {
+          RO: regionUrls.RO ?? defaults.RO,
+          PENERIMAAN: regionUrls.PENERIMAAN ?? defaults.PENERIMAAN,
+          PERALATAN: regionUrls.PERALATAN ?? defaults.PERALATAN,
+          PERLENGKAPAN: regionUrls.PERLENGKAPAN ?? defaults.PERLENGKAPAN,
+        };
       }
+
+      const legacyRaw = localStorage.getItem('so_sheet_urls');
+      if (legacyRaw) {
+        const legacy = JSON.parse(legacyRaw);
+        const migrated: Record<SoRegion, SoSheetUrls> = {
+          JABODETABEK: { ...DEFAULT_SHEET_URLS.JABODETABEK },
+          KALBAR: {
+            RO: legacy.RO ?? DEFAULT_SHEET_URLS.KALBAR.RO,
+            PENERIMAAN: legacy.PENERIMAAN ?? DEFAULT_SHEET_URLS.KALBAR.PENERIMAAN,
+            PERALATAN: legacy.PERALATAN ?? DEFAULT_SHEET_URLS.KALBAR.PERALATAN,
+            PERLENGKAPAN: legacy.PERLENGKAPAN ?? DEFAULT_SHEET_URLS.KALBAR.PERLENGKAPAN,
+          },
+        };
+        // Key lama tidak dihapus agar masih bisa dipulihkan manual.
+        localStorage.setItem('so_sheet_urls_v2', JSON.stringify(migrated));
+        return migrated[region];
+      }
+    } catch {
+      // Konfigurasi tersimpan rusak; pakai default region.
     }
-    return DEFAULT_SHEET_URLS;
+
+    return defaults;
   });
 
-  const updateSheetUrl = (type: string, url: string) => {
+  const updateSheetUrl = (type: SoSheetType, url: string) => {
     setSheetUrls((prev) => {
       const updated = { ...prev, [type]: url };
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem('so_sheet_urls', JSON.stringify(updated));
-        } catch (e) {}
+          const raw = localStorage.getItem('so_sheet_urls_v2');
+          const all = raw
+            ? JSON.parse(raw)
+            : {
+                JABODETABEK: { ...DEFAULT_SHEET_URLS.JABODETABEK },
+                KALBAR: { ...DEFAULT_SHEET_URLS.KALBAR },
+              };
+          all[region] = updated;
+          localStorage.setItem('so_sheet_urls_v2', JSON.stringify(all));
+        } catch {
+          // localStorage bisa diblokir; URL tetap berlaku untuk sesi ini.
+        }
       }
       return updated;
     });
   };
 
-  const resetToDefaultUrl = (type: string) => {
-    const defaultUrl = DEFAULT_SHEET_URLS[type] || '';
-    updateSheetUrl(type, defaultUrl);
+  const resetToDefaultUrl = (type: SoSheetType) => {
+    updateSheetUrl(type, DEFAULT_SHEET_URLS[region][type] || '');
   };
 
   const [isUrlLoading, setIsUrlLoading] = useState<Record<string, boolean>>({});
@@ -236,7 +307,7 @@ export default function UploadSection({
     }
   };
 
-  const handleFetchFromLink = async (type: string) => {
+  const handleFetchFromLink = async (type: SoSheetType) => {
     const url = sheetUrls[type];
     if (!url || !url.trim()) {
       setErrorMessage('Silakan tempel (paste) link Google Spreadsheet / online CSV terlebih dahulu');
@@ -292,8 +363,8 @@ export default function UploadSection({
 
   // 1-Click Pull for Both Peralatan & Perlengkapan
   const handleFetchAllMasterStock = async () => {
-    const urlPeralatan = sheetUrls.PERALATAN || DEFAULT_SHEET_URLS.PERALATAN;
-    const urlPerlengkapan = sheetUrls.PERLENGKAPAN || DEFAULT_SHEET_URLS.PERLENGKAPAN;
+    const urlPeralatan = sheetUrls.PERALATAN || DEFAULT_SHEET_URLS[region].PERALATAN;
+    const urlPerlengkapan = sheetUrls.PERLENGKAPAN || DEFAULT_SHEET_URLS[region].PERLENGKAPAN;
 
     if (!urlPeralatan && !urlPerlengkapan) {
       setErrorMessage('Link Stok Awal Peralatan atau Perlengkapan belum ditentukan');
@@ -375,13 +446,20 @@ export default function UploadSection({
       }
 
       const allSj: any[] = json.data;
-      const filteredSj = allSj.filter((sj) => {
-        const st = (sj.status || '').toUpperCase();
-        if (sjFilterStatus === 'DELIVERED') {
-          return st === 'DELIVERED' || st === 'SELESAI';
-        }
-        return st === 'DELIVERED' || st === 'SELESAI' || st === 'SHIPPED' || st === 'DALAM PENGIRIMAN';
-      });
+      const filteredSj = allSj
+        .filter((sj) => matchesRegion(sj.region, region))
+        .filter((sj) => {
+          const st = (sj.status || '').toUpperCase();
+          if (sjFilterStatus === 'DELIVERED') {
+            return st === 'DELIVERED' || st === 'SELESAI';
+          }
+          return (
+            st === 'DELIVERED' ||
+            st === 'SELESAI' ||
+            st === 'SHIPPED' ||
+            st === 'DALAM PENGIRIMAN'
+          );
+        });
 
       if (filteredSj.length === 0) {
         throw new Error(
@@ -440,7 +518,7 @@ export default function UploadSection({
     const filter = filterOverride || slaFilterMode;
 
     try {
-      const res = await fetch(`/api/stock-opname/sla-items?filter=${filter}`);
+      const res = await fetch(`/api/stock-opname/sla-items?filter=${filter}&region=${region}`);
       const json = await res.json();
       if (!res.ok || !json.data) {
         throw new Error(json.error || 'Gagal mengambil data dari fitur Monitoring SLA');
@@ -450,8 +528,8 @@ export default function UploadSection({
       if (items.length === 0) {
         throw new Error(
           filter === 'received'
-            ? 'Belum ada item berstatus diterima outlet pada fitur Monitoring SLA.'
-            : 'Belum ada item dengan QTY terpenuhi pada fitur Monitoring SLA.'
+            ? `Belum ada item berstatus diterima outlet pada fitur Monitoring SLA untuk region ${region}.`
+            : `Belum ada item dengan QTY terpenuhi pada fitur Monitoring SLA untuk region ${region}.`
         );
       }
 
@@ -480,7 +558,9 @@ export default function UploadSection({
     setIsPrReadyLoading(true);
 
     try {
-      const res = await fetch('/api/stock-opname/pr-ready-items', { cache: 'no-store' });
+      const res = await fetch(`/api/stock-opname/pr-ready-items?region=${region}`, {
+        cache: 'no-store',
+      });
       const json = await res.json();
       if (!res.ok || !json.data) {
         throw new Error(json.error || 'Gagal mengambil data PR yang sudah Ready Stock');
@@ -488,7 +568,9 @@ export default function UploadSection({
 
       const items: any[] = json.data;
       if (items.length === 0) {
-        throw new Error('Belum ada item PR yang berstatus Selesai / Ready Stock.');
+        throw new Error(
+          `Belum ada item PR yang berstatus Selesai / Ready Stock untuk region ${region}.`
+        );
       }
 
       const mockFile = {
@@ -512,7 +594,7 @@ export default function UploadSection({
     if (inputModes.PENERIMAAN === 'PR_READY_STOCK' && penerimaanData.length === 0) {
       handleFetchFromPrReadyStock();
     }
-  }, []);
+  }, [region]);
 
   const handleDownloadTemplate = (type: string) => {
     const blob = generateSampleTemplate(type);
@@ -733,7 +815,7 @@ export default function UploadSection({
                     <TrendingDown className="w-5 h-5" />
                   </div>
                   <div>
-                    <h4 className="font-bold text-slate-800 dark:text-white text-sm">Data RO Harian</h4>
+                    <h4 className="font-bold text-slate-800 dark:text-white text-sm">Data RO Harian — {region}</h4>
                     <span className="text-[11px] text-slate-400 block">Pengeluaran / Release Order (-)</span>
                   </div>
                 </div>
@@ -1022,7 +1104,7 @@ export default function UploadSection({
                     <TrendingUp className="w-5 h-5" />
                   </div>
                   <div>
-                    <h4 className="font-bold text-slate-800 dark:text-white text-sm">Data Penerimaan Harian</h4>
+                    <h4 className="font-bold text-slate-800 dark:text-white text-sm">Data Penerimaan Harian — {region}</h4>
                     <span className="text-[11px] text-slate-400 block">Barang Masuk / Mutasi Masuk (+)</span>
                   </div>
                 </div>
@@ -1152,7 +1234,7 @@ export default function UploadSection({
                       <Globe className="w-3.5 h-3.5 text-emerald-500" />
                       <span className="font-semibold text-slate-700 dark:text-slate-300">Link Penerimaan Tetap (ENV / Saved):</span>
                     </div>
-                    {sheetUrls.PENERIMAAN !== DEFAULT_SHEET_URLS.PENERIMAAN && (
+                    {sheetUrls.PENERIMAAN !== DEFAULT_SHEET_URLS[region].PENERIMAAN && (
                       <button
                         type="button"
                         onClick={() => resetToDefaultUrl('PENERIMAAN')}
@@ -1246,7 +1328,7 @@ export default function UploadSection({
                   <Wrench className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-slate-800 dark:text-white text-sm">Stok Awal: Peralatan</h4>
+                  <h4 className="font-bold text-slate-800 dark:text-white text-sm">Stok Awal: Peralatan — {region}</h4>
                   <span className="text-[11px] text-slate-400 block">Tools, Mesin, Perkakas Kerja</span>
                 </div>
               </div>
@@ -1322,7 +1404,7 @@ export default function UploadSection({
               <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-xl">
                 <div className="flex items-center justify-between text-[11px] text-slate-500">
                   <span className="font-semibold text-slate-700 dark:text-slate-300">Link Tetap (ENV / Saved):</span>
-                  {sheetUrls.PERALATAN !== DEFAULT_SHEET_URLS.PERALATAN && (
+                  {sheetUrls.PERALATAN !== DEFAULT_SHEET_URLS[region].PERALATAN && (
                     <button
                       type="button"
                       onClick={() => resetToDefaultUrl('PERALATAN')}
@@ -1339,6 +1421,11 @@ export default function UploadSection({
                   placeholder="https://docs.google.com/spreadsheets/d/..."
                   className="w-full p-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg text-xs font-mono focus:ring-2 focus:ring-amber-500 outline-none"
                 />
+                {!sheetUrls.PERALATAN && (
+                  <div className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-2 py-1">
+                    Master {region} belum disiapkan. Kompilasi tetap bisa jalan dari RO/Penerimaan.
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => handleFetchFromLink('PERALATAN')}
@@ -1375,7 +1462,7 @@ export default function UploadSection({
                   <Armchair className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-slate-800 dark:text-white text-sm">Stok Awal: Perlengkapan Tetap</h4>
+                  <h4 className="font-bold text-slate-800 dark:text-white text-sm">Stok Awal: Perlengkapan Tetap — {region}</h4>
                   <span className="text-[11px] text-slate-400 block">Meja, Kursi, Lemari, Fixture</span>
                 </div>
               </div>
@@ -1451,7 +1538,7 @@ export default function UploadSection({
               <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-xl">
                 <div className="flex items-center justify-between text-[11px] text-slate-500">
                   <span className="font-semibold text-slate-700 dark:text-slate-300">Link Tetap (ENV / Saved):</span>
-                  {sheetUrls.PERLENGKAPAN !== DEFAULT_SHEET_URLS.PERLENGKAPAN && (
+                  {sheetUrls.PERLENGKAPAN !== DEFAULT_SHEET_URLS[region].PERLENGKAPAN && (
                     <button
                       type="button"
                       onClick={() => resetToDefaultUrl('PERLENGKAPAN')}
@@ -1468,6 +1555,11 @@ export default function UploadSection({
                   placeholder="https://docs.google.com/spreadsheets/d/..."
                   className="w-full p-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg text-xs font-mono focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
+                {!sheetUrls.PERLENGKAPAN && (
+                  <div className="text-[10px] text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-lg px-2 py-1">
+                    Master {region} belum disiapkan. Kompilasi tetap bisa jalan dari RO/Penerimaan.
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => handleFetchFromLink('PERLENGKAPAN')}
