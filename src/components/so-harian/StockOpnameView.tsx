@@ -36,12 +36,42 @@ import {
 import { exportSoReportToExcel, downloadBlob } from '@/lib/so-harian/excelService';
 import { calculateSessionSummary, SOItem } from '@/lib/so-harian/inventoryEngine';
 import { buildCarryForwardEntries, pickPreviousSession } from '@/lib/so-harian/rollover';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAuth } from '@/components/auth/AuthContext';
+import AreaFilterPills from '@/components/ui/AreaFilterPills';
+import {
+  SO_ACTIVE_REGION_KEY,
+  buildSoSessionId,
+  normalizeSoRegion,
+  resolveActiveSoRegion,
+  type SoRegion,
+} from '@/lib/so-harian/region';
 
-export function StockOpnameView() {
+interface StockOpnameViewProps {
+  initialRegion?: string | null;
+}
+
+export function StockOpnameView({ initialRegion = null }: StockOpnameViewProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { allowedRegion, isRegionLocked } = useAuth();
+  const todayDate = new Date().toISOString().split('T')[0];
+
+  // Jangan membaca localStorage di initializer: server tidak punya localStorage,
+  // sehingga hasil render pertama bisa berbeda dari klien (hydration mismatch).
+  const [region, setRegion] = useState<SoRegion>(() =>
+    resolveActiveSoRegion({
+      requested: initialRegion,
+      allowedRegion,
+      isRegionLocked,
+    })
+  );
+
   const [activeTab, setActiveTab] = useState<'UPLOAD' | 'SO_TABLE' | 'HISTORY'>('UPLOAD');
   const [sessionData, setSessionData] = useState<Partial<SOSession>>({
-    id: `so-${new Date().toISOString().split('T')[0]}`,
-    tanggal: new Date().toISOString().split('T')[0],
+    id: buildSoSessionId(region, todayDate),
+    tanggal: todayDate,
+    region,
     gudang: 'Gudang Utama',
     petugas: 'Petugas Gudang',
     status: 'DRAFT',
@@ -67,6 +97,83 @@ export function StockOpnameView() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
+
+  const applyRegion = (next: SoRegion) => {
+    setRegion(next);
+    setItems([]);
+    setLoadedSessionMeta(null);
+    setActiveTab('UPLOAD');
+    setPreviousSessionStock(new Map());
+    setPreviousSessionItems([]);
+    setPreviousSessionDate(null);
+    setPreviousSessionStatus(null);
+    setSessionData((prev) => ({
+      ...prev,
+      region: next,
+      id: buildSoSessionId(next, String(prev.tanggal || todayDate).slice(0, 10)),
+    }));
+    try {
+      localStorage.setItem(SO_ACTIVE_REGION_KEY, next);
+    } catch {
+      // localStorage bisa diblokir; region tetap berlaku untuk sesi ini.
+    }
+    if (pathname) router.replace(`${pathname}?region=${next}`);
+  };
+
+  const handleRegionChange = (next: string) => {
+    const normalized = normalizeSoRegion(next);
+    if (!normalized || normalized === region) return;
+    // Akun yang dikunci tidak boleh ditanya konfirmasi; region profil memaksa.
+    if (!isRegionLocked && items.length > 0) {
+      const ok = window.confirm(
+        `Pindah ke ${normalized}? ${items.length} item yang belum disimpan akan ditinggalkan.`
+      );
+      if (!ok) return;
+    }
+    applyRegion(normalized);
+  };
+
+  // Pulihkan region tersimpan setelah mount. Dilewati bila URL sudah menentukan
+  // region atau akun dikunci ke satu region.
+  useEffect(() => {
+    if (isRegionLocked) return;
+    if (normalizeSoRegion(initialRegion)) return;
+
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem(SO_ACTIVE_REGION_KEY);
+    } catch {
+      return;
+    }
+
+    const next = normalizeSoRegion(stored);
+    if (!next || next === region) return;
+    applyRegion(next);
+    // Hanya berjalan sekali setelah mount; region awal sudah dipakai sebagai basis.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Profil bisa selesai dimuat setelah render pertama. Untuk akun yang dikunci,
+  // region profil selalu menang.
+  useEffect(() => {
+    if (!isRegionLocked) return;
+    const locked = normalizeSoRegion(allowedRegion);
+    if (!locked || locked === region) return;
+    setRegion(locked);
+    setItems([]);
+    setLoadedSessionMeta(null);
+    setSessionData((prev) => ({
+      ...prev,
+      region: locked,
+      id: buildSoSessionId(locked, String(prev.tanggal || todayDate).slice(0, 10)),
+    }));
+    try {
+      localStorage.setItem(SO_ACTIVE_REGION_KEY, locked);
+    } catch {
+      // abaikan
+    }
+    if (pathname) router.replace(`${pathname}?region=${locked}`);
+  }, [isRegionLocked, allowedRegion, region, pathname, router, todayDate]);
 
   useEffect(() => {
     const cfg = getSupabaseConfig();
@@ -365,6 +472,15 @@ export function StockOpnameView() {
             className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-0.5 text-xs font-semibold focus:ring-1 focus:ring-sky-500 w-36"
           />
         </div>
+
+        <AreaFilterPills
+          value={region}
+          onChange={handleRegionChange}
+          allowAll={false}
+          syncUrl={false}
+          showIcon
+          label="Region:"
+        />
       </div>
 
       {/* Main Tab Switcher */}
@@ -420,6 +536,8 @@ export function StockOpnameView() {
         {/* Tab 1: Upload */}
         {activeTab === 'UPLOAD' && (
           <UploadSection
+            key={region}
+            region={region}
             onCompilationSuccess={handleCompilationSuccess}
             previousSessionStock={previousSessionStock}
             previousSessionItems={previousSessionItems}
