@@ -10,6 +10,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const region = normalizeSoRegion(searchParams.get('region'));
+    const sinceDate = searchParams.get('sinceDate');
 
     const [prAllItems, { data: allAssetRequests }] = await Promise.all([
       getPurchaseRequirementItems('ALL', true),
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
     const combined = Array.from(mergedMap.values()).filter(
       (it) => !region || normalizeSoRegion(it.region) === region
     );
-    const { items, totalQty } = extractPrReadyStockItemsForSo(combined);
+    const { items, totalQty } = extractPrReadyStockItemsForSo(combined, { sinceDate });
 
     return NextResponse.json({
       success: true,

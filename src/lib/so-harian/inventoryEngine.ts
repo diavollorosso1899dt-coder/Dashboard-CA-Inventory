@@ -107,20 +107,72 @@ export function calculateVariance(
 }
 
 /**
- * Aggregates transaction rows (RO or Penerimaan) by SKU / kode_barang
+ * Normalizes SKU / item name for case-insensitive matching across Master, PR, and Outlet deliveries.
+ */
+export function normalizeInventoryKey(raw: unknown): string {
+  return String(raw || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function extractIsoDatePrefix(raw: unknown): string | null {
+  if (!raw) return null;
+  const str = String(raw).trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(str);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  return null;
+}
+
+/**
+ * Filters transaction rows (PR Ready Stock or Terima Outlet) to only include
+ * mutations that occurred strictly after `sinceDate` (the previous SO session date),
+ * preventing double-counting when rolling over Hasil SO -> Stock Aset.
+ */
+export function filterTransactionsAfterDate<T extends Record<string, any>>(
+  rows: T[] = [],
+  sinceDate?: string | null
+): T[] {
+  const cutoff = extractIsoDatePrefix(sinceDate);
+  if (!cutoff) return rows || [];
+
+  return (rows || []).filter((row) => {
+    if (!row) return false;
+    const rowDate =
+      extractIsoDatePrefix(row.tanggal) ||
+      extractIsoDatePrefix(row.tgl_diterima) ||
+      extractIsoDatePrefix(row.tgl_penerimaan) ||
+      extractIsoDatePrefix(row.received_date);
+    // Rows without a date (e.g. manual Excel upload without date column) are kept
+    if (!rowDate) return true;
+    return rowDate > cutoff;
+  });
+}
+
+/**
+ * Aggregates transaction rows (RO or Penerimaan) by SKU / kode_barang (case-insensitive)
  */
 export function aggregateTransactions(rows: any[] = []): Map<string, number> {
   const result = new Map<string, number>();
+  const canonicalByNorm = new Map<string, string>();
 
   for (const row of rows) {
     if (!row) continue;
-    const rawCode = row.kode_barang || row.sku || row.kode || row.kode_item || row.nama_barang || row.nama || row.item || '';
+    const rawCode =
+      row.kode_barang || row.sku || row.kode || row.kode_item || row.nama_barang || row.nama || row.item || '';
     const code = String(rawCode).trim();
-    if (!code) continue;
+    const norm = normalizeInventoryKey(code);
+    if (!norm) continue;
 
-    const qty = Number(row.qty || row.jumlah || row.kuantiti || 0) || 0;
-    const current = result.get(code) || 0;
-    result.set(code, Math.round((current + qty + Number.EPSILON) * 10000) / 10000);
+    let canonical = canonicalByNorm.get(norm);
+    if (!canonical) {
+      canonical = code;
+      canonicalByNorm.set(norm, canonical);
+    }
+
+    const qty = Number(row.qty ?? row.qty_penerimaan ?? row.jumlah ?? row.kuantiti ?? 0) || 0;
+    const current = result.get(canonical) || 0;
+    result.set(canonical, Math.round((current + qty + Number.EPSILON) * 10000) / 10000);
   }
 
   return result;
@@ -128,6 +180,7 @@ export function aggregateTransactions(rows: any[] = []): Map<string, number> {
 
 /**
  * Merges initial stock, RO, and Penerimaan into a unified list of items for SO
+ * with case-insensitive SKU and item-name reconciliation so items never duplicate.
  */
 export function mergeDailyInventory(
   initialStockMap: Map<string, number> = new Map(),
@@ -136,11 +189,80 @@ export function mergeDailyInventory(
   itemDetailsMap: Map<string, any> = new Map(),
   initialSourceMap: Map<string, 'SO_SEBELUMNYA' | 'MASTER' | 'MANUAL'> = new Map()
 ): SOItem[] {
-  const allCodes = new Set([
-    ...Array.from(initialStockMap.keys()),
-    ...Array.from(roMap.keys()),
-    ...Array.from(penerimaanMap.keys()),
-    ...Array.from(itemDetailsMap.keys()),
+  const canonicalByNorm = new Map<string, string>();
+  const registerCanonical = (code: string) => {
+    const clean = String(code || '').trim();
+    const norm = normalizeInventoryKey(clean);
+    if (!norm) return '';
+    if (!canonicalByNorm.has(norm)) {
+      canonicalByNorm.set(norm, clean);
+    }
+    return canonicalByNorm.get(norm)!;
+  };
+
+  // Priority order for canonical code casing: initialStock -> itemDetails -> penerimaan -> ro
+  for (const k of Array.from(initialStockMap.keys())) registerCanonical(k);
+  for (const k of Array.from(itemDetailsMap.keys())) registerCanonical(k);
+
+  // Also map normalized item name -> canonical SKU code so transactions keyed by item_name match master SKU
+  for (const [rawCode, details] of Array.from(itemDetailsMap.entries())) {
+    const canonical = registerCanonical(rawCode);
+    const nameNorm = normalizeInventoryKey(details?.nama_barang || details?.nama || details?.deskripsi);
+    if (nameNorm && canonical && !canonicalByNorm.has(nameNorm)) {
+      canonicalByNorm.set(nameNorm, canonical);
+    }
+  }
+
+  for (const k of Array.from(penerimaanMap.keys())) registerCanonical(k);
+  for (const k of Array.from(roMap.keys())) registerCanonical(k);
+
+  const normStock = new Map<string, number>();
+  for (const [k, v] of Array.from(initialStockMap.entries())) {
+    const c = registerCanonical(k);
+    if (!c) continue;
+    normStock.set(c, Math.round(((normStock.get(c) || 0) + (Number(v) || 0) + Number.EPSILON) * 10000) / 10000);
+  }
+
+  const normPenerimaan = new Map<string, number>();
+  for (const [k, v] of Array.from(penerimaanMap.entries())) {
+    const c = registerCanonical(k);
+    if (!c) continue;
+    normPenerimaan.set(
+      c,
+      Math.round(((normPenerimaan.get(c) || 0) + (Number(v) || 0) + Number.EPSILON) * 10000) / 10000
+    );
+  }
+
+  const normRo = new Map<string, number>();
+  for (const [k, v] of Array.from(roMap.entries())) {
+    const c = registerCanonical(k);
+    if (!c) continue;
+    normRo.set(c, Math.round(((normRo.get(c) || 0) + (Number(v) || 0) + Number.EPSILON) * 10000) / 10000);
+  }
+
+  const normDetails = new Map<string, any>();
+  for (const [k, v] of Array.from(itemDetailsMap.entries())) {
+    const c = registerCanonical(k);
+    if (!c) continue;
+    if (!normDetails.has(c)) {
+      normDetails.set(c, { ...v });
+    } else {
+      const prev = normDetails.get(c);
+      normDetails.set(c, { ...v, ...prev });
+    }
+  }
+
+  const normSource = new Map<string, 'SO_SEBELUMNYA' | 'MASTER' | 'MANUAL'>();
+  for (const [k, v] of Array.from(initialSourceMap.entries())) {
+    const c = registerCanonical(k);
+    if (c && !normSource.has(c)) normSource.set(c, v);
+  }
+
+  const allCodes = new Set<string>([
+    ...Array.from(normStock.keys()),
+    ...Array.from(normRo.keys()),
+    ...Array.from(normPenerimaan.keys()),
+    ...Array.from(normDetails.keys()),
   ]);
 
   const merged: SOItem[] = [];
@@ -148,15 +270,18 @@ export function mergeDailyInventory(
   for (const code of Array.from(allCodes)) {
     if (!code) continue;
 
-    const details = itemDetailsMap.get(code) || {};
-    const stokAwal = initialStockMap.get(code) || 0;
-    const qtyPenerimaan = penerimaanMap.get(code) || 0;
-    const qtyRo = roMap.get(code) || 0;
+    const details = normDetails.get(code) || {};
+    const stokAwal = normStock.get(code) || 0;
+    const qtyPenerimaan = normPenerimaan.get(code) || 0;
+    const qtyRo = normRo.get(code) || 0;
 
     const stokSistem = calculateSystemStock(stokAwal, qtyPenerimaan, qtyRo);
 
     merged.push({
-      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      id:
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       kode_barang: code,
       nama_barang: details.nama_barang || details.nama || details.deskripsi || code,
       kategori: details.kategori || 'Peralatan',
@@ -170,7 +295,7 @@ export function mergeDailyInventory(
       selisih: null,
       status_selisih: 'UNCHECKED',
       catatan: '',
-      stok_awal_sumber: initialSourceMap.get(code) || 'MASTER',
+      stok_awal_sumber: normSource.get(code) || 'MASTER',
     });
   }
 

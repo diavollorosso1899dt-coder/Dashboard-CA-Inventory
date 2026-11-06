@@ -8,8 +8,11 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const filter = searchParams.get('filter') || 'fulfilled'; // 'fulfilled' | 'received' | 'all'
+    const filter = searchParams.get('filter') || 'received'; // 'received' | 'fulfilled' | 'all'
     const region = normalizeSoRegion(searchParams.get('region'));
+    const rawSince = searchParams.get('sinceDate');
+    const sinceDate =
+      rawSince && /^\d{4}-\d{2}-\d{2}/.test(rawSince.trim()) ? rawSince.trim().slice(0, 10) : null;
 
     const [roOrders, transfers] = await Promise.all([
       getRequestOrders(true),
@@ -59,15 +62,40 @@ export async function GET(req: NextRequest) {
         const matched = transferItemMap.get(assetKey) || transferItemMap.get(roItemKey) || transferItemMap.get(branchItemKey);
 
         const shippingDate = matched?.transfer.transfer_date || null;
-        const receivedDate = matched?.transfer.received_date || ro.arrival_datetime || null;
+        const receivedDate =
+          matched?.transfer.received_date ||
+          ro.received_date ||
+          ro.arrival_datetime ||
+          (it as any).pr_arrival_date ||
+          null;
         const sjNumber = matched?.transfer.surat_jalan_number || null;
         const transferStatus = matched?.transfer.status || null;
-        const isTransferredAndReceived = transferStatus === 'RECEIVED' || Boolean(receivedDate);
+        const roStage = (ro.current_stage || '').toUpperCase();
+        const roStatus = (ro.status || '').toUpperCase();
+        const isStageReceived =
+          roStage === 'ASET_SAMPAI' ||
+          roStage === 'CHECKLIST' ||
+          roStage === 'CHECKLIST_DONE' ||
+          roStage === 'UPDATE_SLA' ||
+          roStage === 'SELESAI' ||
+          roStatus === 'COMPLETED' ||
+          roStatus === 'CHECKLIST_DONE';
+        const isTransferredAndReceived =
+          transferStatus === 'RECEIVED' ||
+          Boolean(receivedDate) ||
+          Number((it as any).received_qty) > 0 ||
+          (isStageReceived && Number(it.quantity_fulfilled || 0) > 0);
 
         // Calculate quantity_fulfilled matching Monitoring SLA
         const quantityOrdered = Number(it.quantity_ordered) || 1;
         const quantityFulfilled = isTransferredAndReceived
-          ? Number(matched?.item.quantity || quantityOrdered)
+          ? Number(
+              (matched?.item as any)?.received_quantity ||
+                (it as any).received_qty ||
+                matched?.item.quantity ||
+                it.quantity_fulfilled ||
+                quantityOrdered
+            )
           : Number(it.quantity_fulfilled || 0);
 
         const isFulfilled = quantityFulfilled >= quantityOrdered || isTransferredAndReceived;
@@ -77,6 +105,18 @@ export async function GET(req: NextRequest) {
           return;
         }
         if (filter === 'fulfilled' && quantityFulfilled <= 0) {
+          return;
+        }
+
+        const effectiveDateRaw =
+          receivedDate ||
+          shippingDate ||
+          ((ro as any).updated_at && String((ro as any).updated_at).split('T')[0]) ||
+          ro.request_date ||
+          new Date().toISOString().split('T')[0];
+        const effectiveDate = String(effectiveDateRaw).split('T')[0];
+
+        if (sinceDate && effectiveDate <= sinceDate) {
           return;
         }
 
@@ -110,7 +150,7 @@ export async function GET(req: NextRequest) {
           surat_jalan: sjNumber,
           alokasi_stok: it.stock_source || (matched ? 'GUDANG_SCGA' : 'READY_STOCK'),
           tahap_alur: ro.current_stage || ro.status || 'READY_STOCK',
-          tanggal: receivedDate || shippingDate || ro.request_date || new Date().toISOString().split('T')[0],
+          tanggal: effectiveDate,
           keterangan: `SLA: ${ro.ro_number} (${quantityFulfilled}/${quantityOrdered} QTY) -> ${ro.branch_name}`,
         });
       });

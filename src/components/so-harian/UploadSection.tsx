@@ -23,7 +23,13 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { parseExcelFile, generateSampleTemplate, downloadBlob } from '@/lib/so-harian/excelService';
-import { aggregateTransactions, mergeDailyInventory, SOItem } from '@/lib/so-harian/inventoryEngine';
+import {
+  aggregateTransactions,
+  filterTransactionsAfterDate,
+  mergeDailyInventory,
+  normalizeInventoryKey,
+  SOItem,
+} from '@/lib/so-harian/inventoryEngine';
 import {
   buildCarryForwardEntries,
   CarryForwardEntry,
@@ -114,8 +120,9 @@ export default function UploadSection({
     PERLENGKAPAN: 'LINK',
   });
 
-  // Monitoring SLA Filter Options (Jumlah QTY Monitoring SLA sebagai sumber RO)
-  const [slaFilterMode, setSlaFilterMode] = useState<'fulfilled' | 'received' | 'all'>('fulfilled');
+  // Monitoring SLA Filter Options (Default: 'received' / Terima Outlet sesuai Flowchart)
+  const [slaFilterMode, setSlaFilterMode] = useState<'fulfilled' | 'received' | 'all'>('received');
+  const [onlyAfterPreviousSo, setOnlyAfterPreviousSo] = useState<boolean>(true);
   const [isSlaLoading, setIsSlaLoading] = useState(false);
   const [isPrReadyLoading, setIsPrReadyLoading] = useState(false);
 
@@ -362,16 +369,18 @@ export default function UploadSection({
   };
 
   // 1-Click Pull for Both Peralatan & Perlengkapan
-  const handleFetchAllMasterStock = async () => {
+  const handleFetchAllMasterStock = async (options?: { silentIfEmpty?: boolean }) => {
     const urlPeralatan = sheetUrls.PERALATAN || DEFAULT_SHEET_URLS[region].PERALATAN;
     const urlPerlengkapan = sheetUrls.PERLENGKAPAN || DEFAULT_SHEET_URLS[region].PERLENGKAPAN;
 
     if (!urlPeralatan && !urlPerlengkapan) {
-      setErrorMessage('Link Stok Awal Peralatan atau Perlengkapan belum ditentukan');
+      if (!options?.silentIfEmpty) {
+        setErrorMessage('Link Stok Awal Peralatan atau Perlengkapan belum ditentukan');
+      }
       return;
     }
 
-    setErrorMessage('');
+    if (!options?.silentIfEmpty) setErrorMessage('');
     setIsUrlLoading((prev) => ({ ...prev, MASTER: true, PERALATAN: true, PERLENGKAPAN: true }));
 
     try {
@@ -428,7 +437,9 @@ export default function UploadSection({
         }
       }
     } catch (err: any) {
-      setErrorMessage(`Gagal menarik stok awal: ${err.message}`);
+      if (!options?.silentIfEmpty) {
+        setErrorMessage(`Gagal menarik stok awal: ${err.message}`);
+      }
     } finally {
       setIsUrlLoading((prev) => ({ ...prev, MASTER: false, PERALATAN: false, PERLENGKAPAN: false }));
     }
@@ -512,8 +523,11 @@ export default function UploadSection({
     }
   };
 
-  const handleFetchFromMonitoringSla = async (filterOverride?: 'fulfilled' | 'received' | 'all') => {
-    setErrorMessage('');
+  const handleFetchFromMonitoringSla = async (
+    filterOverride?: 'fulfilled' | 'received' | 'all',
+    options?: { silentIfEmpty?: boolean }
+  ) => {
+    if (!options?.silentIfEmpty) setErrorMessage('');
     setIsSlaLoading(true);
     const filter = filterOverride || slaFilterMode;
 
@@ -526,16 +540,23 @@ export default function UploadSection({
 
       const items: any[] = json.data;
       if (items.length === 0) {
-        throw new Error(
-          filter === 'received'
-            ? `Belum ada item berstatus diterima outlet pada fitur Monitoring SLA untuk region ${region}.`
-            : `Belum ada item dengan QTY terpenuhi pada fitur Monitoring SLA untuk region ${region}.`
-        );
+        setRoFile({
+          name: `[Monitoring SLA: ${filter === 'received' ? 'Terima Outlet' : 'QTY Terpenuhi'}] 0 item`,
+        } as File);
+        setRoData([]);
+        if (!options?.silentIfEmpty) {
+          setErrorMessage(
+            filter === 'received'
+              ? `Belum ada item berstatus diterima outlet pada fitur Monitoring SLA untuk region ${region}.`
+              : `Belum ada item dengan QTY terpenuhi pada fitur Monitoring SLA untuk region ${region}.`
+          );
+        }
+        return;
       }
 
       const filterLabel =
         filter === 'received'
-          ? 'Hanya Diterima Outlet'
+          ? 'Terima Outlet'
           : filter === 'all'
           ? 'Semua Permintaan RO'
           : 'Jumlah QTY Terpenuhi/Lengkap';
@@ -547,14 +568,16 @@ export default function UploadSection({
       setRoFile(mockFile);
       setRoData(items);
     } catch (err: any) {
-      setErrorMessage(`Gagal memuat data Monitoring SLA: ${err.message}`);
+      if (!options?.silentIfEmpty) {
+        setErrorMessage(`Gagal memuat data Monitoring SLA: ${err.message}`);
+      }
     } finally {
       setIsSlaLoading(false);
     }
   };
 
-  const handleFetchFromPrReadyStock = async () => {
-    setErrorMessage('');
+  const handleFetchFromPrReadyStock = async (options?: { silentIfEmpty?: boolean }) => {
+    if (!options?.silentIfEmpty) setErrorMessage('');
     setIsPrReadyLoading(true);
 
     try {
@@ -568,9 +591,14 @@ export default function UploadSection({
 
       const items: any[] = json.data;
       if (items.length === 0) {
-        throw new Error(
-          `Belum ada item PR yang berstatus Selesai / Ready Stock untuk region ${region}.`
-        );
+        setPenerimaanFile({ name: `[PR Ready Stock] 0 item` } as File);
+        setPenerimaanData([]);
+        if (!options?.silentIfEmpty) {
+          setErrorMessage(
+            `Belum ada item PR yang berstatus Selesai / Ready Stock untuk region ${region}.`
+          );
+        }
+        return;
       }
 
       const mockFile = {
@@ -580,20 +608,31 @@ export default function UploadSection({
       setPenerimaanFile(mockFile);
       setPenerimaanData(items);
     } catch (err: any) {
-      setErrorMessage(`Gagal memuat data PR Ready Stock: ${err.message}`);
+      if (!options?.silentIfEmpty) {
+        setErrorMessage(`Gagal memuat data PR Ready Stock: ${err.message}`);
+      }
     } finally {
       setIsPrReadyLoading(false);
     }
   };
 
-  // Auto-fetch SLA monitoring items & PR Ready Stock items on initial load
+  // Auto-fetch Master Spreadsheet, Terima Outlet (SLA), & Riwayat PR Ready Stock on initial load
   React.useEffect(() => {
     if (inputModes.RO === 'MONITORING_SLA' && roData.length === 0) {
-      handleFetchFromMonitoringSla('fulfilled');
+      void handleFetchFromMonitoringSla('received', { silentIfEmpty: true });
     }
     if (inputModes.PENERIMAAN === 'PR_READY_STOCK' && penerimaanData.length === 0) {
-      handleFetchFromPrReadyStock();
+      void handleFetchFromPrReadyStock({ silentIfEmpty: true });
     }
+    if (
+      inputModes.PERALATAN === 'LINK' &&
+      inputModes.PERLENGKAPAN === 'LINK' &&
+      stokPeralatanData.length === 0 &&
+      stokPerlengkapanData.length === 0
+    ) {
+      void handleFetchAllMasterStock({ silentIfEmpty: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [region]);
 
   const handleDownloadTemplate = (type: string) => {
@@ -632,8 +671,9 @@ export default function UploadSection({
           lokasi: row.lokasi || 'Ruang Peralatan',
           kategori: 'Peralatan',
         });
-        if (nama && nama.toLowerCase() !== sku.toLowerCase()) {
-          nameToSkuMap.set(nama.toLowerCase(), sku);
+        if (nama) {
+          nameToSkuMap.set(normalizeInventoryKey(nama), sku);
+          nameToSkuMap.set(normalizeInventoryKey(sku), sku);
         }
       }
     }
@@ -659,19 +699,24 @@ export default function UploadSection({
           lokasi: row.lokasi || 'Gedung / Kantor',
           kategori: 'Perlengkapan Tetap',
         });
-        if (nama && nama.toLowerCase() !== sku.toLowerCase()) {
-          nameToSkuMap.set(nama.toLowerCase(), sku);
+        if (nama) {
+          nameToSkuMap.set(normalizeInventoryKey(nama), sku);
+          nameToSkuMap.set(normalizeInventoryKey(sku), sku);
         }
       }
     }
 
     // Nama barang dari hasil SO sebelumnya ikut dipakai untuk mencocokkan
-// baris RO/Penerimaan yang hanya berisi nama tanpa SKU, supaya tidak
-// muncul baris ganda untuk item yang sama.
+    // baris RO/Penerimaan yang hanya berisi nama tanpa SKU, supaya tidak
+    // muncul baris ganda untuk item yang sama.
     for (const entry of carryForwardMap.values()) {
-      const nameLower = (entry.nama_barang || '').toLowerCase().trim();
-      if (nameLower && nameLower !== entry.kode_barang.toLowerCase() && !nameToSkuMap.has(nameLower)) {
-        nameToSkuMap.set(nameLower, entry.kode_barang);
+      const nameNorm = normalizeInventoryKey(entry.nama_barang);
+      const codeNorm = normalizeInventoryKey(entry.kode_barang);
+      if (nameNorm && !nameToSkuMap.has(nameNorm)) {
+        nameToSkuMap.set(nameNorm, entry.kode_barang);
+      }
+      if (codeNorm && !nameToSkuMap.has(codeNorm)) {
+        nameToSkuMap.set(codeNorm, entry.kode_barang);
       }
     }
 
@@ -689,21 +734,32 @@ export default function UploadSection({
     const initialSourceMap = opening.sources;
     const itemDetailsMap = new Map<string, OpeningStockDetail>(opening.details);
 
+    // Cegah double-counting saat rollover: bila memakai Hasil SO sebelumnya,
+    // hanya ambil transaksi Terima Outlet (-) dan Riwayat PR (+) setelah previousSessionDate
+    const effectiveCutoffDate =
+      preferCarryForward && onlyAfterPreviousSo && previousSessionDate ? previousSessionDate : null;
+    const activeRoRows = filterTransactionsAfterDate(roData, effectiveCutoffDate);
+    const activePenerimaanRows = filterTransactionsAfterDate(penerimaanData, effectiveCutoffDate);
+
     // Remap roData and penerimaanData with nameToSkuMap if row uses item name instead of SKU
-    const normalizedRoData = roData.map((r) => {
+    const normalizedRoData = activeRoRows.map((r) => {
       const rawCode = String(r.kode_barang || r.sku || r.nama_barang || '').trim();
       const rawName = String(r.nama_barang || r.nama_item_barang || rawCode).trim();
-      const matchedSku = nameToSkuMap.get(rawName.toLowerCase()) || nameToSkuMap.get(rawCode.toLowerCase());
+      const matchedSku =
+        nameToSkuMap.get(normalizeInventoryKey(rawName)) ||
+        nameToSkuMap.get(normalizeInventoryKey(rawCode));
       if (matchedSku && rawCode !== matchedSku) {
         return { ...r, kode_barang: matchedSku };
       }
       return r;
     });
 
-    const normalizedPenerimaanData = penerimaanData.map((r) => {
+    const normalizedPenerimaanData = activePenerimaanRows.map((r) => {
       const rawCode = String(r.kode_barang || r.sku || r.nama_barang || '').trim();
       const rawName = String(r.nama_barang || r.nama_item_barang || rawCode).trim();
-      const matchedSku = nameToSkuMap.get(rawName.toLowerCase()) || nameToSkuMap.get(rawCode.toLowerCase());
+      const matchedSku =
+        nameToSkuMap.get(normalizeInventoryKey(rawName)) ||
+        nameToSkuMap.get(normalizeInventoryKey(rawCode));
       if (matchedSku && rawCode !== matchedSku) {
         return { ...r, kode_barang: matchedSku };
       }
@@ -1181,7 +1237,7 @@ export default function UploadSection({
 
                   <button
                     type="button"
-                    onClick={handleFetchFromPrReadyStock}
+                    onClick={() => handleFetchFromPrReadyStock()}
                     disabled={isPrReadyLoading}
                     className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center space-x-2 active:scale-98 disabled:opacity-50"
                   >
@@ -1311,7 +1367,7 @@ export default function UploadSection({
           </h3>
           <button
             type="button"
-            onClick={handleFetchAllMasterStock}
+            onClick={() => handleFetchAllMasterStock()}
             disabled={isUrlLoading.MASTER || isUrlLoading.PERALATAN || isUrlLoading.PERLENGKAPAN}
             className="self-start sm:self-auto text-xs font-bold text-white bg-linear-to-r from-amber-500 to-indigo-600 hover:from-amber-600 hover:to-indigo-700 px-3 py-1.5 rounded-lg shadow-xs flex items-center space-x-1.5 disabled:opacity-50 transition-all cursor-pointer"
           >
@@ -1658,6 +1714,26 @@ export default function UploadSection({
             </p>
           </button>
         </div>
+
+        {openingSourceMode === 'SO_SEBELUMNYA' && carryForwardMap.size > 0 && previousSessionDate && (
+          <label className="flex items-center justify-between gap-3 p-2.5 rounded-lg bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/70 cursor-pointer text-[11px]">
+            <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
+              <input
+                type="checkbox"
+                checked={onlyAfterPreviousSo}
+                onChange={(e) => setOnlyAfterPreviousSo(e.target.checked)}
+                className="rounded border-sky-400 text-sky-600 focus:ring-sky-500"
+              />
+              <span>
+                <strong>Cegah Hitung Ganda:</strong> Hanya hitung mutasi <em>Terima Outlet</em> &amp;{' '}
+                <em>Riwayat PR</em> setelah tanggal SO <strong>{previousSessionDate}</strong>
+              </span>
+            </div>
+            <span className="text-[10px] font-bold text-sky-700 dark:text-sky-300 whitespace-nowrap">
+              {onlyAfterPreviousSo ? 'Delta Aktif' : 'Semua Riwayat'}
+            </span>
+          </label>
+        )}
 
         {openingSourceMode === 'SO_SEBELUMNYA' &&
           carryForwardMap.size > 0 &&

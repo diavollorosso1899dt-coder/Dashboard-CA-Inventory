@@ -156,10 +156,15 @@ export interface SoPrReadyStockItem {
  * Jumlah yang diambil adalah `quantity_pr` (fallback ke `quantity_needed`).
  */
 export function extractPrReadyStockItemsForSo(
-  items: Partial<AssetRequest>[]
+  items: Partial<AssetRequest>[],
+  options: { sinceDate?: string | null } = {}
 ): { items: SoPrReadyStockItem[]; totalQty: number } {
   const extracted: SoPrReadyStockItem[] = [];
   let totalQty = 0;
+  const cutoff =
+    options.sinceDate && /^\d{4}-\d{2}-\d{2}/.test(String(options.sinceDate).trim())
+      ? String(options.sinceDate).trim().slice(0, 10)
+      : null;
 
   for (let i = 0; i < (items || []).length; i++) {
     const it = items[i];
@@ -185,6 +190,17 @@ export function extractPrReadyStockItemsForSo(
 
     if (qtyPr <= 0) continue;
 
+    const tglTerima =
+      (it.received_date && String(it.received_date).split('T')[0]) ||
+      (it.updated_at && String(it.updated_at).split('T')[0]) ||
+      (it.pr_datetime && String(it.pr_datetime).split('T')[0]) ||
+      (it.order_datetime && String(it.order_datetime).split('T')[0]) ||
+      new Date().toISOString().split('T')[0];
+
+    if (cutoff && tglTerima <= cutoff) {
+      continue;
+    }
+
     totalQty += qtyPr;
 
     const rawClass = String(it.classification || it.category || '').toLowerCase();
@@ -192,12 +208,6 @@ export function extractPrReadyStockItemsForSo(
       rawClass.includes('lengkap') || rawClass.includes('tetap') || rawClass.includes('plk')
         ? 'Perlengkapan Tetap'
         : 'Peralatan';
-
-    const tglTerima =
-      (it.received_date && String(it.received_date).split('T')[0]) ||
-      (it.pr_datetime && String(it.pr_datetime).split('T')[0]) ||
-      (it.order_datetime && String(it.order_datetime).split('T')[0]) ||
-      new Date().toISOString().split('T')[0];
 
     extracted.push({
       id: it.id || `pr-ready-${i}`,

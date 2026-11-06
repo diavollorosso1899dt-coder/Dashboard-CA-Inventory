@@ -136,17 +136,64 @@ export function mergeOpeningStock(options: {
   const carryForward = options.carryForward || new Map<string, CarryForwardEntry>();
   const preferCarryForward = options.preferCarryForward !== false;
 
+  const normKey = (raw: unknown) =>
+    String(raw || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
+
+  const canonicalByNorm = new Map<string, string>();
+  const registerCode = (raw: string) => {
+    const clean = String(raw || '').trim();
+    const n = normKey(clean);
+    if (!n) return '';
+    if (!canonicalByNorm.has(n)) canonicalByNorm.set(n, clean);
+    return canonicalByNorm.get(n)!;
+  };
+
+  for (const k of master.keys()) registerCode(k);
+  for (const [k, det] of masterDetails.entries()) {
+    const c = registerCode(k);
+    const nameN = normKey(det?.nama_barang);
+    if (nameN && c && !canonicalByNorm.has(nameN)) canonicalByNorm.set(nameN, c);
+  }
+  for (const [k, cf] of carryForward.entries()) {
+    const c = registerCode(k);
+    const nameN = normKey(cf?.nama_barang);
+    if (nameN && c && !canonicalByNorm.has(nameN)) canonicalByNorm.set(nameN, c);
+  }
+
+  const normMaster = new Map<string, number>();
+  for (const [k, v] of master.entries()) {
+    const c = registerCode(k);
+    if (c) normMaster.set(c, Number(v) || 0);
+  }
+
+  const normMasterDetails = new Map<string, OpeningStockDetail>();
+  for (const [k, v] of masterDetails.entries()) {
+    const c = registerCode(k);
+    if (c && !normMasterDetails.has(c)) normMasterDetails.set(c, v);
+  }
+
+  const normCarry = new Map<string, CarryForwardEntry>();
+  for (const [k, v] of carryForward.entries()) {
+    const c = registerCode(k) || registerCode(v?.nama_barang || '');
+    if (c && !normCarry.has(c)) {
+      normCarry.set(c, { ...v, kode_barang: c });
+    }
+  }
+
   const stock = new Map<string, number>();
   const details = new Map<string, OpeningStockDetail>();
   const sources = new Map<string, OpeningStockSource>();
   let fromPrevious = 0;
   let fromMaster = 0;
 
-  const allCodes = new Set<string>([...master.keys(), ...carryForward.keys()]);
+  const allCodes = new Set<string>([...normMaster.keys(), ...normCarry.keys()]);
 
   for (const code of allCodes) {
-    const masterQty = master.get(code);
-    const carry = carryForward.get(code);
+    const masterQty = normMaster.get(code);
+    const carry = normCarry.get(code);
     const hasMaster = masterQty !== undefined;
     const hasCarry = carry !== undefined;
 
@@ -166,7 +213,7 @@ export function mergeOpeningStock(options: {
     stock.set(code, qty);
     sources.set(code, source);
 
-    const masterDetail = masterDetails.get(code);
+    const masterDetail = normMasterDetails.get(code);
     if (masterDetail) {
       details.set(code, {
         nama_barang: masterDetail.nama_barang || carry?.nama_barang || code,
