@@ -33,7 +33,7 @@ import {
   applyConfirmedItemsToRequestOrders,
   normalizeConfirmedSjItems,
 } from '../distribution/confirm-surat-jalan';
-import { mergeRoForSync } from '../distribution/ro-sync-merge';
+import { isForeignSheetRoItem, mergeRoForSync } from '../distribution/ro-sync-merge';
 import {
   RO_TOMBSTONE_SOURCE,
   addTombstones,
@@ -899,46 +899,62 @@ export async function updateAssetRequest(
       let matchedRo: RequestOrder | null = null;
       let matchedItem: any = null;
 
+      const hasExactToken = (text: string, token: string): boolean => {
+        if (!text || !token) return false;
+        const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'i').test(text);
+      };
+
+      // Pass 1: exact match on item ID / synthetic PR item ID
       for (const ro of allRos) {
-        const roIdStr = (ro.id || '').toLowerCase();
-        const roNumStr = (ro.ro_number || '').toLowerCase();
-        const rawRoStr = (ro.raw_ro_id || '').toLowerCase();
-
-        const roCouldMatch =
-          !id.startsWith('ro-pr-') ||
-          (roIdStr && rawDecodedId.includes(roIdStr)) ||
-          (roNumStr && rawDecodedId.includes(roNumStr)) ||
-          (rawRoStr && rawDecodedId.includes(rawRoStr));
-
         for (const it of (ro.items || [])) {
           const itId = (it.id || '').toLowerCase();
-          const itName = (it.item_name || '').toLowerCase().trim();
-
           const checkId1 = `ro-pr-${ro.id}-${encodeURIComponent(it.item_name)}`.toLowerCase();
           const checkId2 = `ro-pr-${ro.id}-${it.item_name}`.toLowerCase();
           const checkId3 = it.id ? `ro-pr-${ro.id}-${it.id}`.toLowerCase() : '';
           const checkId4 = it.id ? `ro-${ro.id}-${it.id}`.toLowerCase() : '';
 
-          const isDirectMatch =
+          if (
             (itId && itId === rawDecodedId) ||
             checkId1 === rawDecodedId ||
             checkId2 === rawDecodedId ||
             (checkId3 && checkId3 === rawDecodedId) ||
-            (checkId4 && checkId4 === rawDecodedId);
-
-          const isPartialMatch =
-            roCouldMatch && (
-              (itId && rawDecodedId.includes(itId)) ||
-              (itName && rawDecodedId.includes(itName))
-            );
-
-          if (isDirectMatch || isPartialMatch) {
+            (checkId4 && checkId4 === rawDecodedId)
+          ) {
             matchedRo = ro;
             matchedItem = it;
             break;
           }
         }
         if (matchedItem) break;
+      }
+
+      // Pass 2: fallback partial match with strict RO token boundary
+      if (!matchedItem) {
+        for (const ro of allRos) {
+          const roIdStr = (ro.id || '').toLowerCase();
+          const roNumStr = (ro.ro_number || '').toLowerCase();
+          const rawRoStr = (ro.raw_ro_id || '').toLowerCase();
+
+          const roCouldMatch =
+            !id.startsWith('ro-pr-') ||
+            (roIdStr && rawDecodedId.includes(roIdStr)) ||
+            (roNumStr && hasExactToken(rawDecodedId, roNumStr)) ||
+            (rawRoStr && hasExactToken(rawDecodedId, `roi-${rawRoStr}`));
+
+          if (!roCouldMatch) continue;
+
+          for (const it of (ro.items || [])) {
+            const itId = (it.id || '').toLowerCase();
+            const itName = (it.item_name || '').toLowerCase().trim();
+            if ((itId && rawDecodedId.includes(itId)) || (itName && rawDecodedId.endsWith(itName))) {
+              matchedRo = ro;
+              matchedItem = it;
+              break;
+            }
+          }
+          if (matchedItem) break;
+        }
       }
 
       if (matchedRo && matchedItem) {
@@ -2289,9 +2305,11 @@ export function deduplicateOrderItems(orders: RequestOrder[]): RequestOrder[] {
     if (!roKey || seenRoNumbers.has(roKey)) continue;
     seenRoNumbers.add(roKey);
 
-    // Deduplikasi item ganda di dalam dokumen RO yang sama
+    // Deduplikasi item ganda di dalam dokumen RO yang sama & buang item roi-* milik RO lain
+    const ownerRoRef = ro.raw_ro_id || ro.ro_number;
     const seenItemKeys = new Set<string>();
     const uniqueItems = (ro.items || []).filter((it) => {
+      if (isForeignSheetRoItem(it as any, ownerRoRef)) return false;
       const itemKey = `${it.item_name.toLowerCase().trim()}::${it.quantity_ordered}`;
       if (seenItemKeys.has(itemKey)) return false;
       seenItemKeys.add(itemKey);
@@ -2543,12 +2561,21 @@ export async function updateRequestOrder(id: string, updates: Partial<RequestOrd
         }
       }
 
-      // Also update any matching rows by ro_number or raw_ro_id to synchronize duplicate entries in Supabase
+      // Also update any matching rows by exact ro_number or raw_ro_id (never substring ilike,
+      // because a short ID like 1025 would match RO-102554, RO-102570, RO-102583, RO-102599, etc.)
       if (rawRoId) {
+        const orClauses = [
+          `raw_ro_id.eq.${rawRoId}`,
+          `ro_number.eq.RO-${rawRoId}`,
+          `ro_number.eq.${rawRoId}`,
+        ];
+        if (roNumber && roNumber !== `RO-${rawRoId}` && roNumber !== rawRoId) {
+          orClauses.push(`ro_number.eq.${roNumber}`);
+        }
         const { data, error } = await admin
           .from('request_orders')
           .update(updateData)
-          .or(`raw_ro_id.eq.${rawRoId},ro_number.eq.RO-${rawRoId},ro_number.ilike.%${cleanRawId}%`)
+          .or(orClauses.join(','))
           .select('id');
         if (error) {
           console.error('[Supabase updateRequestOrder by ro error]:', error.message);
@@ -2643,10 +2670,18 @@ export async function deleteRequestOrder(id: string, actorName?: string): Promis
         await admin.from('request_orders').delete().eq('id', id);
       }
       if (rawRoId) {
+        const orClauses = [
+          `raw_ro_id.eq.${rawRoId}`,
+          `ro_number.eq.RO-${rawRoId}`,
+          `ro_number.eq.${rawRoId}`,
+        ];
+        if (roNumber && roNumber !== `RO-${rawRoId}` && roNumber !== rawRoId) {
+          orClauses.push(`ro_number.eq.${roNumber}`);
+        }
         await admin
           .from('request_orders')
           .delete()
-          .or(`raw_ro_id.eq.${rawRoId},ro_number.eq.RO-${rawRoId},ro_number.ilike.%${cleanRawId}%`);
+          .or(orClauses.join(','));
       } else if (roNumber) {
         await admin.from('request_orders').delete().eq('ro_number', roNumber);
       }

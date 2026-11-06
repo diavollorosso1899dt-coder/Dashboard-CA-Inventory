@@ -31,12 +31,45 @@ function itemKey(item: RoLike): string {
   return String(item?.item_name || '').toLowerCase().trim();
 }
 
+function normalizeOwnerRoId(raw: unknown): string {
+  if (!raw) return '';
+  let id = String(raw).trim().replace(/^RO[-_\s]*/i, '');
+  if (/^[\d.]+$/.test(id) && id.includes('.')) {
+    id = id.replace(/\./g, '');
+  }
+  return id.toLowerCase().trim();
+}
+
 /**
- * Semua item lama dipertahankan apa adanya. Item dari sheet hanya dipakai
- * untuk melengkapi field yang masih kosong atau menambah item baru.
+ * Mengecek apakah item memiliki ID otomatis spreadsheet (`roi-<roId>-<row>-<idx>`)
+ * milik nomor RO lain (akibat kebocoran query masa lalu).
  */
-export function mergeRoItemsForSync(existingItems: unknown, sheetItems: unknown): RoLike[] {
-  const existing = Array.isArray(existingItems) ? existingItems.map((it) => ({ ...(it as RoLike) })) : [];
+export function isForeignSheetRoItem(item: RoLike, ownerRawRoId?: string): boolean {
+  if (!ownerRawRoId) return false;
+  const cleanOwner = normalizeOwnerRoId(ownerRawRoId);
+  if (!cleanOwner) return false;
+  const idStr = String(item?.id || '').trim();
+  const match = idStr.match(/^roi-(.+?)-\d+-\d+$/i);
+  if (!match) return false;
+  const itemRoId = normalizeOwnerRoId(match[1]);
+  return Boolean(itemRoId && itemRoId !== cleanOwner);
+}
+
+/**
+ * Semua item lama milik RO ini dipertahankan apa adanya. Item yang memiliki ID
+ * `roi-<roId>-*` milik RO lain dibuang. Item dari sheet dipakai untuk
+ * melengkapi field yang masih kosong atau menambah item baru.
+ */
+export function mergeRoItemsForSync(
+  existingItems: unknown,
+  sheetItems: unknown,
+  ownerRawRoId?: string
+): RoLike[] {
+  const existing = Array.isArray(existingItems)
+    ? existingItems
+        .filter((it) => !isForeignSheetRoItem(it as RoLike, ownerRawRoId))
+        .map((it) => ({ ...(it as RoLike) }))
+    : [];
   const sheet = Array.isArray(sheetItems) ? (sheetItems as RoLike[]) : [];
 
   const byId = new Map<string, RoLike>();
@@ -71,6 +104,13 @@ export function mergeRoItemsForSync(existingItems: unknown, sheetItems: unknown)
 export function mergeRoForSync<T extends RoLike>(sheetOrder: T, existing?: RoLike | null): T {
   if (!existing) return sheetOrder;
 
+  const ownerRawRoId =
+    normalizeOwnerRoId(sheetOrder.raw_ro_id || sheetOrder.ro_number) ||
+    normalizeOwnerRoId(existing.raw_ro_id || existing.ro_number);
+
+  const rawExistingItems = Array.isArray(existing.items) ? (existing.items as RoLike[]) : [];
+  const hadForeignItem = rawExistingItems.some((it) => isForeignSheetRoItem(it, ownerRawRoId));
+
   const merged: RoLike = { ...sheetOrder, ...existing };
   for (const key of FILL_FROM_SHEET_IF_EMPTY) {
     if (!hasValue(merged[key]) && hasValue(sheetOrder[key])) {
@@ -79,6 +119,20 @@ export function mergeRoForSync<T extends RoLike>(sheetOrder: T, existing?: RoLik
   }
 
   merged.id = existing.id;
-  merged.items = mergeRoItemsForSync(existing.items, sheetOrder.items);
+  merged.items = mergeRoItemsForSync(existing.items, sheetOrder.items, ownerRawRoId);
+
+  // Jika RO sebelumnya tercemar item PR_VENDOR dari RO lain dan seluruh item
+  // aslinya masih ON_PROSES, kembalikan status/tahap ke kondisi awal.
+  if (
+    hadForeignItem &&
+    (merged.current_stage === 'KELOLA_PR' || merged.status === 'NEED_PR') &&
+    Array.isArray(merged.items) &&
+    merged.items.length > 0 &&
+    merged.items.every((it: RoLike) => !it.stock_source || it.stock_source === 'ON_PROSES')
+  ) {
+    merged.status = sheetOrder.status || 'INPUT_SYSTEM';
+    merged.current_stage = sheetOrder.current_stage || 'REQUEST_ORDER';
+  }
+
   return merged as T;
 }

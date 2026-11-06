@@ -307,13 +307,19 @@ export function applyConfirmedItemsToRequestOrders(
       const roIdLower = (ro.id || '').toLowerCase().trim();
       const roNumLower = (ro.ro_number || '').toLowerCase().trim();
 
+      const hasExactRoToken = (text: string, token: string): boolean => {
+        if (!text || !token) return false;
+        const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'i').test(text);
+      };
+
       const matchesByAssetId =
         Boolean(assetId) &&
         (assetId === roNumLower ||
           assetId === roIdLower ||
           (roIdLower && assetId.startsWith(`ro-${roIdLower}`)) ||
-          (roNumLower && assetId.includes(roNumLower)));
-      const matchesByNotes = Boolean(roNumLower) && notesStr.includes(roNumLower);
+          (roNumLower && hasExactRoToken(assetId, roNumLower)));
+      const matchesByNotes = Boolean(roNumLower) && hasExactRoToken(notesStr, roNumLower);
       const matchesByExplicitRo =
         (roNumLower && explicitRoRefs.has(roNumLower)) || (roIdLower && explicitRoRefs.has(roIdLower));
 
