@@ -3,6 +3,7 @@ import { getRequestOrders, createRequestOrder, updateRequestOrder, deleteRequest
 import { sortOrdersNewestFirst } from '@/lib/utils/ro-sorter';
 import { isRoFinalizedForActiveList } from '@/lib/distribution/ro-visibility';
 import { auditMutation } from '@/lib/audit/record-change';
+import { resolveActor } from '@/lib/auth/actor';
 
 export const dynamic = 'force-dynamic';
 
@@ -110,7 +111,8 @@ export async function DELETE(req: NextRequest) {
     }
 
     const previous = await getRoSnapshot(targetId);
-    const ok = await deleteRequestOrder(targetId);
+    const actor = resolveActor(req);
+    const ok = await deleteRequestOrder(targetId, actor.name);
 
     if (ok) {
       await auditMutation(req, {

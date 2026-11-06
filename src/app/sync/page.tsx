@@ -9,11 +9,22 @@ import {
   Copy,
   Check,
   Zap,
+  ShieldOff,
+  Undo2,
 } from 'lucide-react';
 import { SyncSourceCard, type SyncSourceView } from '@/components/sync/SyncSourceCard';
 import { SyncHistoryTable, type SyncRunView } from '@/components/sync/SyncHistoryTable';
 
 export const dynamic = 'force-dynamic';
+
+interface TombstoneView {
+  id: string;
+  row_key: string;
+  display_key: string | null;
+  reason: string | null;
+  created_by: string | null;
+  created_at: string;
+}
 
 const DEFAULT_SOURCES: SyncSourceView[] = [
   { key: 'asset-requests', label: 'Aset (JABO + KALBAR)' },
@@ -28,15 +39,19 @@ export default function SyncPage() {
   const [dryRun, setDryRun] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [tombstones, setTombstones] = useState<TombstoneView[]>([]);
+  const [releasingTombstone, setReleasingTombstone] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [statusRes, historyRes] = await Promise.all([
+      const [statusRes, historyRes, tombstoneRes] = await Promise.all([
         fetch('/api/sync/status', { cache: 'no-store' }),
         fetch('/api/sync/history?limit=20', { cache: 'no-store' }),
+        fetch('/api/sync/tombstones', { cache: 'no-store' }),
       ]);
       const status = await statusRes.json();
       const history = await historyRes.json();
+      const tombstoneData = await tombstoneRes.json().catch(() => ({}));
 
       const latest = new Map<string, any>();
       for (const row of status.sources || []) {
@@ -60,6 +75,7 @@ export default function SyncPage() {
         })
       );
       setRuns(history.runs || []);
+      setTombstones(Array.isArray(tombstoneData.tombstones) ? tombstoneData.tombstones : []);
       setRunning(Boolean(status.running));
     } catch (error) {
       console.error('Gagal memuat status sync:', error);
@@ -113,6 +129,22 @@ export default function SyncPage() {
 
   const handleTriggerSync = () => run();
 
+  const releaseTombstone = async (id: string) => {
+    try {
+      setReleasingTombstone(id);
+      const res = await fetch(`/api/sync/tombstones/${id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!data.success) {
+        setResult({ success: false, message: data.message || 'Gagal melepas blokir' });
+      }
+      await refresh();
+    } catch (error: any) {
+      setResult({ success: false, message: error?.message || 'Gagal melepas blokir' });
+    } finally {
+      setReleasingTombstone(null);
+    }
+  };
+
   const webhookScriptCode = `// Fungsi ini TIDAK berjalan otomatis dari namanya.
 // Setelah menempel skrip, buat trigger: ikon jam > Add Trigger
 //   Function     : syncKeHantaran
@@ -130,9 +162,13 @@ function syncKeHantaran(e) {
       // hanya menerima sync manual dari dashboard yang sudah login.
       "x-sync-token": "ISI_TOKEN_RAHASIA"
     },
-    // WEBHOOK membuat sync di-debounce 5 menit agar satu kali edit tidak
-    // memicu sync berulang-ulang.
-    "payload": JSON.stringify({ trigger: "WEBHOOK" }),
+    // WEBHOOK di-debounce (default 1 menit lewat env SYNC_WEBHOOK_DEBOUNCE_MINUTES)
+    // agar satu kali edit tidak memicu sync berulang-ulang. Master katalog tidak
+    // ikut di sini; katalog disegarkan cron harian atau sync manual penuh.
+    "payload": JSON.stringify({
+      "trigger": "WEBHOOK",
+      "sources": ["asset-requests", "request-orders"]
+    }),
     "muteHttpExceptions": true
   };
 
@@ -236,6 +272,71 @@ function syncKeHantaran(e) {
           Riwayat 20 Run Terakhir
         </h2>
         <SyncHistoryTable runs={runs} />
+      </div>
+
+      {/* RO yang diblokir */}
+      <div className="panel-card p-5 space-y-3">
+        <div className="flex items-start gap-2">
+          <ShieldOff className="h-4 w-4 mt-0.5 text-[#b3261e] dark:text-[#f2b8b5]" />
+          <div>
+            <h2 className="text-sm font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
+              RO yang Diblokir ({tombstones.length})
+            </h2>
+            <p className="text-xs text-[#444746] dark:text-[#c4c7c5] mt-1 max-w-2xl">
+              RO yang Anda hapus manual dicatat di sini dan tidak akan dimasukkan lagi oleh sync,
+              termasuk setelah aplikasi di-deploy ulang. Lepas blokir bila RO tersebut memang masih
+              berlaku.
+            </p>
+          </div>
+        </div>
+
+        {tombstones.length === 0 ? (
+          <p className="rounded-xl bg-[#f0f4f9] dark:bg-[#282a2c] px-3 py-2.5 text-xs text-[#444746] dark:text-[#c4c7c5]">
+            Belum ada RO yang diblokir.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-[#e0e2ec] dark:border-[#333538]">
+            <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
+              <thead className="bg-[#f0f4f9] dark:bg-[#282a2c] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#333538]">
+                <tr>
+                  <th className="py-2 px-3">Nomor RO</th>
+                  <th className="py-2 px-3">Dihapus oleh</th>
+                  <th className="py-2 px-3">Waktu</th>
+                  <th className="py-2 px-3">Alasan</th>
+                  <th className="py-2 px-3 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tombstones.map((row) => (
+                  <tr
+                    key={row.id}
+                    className="border-b border-[#f0f4f9] dark:border-[#282a2c] last:border-0"
+                  >
+                    <td className="py-2 px-3 font-semibold">
+                      {row.display_key || row.row_key}
+                    </td>
+                    <td className="py-2 px-3">{row.created_by || '-'}</td>
+                    <td className="py-2 px-3 whitespace-nowrap">
+                      {row.created_at ? new Date(row.created_at).toLocaleString('id-ID') : '-'}
+                    </td>
+                    <td className="py-2 px-3">{row.reason || '-'}</td>
+                    <td className="py-2 px-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => releaseTombstone(row.id)}
+                        disabled={releasingTombstone === row.id}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] px-3 py-1 text-[11px] font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c] transition-colors disabled:opacity-50"
+                      >
+                        <Undo2 className="h-3 w-3" />
+                        {releasingTombstone === row.id ? 'Melepas...' : 'Pulihkan'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Supabase Connection Setup Guide */}
