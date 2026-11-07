@@ -166,7 +166,7 @@ export default function PrintSuratJalanPage() {
 
   if (!sj || !consolidatedData) {
     return (
-      <div className="p-8 text-center max-w-md mx-auto">
+      <div className="p-4 sm:p-8 text-center max-w-md mx-auto">
         <h2 className="text-xl font-bold text-slate-800">Surat Jalan Tidak Ditemukan</h2>
         <p className="text-sm text-slate-500 mt-2">Nomor ID Surat Jalan tidak valid atau data telah terhapus.</p>
         <button
@@ -200,31 +200,52 @@ export default function PrintSuratJalanPage() {
     ? new Date(rawDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
     : new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
 
+  const itemRows = (consolidatedData.items || []).map((item: any, index: number) => {
+    const namaBarang = item.nama_barang || item.item_name || item.name || item.system_item_name || 'Barang Aset';
+    const jumlah = item.qty ?? item.quantity ?? item.quantity_ordered ?? item.quantity_needed ?? 1;
+    const satuan = item.satuan || item.unit || 'Unit';
+    const spesifikasi = item.specification || item.classification || '';
+    const sourceRo = item.source_ro ? `[Ref: ${item.source_ro}] ` : '';
+    const catatan = item.catatan || item.notes || (spesifikasi ? spesifikasi : 'Kondisi Baik & Tersegel');
+
+    return {
+      key: item.id || `item-${index}`,
+      no: index + 1,
+      namaBarang,
+      jumlah,
+      satuan,
+      spesifikasi,
+      sourceRo,
+      catatan,
+      hasSourceRo: Boolean(item.source_ro),
+    };
+  });
+
   return (
-    <div className="max-w-4xl mx-auto py-4 px-4 sm:px-6">
+    <div className="max-w-4xl mx-auto py-3 sm:py-6 px-0 sm:px-6">
       {/* Top Banner & Action Controls (Hidden on Print) */}
-      <div className="print:hidden space-y-3 mb-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900 text-white p-4 rounded-2xl shadow-md">
-          <div className="flex items-center gap-3 flex-wrap">
+      <div className="print:hidden space-y-3 mb-4 sm:mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900 text-white p-3 sm:p-4 rounded-2xl shadow-md">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             <button
               onClick={() => router.back()}
-              className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition"
+              className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white px-2.5 sm:px-3 py-1.5 rounded-lg hover:bg-slate-800 transition"
             >
               <ArrowLeft className="w-4 h-4" /> Kembali
             </button>
             <span className="text-slate-600">|</span>
-            <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+            <span className="text-[11px] sm:text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
               <CheckCircle className="w-4 h-4" /> Dokumen Siap Cetak
             </span>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 w-full sm:w-auto">
             <button
               onClick={() => window.print()}
-              className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-lg hover:shadow-indigo-500/25 transition cursor-pointer active:scale-95"
+              className="flex w-full sm:w-auto items-center justify-center gap-2 px-4 sm:px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] sm:text-xs font-bold rounded-xl shadow-lg hover:shadow-indigo-500/25 transition cursor-pointer active:scale-95"
             >
-              <Printer className="w-4 h-4" />
-              <span>Cetak Lembar Surat Jalan (Print / PDF)</span>
+              <Printer className="w-4 h-4 shrink-0" />
+              <span className="leading-tight">Cetak Lembar Surat Jalan (Print / PDF)</span>
             </button>
           </div>
         </div>
@@ -260,35 +281,35 @@ export default function PrintSuratJalanPage() {
       </div>
 
       {/* Official Document Paper */}
-      <div className="bg-white text-slate-900 p-8 sm:p-12 rounded-2xl shadow-xl border border-slate-200 print:border-none print:shadow-none print:p-0 print:m-0 print:rounded-none">
+      <div className="bg-white text-slate-900 p-4 sm:p-8 lg:p-12 rounded-xl sm:rounded-2xl shadow-xl border border-slate-200 print:border-none print:shadow-none print:p-0 print:m-0 print:rounded-none">
         {/* Letterhead / Kop Surat */}
-        <div className="border-b-2 border-slate-900 pb-4 mb-6">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm tracking-wider">
+        <div className="border-b-2 border-slate-900 pb-4 mb-4 sm:mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 sm:gap-6">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-11 h-11 sm:w-12 sm:h-12 shrink-0 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm tracking-wider">
                 HNT
               </div>
-              <div>
-                <h1 className="text-xl font-extrabold tracking-tight text-slate-900 uppercase">
+              <div className="min-w-0">
+                <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-slate-900 uppercase">
                   HANTARAN
                 </h1>
-                <p className="text-xs text-slate-500 font-medium">
+                <p className="text-[11px] sm:text-xs text-slate-500 font-medium leading-snug">
                   Divisi Central Asset Management &amp; Logistik Distribusi Nasional
                 </p>
-                <p className="text-xs text-slate-400">
+                <p className="text-[10px] sm:text-xs text-slate-400 leading-snug">
                   Jl. Logistik Sentral No. 88, Kawasan Pergudangan Nasional &bull; Telp: (021) 555-0199
                 </p>
               </div>
             </div>
 
-            <div className="text-right">
-              <div className="text-2xl font-black tracking-wider text-indigo-700 uppercase">
+            <div className="text-left sm:text-right shrink-0">
+              <div className="text-xl sm:text-2xl font-black tracking-wider text-indigo-700 uppercase">
                 SURAT JALAN
               </div>
-              <div className="text-xs font-mono font-bold text-slate-700 mt-1 max-w-[280px] break-words">
+              <div className="text-[11px] sm:text-xs font-mono font-bold text-slate-700 mt-1 max-w-full sm:max-w-[280px] break-words">
                 NOMOR: <span className="text-slate-900 font-bold">{displaySjNumber}</span>
               </div>
-              <div className="text-xs text-slate-500 mt-0.5">
+              <div className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
                 Tanggal: {tglDokumen}
               </div>
             </div>
@@ -296,22 +317,22 @@ export default function PrintSuratJalanPage() {
         </div>
 
         {/* Metadata Section */}
-        <div className="grid grid-cols-2 gap-6 mb-6 text-xs">
-          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
-            <span className="font-bold text-slate-700 block mb-1 uppercase tracking-wider text-[11px]">Pengirim / Asal:</span>
-            <div className="font-semibold text-slate-900">{pengirimNama}</div>
-            <div className="text-slate-500">Kawasan Pergudangan Pusat, Blok B-12</div>
-            <div className="text-slate-500">PIC Gudang: Central Warehouse Officer</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-6 mb-4 sm:mb-6 text-xs">
+          <div className="p-3 sm:p-3.5 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+            <span className="font-bold text-slate-700 block mb-1 uppercase tracking-wider text-[10px] sm:text-[11px]">Pengirim / Asal:</span>
+            <div className="font-semibold text-slate-900 break-words">{pengirimNama}</div>
+            <div className="text-slate-500 break-words">Kawasan Pergudangan Pusat, Blok B-12</div>
+            <div className="text-slate-500 break-words">PIC Gudang: Central Warehouse Officer</div>
           </div>
 
-          <div className="p-3.5 bg-indigo-50/50 rounded-xl border border-indigo-100">
-            <span className="font-bold text-indigo-800 block mb-1 uppercase tracking-wider text-[11px]">Tujuan Pengiriman:</span>
-            <div className="font-bold text-slate-900 text-sm">{tujuanOutlet}</div>
-            <div className="text-slate-600 mt-1">
-              Ref. Request Order: <strong className="font-mono text-indigo-700">{displayRoNumber}</strong>
+          <div className="p-3 sm:p-3.5 bg-indigo-50/50 rounded-xl border border-indigo-100 min-w-0">
+            <span className="font-bold text-indigo-800 block mb-1 uppercase tracking-wider text-[10px] sm:text-[11px]">Tujuan Pengiriman:</span>
+            <div className="font-bold text-slate-900 text-sm break-words">{tujuanOutlet}</div>
+            <div className="text-slate-600 mt-1 break-words">
+              Ref. Request Order: <strong className="font-mono text-indigo-700 break-all">{displayRoNumber}</strong>
             </div>
             {consolidatedData.docsCount > 1 && (
-              <div className="text-[11px] text-emerald-700 font-semibold mt-0.5">
+              <div className="text-[10px] sm:text-[11px] text-emerald-700 font-semibold mt-0.5">
                 • Menggabungkan {consolidatedData.docsCount} Dokumen Distribusi Outlet
               </div>
             )}
@@ -320,89 +341,125 @@ export default function PrintSuratJalanPage() {
         </div>
 
         {/* Armada & Driver Details */}
-        <div className="flex items-center justify-between text-xs bg-slate-100 p-3 rounded-lg mb-6 border border-slate-200 flex-wrap gap-2">
-          <div>
-            <span className="text-slate-500">Nama Pengemudi (Driver):</span>{' '}
-            <strong className="text-slate-800">{driverNama}</strong>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 text-[11px] sm:text-xs bg-slate-100 p-3 rounded-lg mb-4 sm:mb-6 border border-slate-200">
+          <div className="min-w-0">
+            <span className="block text-[10px] uppercase tracking-wide text-slate-500 sm:hidden">Nama Pengemudi (Driver)</span>
+            <span className="hidden sm:inline text-slate-500">Nama Pengemudi (Driver):</span>{' '}
+            <strong className="text-slate-800 break-words">{driverNama}</strong>
           </div>
-          <div>
-            <span className="text-slate-500">Nomor Polisi Kendaraan:</span>{' '}
-            <strong className="font-mono text-slate-800 uppercase">{kendaraanPlat}</strong>
+          <div className="min-w-0">
+            <span className="block text-[10px] uppercase tracking-wide text-slate-500 sm:hidden">Nomor Polisi Kendaraan</span>
+            <span className="hidden sm:inline text-slate-500">Nomor Polisi Kendaraan:</span>{' '}
+            <strong className="font-mono text-slate-800 uppercase break-words">{kendaraanPlat}</strong>
           </div>
-          <div>
-            <span className="text-slate-500">Estimasi Tiba:</span>{' '}
-            <strong className="text-slate-800">{new Date(rawDate || Date.now()).toLocaleDateString('id-ID')} (Sameday / Next-Day)</strong>
+          <div className="min-w-0">
+            <span className="block text-[10px] uppercase tracking-wide text-slate-500 sm:hidden">Estimasi Tiba</span>
+            <span className="hidden sm:inline text-slate-500">Estimasi Tiba:</span>{' '}
+            <strong className="text-slate-800 break-words">{new Date(rawDate || Date.now()).toLocaleDateString('id-ID')} (Sameday / Next-Day)</strong>
           </div>
         </div>
 
-        {/* Items Table (Seluruh Item Outlet Terkumpul dalam 1 Daftar) */}
-        <div className="mb-6 overflow-hidden rounded-xl border border-slate-300">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="bg-slate-800 text-white font-semibold">
-                <th className="py-2.5 px-3 w-12 text-center">No</th>
-                <th className="py-2.5 px-3">Nama Barang / Deskripsi Aset</th>
-                <th className="py-2.5 px-3 text-center w-24">Jumlah</th>
-                <th className="py-2.5 px-3 text-center w-24">Satuan</th>
-                <th className="py-2.5 px-3">Kondisi / Catatan</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {consolidatedData.items && consolidatedData.items.length > 0 ? (
-                consolidatedData.items.map((item: any, index: number) => {
-                  const namaBarang = item.nama_barang || item.item_name || item.name || item.system_item_name || 'Barang Aset';
-                  const jumlah = item.qty ?? item.quantity ?? item.quantity_ordered ?? item.quantity_needed ?? 1;
-                  const satuan = item.satuan || item.unit || 'Unit';
-                  const spesifikasi = item.specification || item.classification || '';
-                  const sourceRo = item.source_ro ? `[Ref: ${item.source_ro}] ` : '';
-                  const catatan = item.catatan || item.notes || (spesifikasi ? spesifikasi : 'Kondisi Baik & Tersegel');
-
-                  return (
-                    <tr key={item.id || index} className="hover:bg-slate-50">
-                      <td className="py-3 px-3 text-center font-medium text-slate-600">{index + 1}</td>
+        {/* Items: tabel di layar lebar/print, kartu ringkas di ponsel */}
+        <div className="mb-4 sm:mb-6">
+          <div className="hidden sm:block print:block overflow-hidden rounded-xl border border-slate-300">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-800 text-white font-semibold">
+                  <th className="py-2.5 px-3 w-12 text-center">No</th>
+                  <th className="py-2.5 px-3">Nama Barang / Deskripsi Aset</th>
+                  <th className="py-2.5 px-3 text-center w-24">Jumlah</th>
+                  <th className="py-2.5 px-3 text-center w-24">Satuan</th>
+                  <th className="py-2.5 px-3">Kondisi / Catatan</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {itemRows.length > 0 ? (
+                  itemRows.map((row) => (
+                    <tr key={row.key} className="hover:bg-slate-50">
+                      <td className="py-3 px-3 text-center font-medium text-slate-600">{row.no}</td>
                       <td className="py-3 px-3 font-semibold text-slate-900">
-                        <div>{namaBarang}</div>
-                        {(spesifikasi || item.source_ro) && (
+                        <div>{row.namaBarang}</div>
+                        {(row.spesifikasi || row.hasSourceRo) && (
                           <div className="text-[10px] text-slate-500 font-normal mt-0.5">
-                            {sourceRo}{spesifikasi}
+                            {row.sourceRo}{row.spesifikasi}
                           </div>
                         )}
                       </td>
-                      <td className="py-3 px-3 text-center font-bold text-slate-900">{jumlah}</td>
-                      <td className="py-3 px-3 text-center text-slate-600">{satuan}</td>
-                      <td className="py-3 px-3 text-slate-500 italic">{catatan}</td>
+                      <td className="py-3 px-3 text-center font-bold text-slate-900">{row.jumlah}</td>
+                      <td className="py-3 px-3 text-center text-slate-600">{row.satuan}</td>
+                      <td className="py-3 px-3 text-slate-500 italic">{row.catatan}</td>
                     </tr>
-                  );
-                })
-              ) : (
-                <tr>
-                  <td colSpan={5} className="py-6 text-center text-slate-400">
-                    Tidak ada rincian item dalam Surat Jalan ini
-                  </td>
-                </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-400">
+                      Tidak ada rincian item dalam Surat Jalan ini
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              {itemRows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-300">
+                    <td colSpan={2} className="py-2.5 px-3 text-right uppercase tracking-wider text-[11px]">
+                      Total Keseluruhan Barang ({itemRows.length} Baris):
+                    </td>
+                    <td className="py-2.5 px-3 text-center font-mono text-sm text-indigo-700">
+                      {consolidatedData.totalQty}
+                    </td>
+                    <td className="py-2.5 px-3 text-center text-slate-600">UNIT</td>
+                    <td className="py-2.5 px-3 text-slate-500 font-normal italic text-[11px]">
+                      Lengkap &amp; Siap Kirim
+                    </td>
+                  </tr>
+                </tfoot>
               )}
-            </tbody>
-            {consolidatedData.items && consolidatedData.items.length > 0 && (
-              <tfoot>
-                <tr className="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-300">
-                  <td colSpan={2} className="py-2.5 px-3 text-right uppercase tracking-wider text-[11px]">
-                    Total Keseluruhan Barang ({consolidatedData.items.length} Baris):
-                  </td>
-                  <td className="py-2.5 px-3 text-center font-mono text-sm text-indigo-700">
-                    {consolidatedData.totalQty}
-                  </td>
-                  <td className="py-2.5 px-3 text-center text-slate-600">UNIT</td>
-                  <td className="py-2.5 px-3 text-slate-500 font-normal italic text-[11px]">
-                    Lengkap &amp; Siap Kirim
-                  </td>
-                </tr>
-              </tfoot>
+            </table>
+          </div>
+
+          {/* Tampilan ponsel: kartu per item agar tidak terpotong */}
+          <div className="sm:hidden print:hidden space-y-2">
+            {itemRows.length > 0 ? (
+              itemRows.map((row) => (
+                <div key={row.key} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white">
+                      {row.no}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-semibold leading-snug text-slate-900 break-words">
+                        {row.namaBarang}
+                      </p>
+                      {(row.spesifikasi || row.hasSourceRo) && (
+                        <p className="mt-0.5 text-[10px] text-slate-500 break-words">
+                          {row.sourceRo}{row.spesifikasi}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-7 text-[10px]">
+                    <span className="rounded-md bg-indigo-50 px-2 py-0.5 font-bold text-indigo-700 border border-indigo-100">
+                      {row.jumlah} {row.satuan}
+                    </span>
+                    <span className="text-slate-500 italic break-words">{row.catatan}</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="rounded-xl border border-dashed border-slate-300 py-6 text-center text-[11px] text-slate-400">
+                Tidak ada rincian item dalam Surat Jalan ini
+              </p>
             )}
-          </table>
+          </div>
+
+          <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-900 px-3 py-2 text-[11px] font-bold text-white sm:hidden print:hidden">
+            <span>Total {itemRows.length} baris</span>
+            <span className="font-mono">{consolidatedData.totalQty} UNIT</span>
+          </div>
         </div>
 
         {/* Notes */}
-        <div className="mb-8 p-3 rounded-lg border border-dashed border-slate-300 text-xs text-slate-600">
+        <div className="mb-6 sm:mb-8 p-3 rounded-lg border border-dashed border-slate-300 text-[11px] sm:text-xs text-slate-600 leading-relaxed">
           <strong>Catatan Pengiriman:</strong>
           <p className="mt-0.5">
             Harap periksa kelengkapan fisik, segel, dan kondisi barang sebelum menandatangani lembar tanda terima ini. 
@@ -411,12 +468,12 @@ export default function PrintSuratJalanPage() {
         </div>
 
         {/* 3-Party Signatures */}
-        <div className="grid grid-cols-3 gap-6 pt-4 border-t border-slate-300 text-center text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-3 print:grid-cols-3 gap-6 sm:gap-6 pt-4 border-t border-slate-300 text-center text-xs">
           <div>
             <p className="font-semibold text-slate-700">Yang Menyerahkan,</p>
             <p className="text-slate-400 text-[10px]">Gudang Logistik Pusat</p>
-            <div className="h-20 flex items-end justify-center">
-              <div className="w-36 border-b border-slate-900 font-semibold pb-1">
+            <div className="h-14 sm:h-20 flex items-end justify-center">
+              <div className="w-full max-w-[16rem] border-b border-slate-900 font-semibold pb-1 break-words">
                 ( {pengirimNama || 'Staff Gudang Pusat'} )
               </div>
             </div>
@@ -425,8 +482,8 @@ export default function PrintSuratJalanPage() {
           <div>
             <p className="font-semibold text-slate-700">Yang Membawa,</p>
             <p className="text-slate-400 text-[10px]">Driver / Ekspedisi</p>
-            <div className="h-20 flex items-end justify-center">
-              <div className="w-36 border-b border-slate-900 font-semibold pb-1">
+            <div className="h-14 sm:h-20 flex items-end justify-center">
+              <div className="w-full max-w-[16rem] border-b border-slate-900 font-semibold pb-1 break-words">
                 ( {driverNama || 'Pengemudi'} )
               </div>
             </div>
@@ -435,8 +492,8 @@ export default function PrintSuratJalanPage() {
           <div>
             <p className="font-semibold text-slate-700">Yang Menerima,</p>
             <p className="text-slate-400 text-[10px]">Store / Outlet Manager</p>
-            <div className="h-20 flex items-end justify-center">
-              <div className="w-36 border-b border-slate-900 font-semibold pb-1">
+            <div className="h-14 sm:h-20 flex items-end justify-center">
+              <div className="w-full max-w-[16rem] border-b border-slate-900 font-semibold pb-1 break-words">
                 ( {penerimaNama || 'Kepala Toko / PIC'} )
               </div>
             </div>
