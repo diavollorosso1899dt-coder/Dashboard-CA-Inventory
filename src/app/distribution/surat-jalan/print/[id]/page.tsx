@@ -187,15 +187,17 @@ export default function PrintSuratJalanPage() {
   }
 
   // Normalisasi Field Dokumen
-  const displaySjNumber = consolidatedData.sjNumbers.length > 0 
-    ? consolidatedData.sjNumbers.join(' / ') 
-    : (sj.nomor_sj || sj.sj_number || (sj as any).surat_jalan_number || '-');
+  const sjNumberList =
+    consolidatedData.sjNumbers.length > 0
+      ? consolidatedData.sjNumbers
+      : [sj.nomor_sj || sj.sj_number || (sj as any).surat_jalan_number || '-'];
 
   const tujuanOutlet = sj.tujuan_outlet_nama || sj.branch_name || (sj as any).to_location || 'Outlet Tujuan';
 
-  const displayRoNumber = consolidatedData.roNumbers.length > 0
-    ? consolidatedData.roNumbers.join(', ')
-    : (sj.ro_nomor || sj.ro_number || (sj as any).transfer_number || '-');
+  const roNumberList =
+    consolidatedData.roNumbers.length > 0
+      ? consolidatedData.roNumbers
+      : [sj.ro_nomor || sj.ro_number || (sj as any).transfer_number || '-'];
 
   const driverNama = sj.driver_nama || sj.driver_name || (sj as any).expedition_courier || 'Petugas Ekspedisi Logistik';
   const kendaraanPlat = sj.kendaraan_plat || sj.vehicle_number || (sj as any).tracking_number || 'B 9188 CA';
@@ -315,7 +317,15 @@ export default function PrintSuratJalanPage() {
                 SURAT JALAN
               </div>
               <div className="text-[11px] sm:text-xs font-mono font-bold text-slate-700 mt-1 max-w-full sm:max-w-[280px] break-words">
-                NOMOR: <span className="text-slate-900 font-bold">{displaySjNumber}</span>
+                NOMOR:{' '}
+                <span className="text-slate-900 font-bold">
+                  {sjNumberList.map((nomor, idx) => (
+                    <span key={`${nomor}-${idx}`} className="block sm:inline">
+                      {nomor}
+                      {idx < sjNumberList.length - 1 && <span className="hidden sm:inline"> / </span>}
+                    </span>
+                  ))}
+                </span>
               </div>
               <div className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
                 Tanggal: {tglDokumen}
@@ -337,7 +347,15 @@ export default function PrintSuratJalanPage() {
             <span className="font-bold text-indigo-800 block mb-1 uppercase tracking-wider text-[10px] sm:text-[11px]">Tujuan Pengiriman:</span>
             <div className="font-bold text-slate-900 text-sm break-words">{tujuanOutlet}</div>
             <div className="text-slate-600 mt-1 break-words">
-              Ref. Request Order: <strong className="font-mono text-indigo-700 break-all">{displayRoNumber}</strong>
+              Ref. Request Order:{' '}
+              <strong className="font-mono text-indigo-700 break-all">
+                {roNumberList.map((nomor, idx) => (
+                  <span key={`${nomor}-${idx}`} className="block sm:inline">
+                    {nomor}
+                    {idx < roNumberList.length - 1 && <span className="hidden sm:inline">, </span>}
+                  </span>
+                ))}
+              </strong>
             </div>
             {consolidatedData.docsCount > 1 && (
               <div className="text-[10px] sm:text-[11px] text-emerald-700 font-semibold mt-0.5">
