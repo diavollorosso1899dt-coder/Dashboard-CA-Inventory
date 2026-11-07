@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { SuratJalan, SJItem } from '@/lib/supabase/types';
-import { Printer, ArrowLeft, Building2, Truck, ShieldCheck, CheckCircle, Layers, FileText } from 'lucide-react';
+import { Printer, ArrowLeft, Building2, Truck, ShieldCheck, CheckCircle, Layers, FileText, Download } from 'lucide-react';
 
 interface MergedSJItem extends SJItem {
   source_ro?: string;
@@ -230,6 +230,27 @@ export default function PrintSuratJalanPage() {
     };
   });
 
+  // Nama file default saat menyimpan PDF diambil dari judul dokumen.
+  const printFileName = `Surat Jalan ${sjNumberList[0] || 'Dokumen'} - ${tujuanOutlet}`
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const handlePrintDocument = () => {
+    const previousTitle = document.title;
+    document.title = printFileName;
+    const restoreTitle = () => {
+      document.title = previousTitle;
+      window.removeEventListener('afterprint', restoreTitle);
+    };
+    window.addEventListener('afterprint', restoreTitle);
+    try {
+      window.print();
+    } finally {
+      restoreTitle();
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto py-3 sm:py-6 px-0 sm:px-6 print:max-w-none print:p-0">
       {/* Top Banner & Action Controls (Hidden on Print) */}
@@ -248,16 +269,28 @@ export default function PrintSuratJalanPage() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2.5 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
             <button
-              onClick={() => window.print()}
+              onClick={handlePrintDocument}
               className="flex w-full sm:w-auto items-center justify-center gap-2 px-4 sm:px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] sm:text-xs font-bold rounded-xl shadow-lg hover:shadow-indigo-500/25 transition cursor-pointer active:scale-95"
             >
               <Printer className="w-4 h-4 shrink-0" />
-              <span className="leading-tight">Cetak Lembar Surat Jalan (Print / PDF)</span>
+              <span className="leading-tight">Cetak Surat Jalan</span>
+            </button>
+            <button
+              onClick={handlePrintDocument}
+              className="flex w-full sm:w-auto items-center justify-center gap-2 px-4 sm:px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white text-[11px] sm:text-xs font-bold rounded-xl shadow-md transition cursor-pointer active:scale-95"
+            >
+              <Download className="w-4 h-4 shrink-0" />
+              <span className="leading-tight">Simpan PDF</span>
             </button>
           </div>
         </div>
+
+        <p className="px-1 text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400">
+          Untuk menyimpan sebagai PDF, klik <strong>Simpan PDF</strong> lalu pilih tujuan{' '}
+          <strong>Save as PDF</strong> pada dialog cetak.
+        </p>
 
         {/* Notifikasi Penggabungan Dokumen Outlet yang Sama */}
         {siblingDocs.length > 1 && (
