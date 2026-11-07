@@ -370,6 +370,22 @@ html.dark .badge-neutral {
     display: none !important;
   }
 
+  /* Halaman print Surat Jalan berada di dalam <main>. Tampilkan kembali
+     hanya untuk halaman itu agar dokumen tidak tercetak kosong. */
+  body.print-sj main {
+    display: block !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: auto !important;
+    background: #ffffff !important;
+  }
+
+  body.print-sj main > div {
+    max-width: none !important;
+    width: 100% !important;
+  }
+
   /* Ensure only the printable BAST document is visible and fills the page */
   .bast-modal-backdrop {
     position: static !important;

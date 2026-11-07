@@ -111,6 +111,13 @@ export default function PrintSuratJalanPage() {
     if (id || outletParam) loadSJ();
   }, [id, outletParam]);
 
+  // Tandai body agar aturan @media print global (yang menyembunyikan <main>
+  // untuk dokumen BAST) tidak ikut menyembunyikan halaman Surat Jalan ini.
+  useEffect(() => {
+    document.body.classList.add('print-sj');
+    return () => document.body.classList.remove('print-sj');
+  }, []);
+
   // Kumpulkan & gabungkan semua item jika ada nama outlet yang sama
   const consolidatedData = useMemo(() => {
     if (!sj) return null;
@@ -222,7 +229,7 @@ export default function PrintSuratJalanPage() {
   });
 
   return (
-    <div className="max-w-4xl mx-auto py-3 sm:py-6 px-0 sm:px-6">
+    <div className="max-w-4xl mx-auto py-3 sm:py-6 px-0 sm:px-6 print:max-w-none print:p-0">
       {/* Top Banner & Action Controls (Hidden on Print) */}
       <div className="print:hidden space-y-3 mb-4 sm:mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900 text-white p-3 sm:p-4 rounded-2xl shadow-md">
