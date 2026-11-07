@@ -1,7 +1,7 @@
 import React from 'react';
 import RoManagerView from '@/components/distribution/RoManagerView';
 import { getRequestOrders, getOutlets } from '@/lib/supabase/server';
-import { isRoFinalizedForActiveList } from '@/lib/distribution/ro-visibility';
+import { isRoFinalizedForActiveList, isStaleUnprocessedSheetRo } from '@/lib/distribution/ro-visibility';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,8 +17,10 @@ export default async function RoPage() {
   ]);
 
   // RO yang itemnya sudah dialokasikan (Ready Stock / PR) tetap tampil.
-  // Hanya RO final (selesai/dibatalkan) yang keluar dari daftar aktif.
-  const activeOrders = orders.filter((o) => !isRoFinalizedForActiveList(o));
+  // RO final dan RO sheet stale tanpa progres keluar dari daftar aktif.
+  const activeOrders = orders.filter(
+    (o) => !isRoFinalizedForActiveList(o) && !isStaleUnprocessedSheetRo(o)
+  );
 
   return <RoManagerView initialOrders={activeOrders} outlets={outlets} />;
 }

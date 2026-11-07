@@ -8,10 +8,19 @@
 export interface RoVisibilityInput {
   status?: string | null;
   current_stage?: string | null;
-  items?: Array<{ stock_source?: string | null }> | null;
+  items?: Array<{ stock_source?: string | null; quantity_fulfilled?: number | null }> | null;
+}
+
+export interface RoStaleVisibilityInput {
+  source_type?: string | null;
+  is_stale?: boolean | null;
+  status?: string | null;
+  current_stage?: string | null;
+  items?: Array<{ stock_source?: string | null; quantity_fulfilled?: number | null }> | null;
 }
 
 const FINAL_STAGES = new Set(['SELESAI', 'COMPLETED', 'DIBATALKAN', 'REJECTED', 'CANCELLED']);
+const UNPROCESSED_STAGES = new Set(['INPUT_SYSTEM', 'REQUEST_ORDER']);
 
 export function isRoFinalizedForActiveList(ro: RoVisibilityInput): boolean {
   const stage = ro.current_stage || ro.status;
@@ -24,4 +33,31 @@ export function isRoFinalizedForActiveList(ro: RoVisibilityInput): boolean {
   }
 
   return false;
+}
+
+/**
+ * RO dari Google Sheet yang sudah tidak ada di sheet (stale) dan belum pernah
+ * diproses user tidak perlu memenuhi Kelola RO.
+ *
+ * Baris tetap disimpan di database untuk riwayat. RO stale yang sudah punya
+ * progres (Ready Stock, PR, qty terpenuhi, atau status lanjut) tetap tampil
+ * supaya pekerjaan user tidak "hilang" hanya karena barisnya dihapus dari sheet.
+ */
+export function isStaleUnprocessedSheetRo(ro: RoStaleVisibilityInput): boolean {
+  if (ro.source_type !== 'GOOGLE_SHEET' || ro.is_stale !== true) return false;
+
+  const statusAdvanced = Boolean(
+    ro.status && !UNPROCESSED_STAGES.has(String(ro.status))
+  );
+  const stageAdvanced = Boolean(
+    ro.current_stage && !UNPROCESSED_STAGES.has(String(ro.current_stage))
+  );
+  if (statusAdvanced || stageAdvanced) return false;
+
+  const items = Array.isArray(ro.items) ? ro.items : [];
+  return !items.some(
+    (it) =>
+      (Number(it.quantity_fulfilled) || 0) > 0 ||
+      (it.stock_source && it.stock_source !== 'ON_PROSES')
+  );
 }

@@ -23,8 +23,39 @@ const FILL_FROM_SHEET_IF_EMPTY = [
   'notes',
 ] as const;
 
+/**
+ * Field deskriptif yang bukan hasil kerja user. Spreadsheet tetap menjadi
+ * sumber kebenaran, sehingga koreksi outlet/gudang di sheet ikut memperbaiki
+ * RO lama (misalnya saat header sheet sempat bergeser).
+ */
+const SHEET_AUTHORITATIVE_ORDER_FIELDS = [
+  'branch_name',
+  'warehouse_name',
+  'requester_name',
+  'region',
+  'source_type',
+] as const;
+
+/**
+ * Field item yang berasal dari sheet. Alokasi stok, qty terpenuhi, dan catatan
+ * user tetap dipertahankan.
+ */
+const SHEET_AUTHORITATIVE_ITEM_FIELDS = [
+  'sku',
+  'unit',
+  'unit_price',
+  'total_price',
+  'item_type',
+] as const;
+
 function hasValue(value: unknown): boolean {
   return value !== undefined && value !== null && value !== '';
+}
+
+function itemHasUserProgress(item: RoLike): boolean {
+  const fulfilled = Number(item?.quantity_fulfilled) || 0;
+  if (fulfilled > 0) return true;
+  return hasValue(item?.stock_source) && item.stock_source !== 'ON_PROSES';
 }
 
 function itemKey(item: RoLike): string {
@@ -38,6 +69,13 @@ function normalizeOwnerRoId(raw: unknown): string {
     id = id.replace(/\./g, '');
   }
   return id.toLowerCase().trim();
+}
+
+function isOwnSheetItem(item: RoLike, ownerRawRoId?: string): boolean {
+  if (!ownerRawRoId) return false;
+  const match = String(item?.id || '').trim().match(/^roi-(.+?)-\d+-\d+$/i);
+  if (!match) return false;
+  return normalizeOwnerRoId(match[1]) === normalizeOwnerRoId(ownerRawRoId);
 }
 
 /**
@@ -59,6 +97,11 @@ export function isForeignSheetRoItem(item: RoLike, ownerRawRoId?: string): boole
  * Semua item lama milik RO ini dipertahankan apa adanya. Item yang memiliki ID
  * `roi-<roId>-*` milik RO lain dibuang. Item dari sheet dipakai untuk
  * melengkapi field yang masih kosong atau menambah item baru.
+ *
+ * Item yang jelas berasal dari sheet (`roi-<roId>-...`) namun sudah tidak ada
+ * di sheet akan dibuang selama belum diproses user, supaya hasil tarik ulang
+ * benar-benar mengikuti sheet terbaru. Item manual dan item yang sudah punya
+ * progres tetap dipertahankan.
  */
 export function mergeRoItemsForSync(
   existingItems: unknown,
@@ -80,14 +123,20 @@ export function mergeRoItemsForSync(
     if (key && !byName.has(key)) byName.set(key, item);
   }
 
+  const matchedItems = new Set<RoLike>();
+
   for (const incoming of sheet) {
     const incomingId = incoming?.id ? String(incoming.id) : '';
     const matched = (incomingId && byId.get(incomingId)) || byName.get(itemKey(incoming));
 
     if (!matched) {
-      existing.push({ ...incoming });
+      const created = { ...incoming };
+      existing.push(created);
+      matchedItems.add(created);
       continue;
     }
+
+    matchedItems.add(matched);
 
     // Lengkapi field yang belum ada di data lama; jangan menimpa nilai user.
     for (const [key, value] of Object.entries(incoming)) {
@@ -96,9 +145,35 @@ export function mergeRoItemsForSync(
         matched[key] = value;
       }
     }
+
+    // Field deskriptif item mengikuti sheet agar koreksi di spreadsheet
+    // (unit, harga, total, tipe) ikut memperbaiki data lama.
+    for (const key of SHEET_AUTHORITATIVE_ITEM_FIELDS) {
+      if (hasValue(incoming[key])) matched[key] = incoming[key];
+    }
+
+    // Nama item dari sheet boleh mengoreksi item yang jelas berasal dari sheet
+    // (`roi-<roId>-...`) selama belum diproses user. Item dengan ID lain
+    // (misalnya hasil rename/manual) tetap dipertahankan.
+    if (
+      isOwnSheetItem(matched, ownerRawRoId) &&
+      !itemHasUserProgress(matched) &&
+      hasValue(incoming.item_name)
+    ) {
+      matched.item_name = incoming.item_name;
+    }
+
+    // Qty pesanan boleh dikoreksi sheet selama item belum diproses user.
+    if (!itemHasUserProgress(matched) && hasValue(incoming.quantity_ordered)) {
+      matched.quantity_ordered = incoming.quantity_ordered;
+    }
   }
 
-  return existing;
+  return existing.filter((item) => {
+    if (matchedItems.has(item)) return true;
+    if (!isOwnSheetItem(item, ownerRawRoId)) return true;
+    return itemHasUserProgress(item);
+  });
 }
 
 export function mergeRoForSync<T extends RoLike>(sheetOrder: T, existing?: RoLike | null): T {
@@ -116,6 +191,9 @@ export function mergeRoForSync<T extends RoLike>(sheetOrder: T, existing?: RoLik
     if (!hasValue(merged[key]) && hasValue(sheetOrder[key])) {
       merged[key] = sheetOrder[key];
     }
+  }
+  for (const key of SHEET_AUTHORITATIVE_ORDER_FIELDS) {
+    if (hasValue(sheetOrder[key])) merged[key] = sheetOrder[key];
   }
 
   merged.id = existing.id;

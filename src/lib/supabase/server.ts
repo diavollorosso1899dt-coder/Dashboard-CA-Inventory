@@ -36,6 +36,11 @@ import {
 import { isForeignSheetRoItem, mergeRoForSync } from '../distribution/ro-sync-merge';
 import { applySheetRoDates } from '../distribution/ro-sheet-dates';
 import {
+  detectRoColumns,
+  isRoSheetPlaceholderRow,
+  parseRoCsvLine,
+} from '../distribution/ro-sheet-columns';
+import {
   RO_TOMBSTONE_SOURCE,
   addTombstones,
   canonicalTombstoneKey,
@@ -2761,25 +2766,6 @@ export function normalizeRoId(raw: string | null | undefined): string {
   return id.trim();
 }
 
-function parseCSVLine(line: string): string[] {
-  const result: string[] = [];
-  let cur = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (c === '"') {
-      inQuotes = !inQuotes;
-    } else if (c === ',' && !inQuotes) {
-      result.push(cur.trim());
-      cur = '';
-    } else {
-      cur += c;
-    }
-  }
-  result.push(cur.trim());
-  return result;
-}
-
 function parseIndoCurrency(val?: string): number {
   if (!val) return 0;
   const clean = val.trim();
@@ -2793,71 +2779,6 @@ function parseIndoQty(val?: string): number {
   const clean = val.trim().split(',')[0];
   const num = parseInt(clean.replace(/[^\d]/g, ''), 10);
   return isNaN(num) || num < 0 ? 1 : num;
-}
-
-function detectRoColumns(headerLine: string, defaultRegion: 'KALBAR' | 'JABODETABEK') {
-  const cols = parseCSVLine(headerLine).map((c) => c.toLowerCase().trim());
-
-  let roIdIdx = cols.findIndex((c) => c === 'ro id' || c.includes('ro id') || c === 'id ro');
-  let itemNameIdx = cols.findIndex((c) => c.includes('nama item') || c.includes('nama barang'));
-  let qtyIdx = cols.findIndex((c) => c === 'jumlah' || c === 'qty');
-  let unitIdx = cols.findIndex((c) => c.includes('satuan'));
-  let hargaIdx = cols.findIndex((c) => c === 'harga');
-  let totalIdx = cols.findIndex((c) => c === 'total');
-  let tipeIdx = cols.findIndex((c) => c.includes('tipe'));
-  let outletIdx = cols.findIndex((c) => c === 'outlet' || c.includes('cabang'));
-  let warehouseIdx = cols.findIndex((c) => c === 'gudang');
-  let statusIdx = cols.findIndex((c) => c === 'status');
-  let skuIdx = cols.findIndex((c) => c === 'sku');
-  let inputDateIdx = cols.findIndex((c) => c.includes('tgl input') || c.includes('tanggal input'));
-  let reqDateIdx = cols.findIndex((c) => c.includes('tgl permintaan') || c.includes('tanggal permintaan'));
-
-  if (defaultRegion === 'KALBAR') {
-    if (roIdIdx === -1) roIdIdx = 3;
-    if (skuIdx === -1) skuIdx = 4;
-    if (itemNameIdx === -1) itemNameIdx = 5;
-    if (qtyIdx === -1) qtyIdx = 6;
-    if (unitIdx === -1) unitIdx = 7;
-    if (hargaIdx === -1) hargaIdx = 8;
-    if (totalIdx === -1) totalIdx = 9;
-    if (tipeIdx === -1) tipeIdx = 10;
-    if (outletIdx === -1) outletIdx = 11;
-    if (warehouseIdx === -1) warehouseIdx = 12;
-    if (statusIdx === -1) statusIdx = 13;
-    if (inputDateIdx === -1) inputDateIdx = 1;
-    if (reqDateIdx === -1) reqDateIdx = 2;
-  } else {
-    // JABODETABEK format:
-    // [0] Bulan, [1] tgl input, [2] tgl permintaan, [3] outlet/ro_id, [4] nama item, [5] qty, [6] unit, [7] harga, [8] total, [9] tipe, [10] outlet name, [11] gudang, [12] status
-    if (roIdIdx === -1) roIdIdx = 3;
-    if (itemNameIdx === -1) itemNameIdx = 4;
-    if (qtyIdx === -1) qtyIdx = 5;
-    if (unitIdx === -1) unitIdx = 6;
-    if (hargaIdx === -1) hargaIdx = 7;
-    if (totalIdx === -1) totalIdx = 8;
-    if (tipeIdx === -1) tipeIdx = 9;
-    if (outletIdx === 3 || outletIdx === -1) outletIdx = 10;
-    if (warehouseIdx === -1) warehouseIdx = 11;
-    if (statusIdx === -1) statusIdx = 12;
-    if (inputDateIdx === -1) inputDateIdx = 1;
-    if (reqDateIdx === -1) reqDateIdx = 2;
-  }
-
-  return {
-    roIdIdx,
-    skuIdx,
-    itemNameIdx,
-    qtyIdx,
-    unitIdx,
-    hargaIdx,
-    totalIdx,
-    tipeIdx,
-    outletIdx,
-    warehouseIdx,
-    statusIdx,
-    inputDateIdx,
-    reqDateIdx,
-  };
 }
 
 function parseIndoDate(dateStr?: string, fallbackToNull = false): string | null {
@@ -3001,7 +2922,8 @@ export async function syncRequestOrdersFromSheet(
           continue;
         }
 
-        const cols = detectRoColumns(rawLines[0], source.region);
+        const sampleDataLine = rawLines.slice(1).find((line) => line.trim());
+        const cols = detectRoColumns(rawLines[0], source.region, sampleDataLine);
         syncedSources.push(source.name);
 
         for (let i = 1; i < rawLines.length; i++) {
@@ -3009,7 +2931,7 @@ export async function syncRequestOrdersFromSheet(
           if (!line) continue;
           totalRowsScanned++;
 
-          const parts = parseCSVLine(line);
+          const parts = parseRoCsvLine(line);
           const rawRoId = normalizeRoId(parts[cols.roIdIdx]);
           const itemName = parts[cols.itemNameIdx]?.trim();
           const qtyStr = parts[cols.qtyIdx]?.trim();
@@ -3017,7 +2939,7 @@ export async function syncRequestOrdersFromSheet(
             parts[cols.outletIdx]?.trim() ||
             (source.region === 'JABODETABEK' ? 'Outlet Jabodetabek' : 'Outlet Kalbar');
 
-          if (!itemName) continue;
+          if (!itemName || isRoSheetPlaceholderRow(rawRoId, itemName)) continue;
 
           const rowNo = parts[0]?.trim() || String(i);
           const effectiveRoId = (rawRoId && rawRoId !== '-' && rawRoId !== '0') ? rawRoId : `NOID-${source.region}-${rowNo}`;
@@ -4267,7 +4189,7 @@ export async function syncMasterAssetCatalogFromSheet(
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
       if (!line.trim()) continue;
-      const cols = parseCSVLine(line);
+      const cols = parseRoCsvLine(line);
 
       const rawName = cols[7]?.trim();
       if (!rawName) continue;
@@ -4365,13 +4287,14 @@ export async function syncMasterAssetCatalogFromSheet(
           const roCsvText = await roResponse.text();
           const roLines = roCsvText.split('\n');
           if (roLines.length > 1) {
-            const cols = detectRoColumns(roLines[0], roSrc.region);
+            const sampleDataLine = roLines.slice(1).find((line) => line.trim());
+            const cols = detectRoColumns(roLines[0], roSrc.region, sampleDataLine);
             for (let i = 1; i < roLines.length; i++) {
               const rLine = roLines[i];
               if (!rLine.trim()) continue;
-              const rCols = parseCSVLine(rLine);
+              const rCols = parseRoCsvLine(rLine);
               const rItemName = rCols[cols.itemNameIdx]?.trim();
-              if (!rItemName) continue;
+              if (!rItemName || isRoSheetPlaceholderRow(undefined, rItemName)) continue;
               const rKey = rItemName.toLowerCase();
               if (!seenNames.has(rKey)) {
                 seenNames.add(rKey);

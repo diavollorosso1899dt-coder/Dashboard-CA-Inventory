@@ -114,3 +114,133 @@ test('RO baru dari spreadsheet tidak diubah', () => {
   const merged = mergeRoForSync(order, null);
   assert.equal(merged, order);
 });
+
+test('cabang dan gudang mengikuti spreadsheet walau data lama berbeda', () => {
+  const merged = mergeRoForSync(
+    sheetOrder({ branch_name: 'Warung Nini Kisamaun', warehouse_name: 'Gudang GA' }),
+    existingOrder({ branch_name: 'Perlengkapan Tetap', warehouse_name: 'Warung Nini Kisamaun' })
+  );
+
+  assert.equal(merged.branch_name, 'Warung Nini Kisamaun');
+  assert.equal(merged.warehouse_name, 'Gudang GA');
+});
+
+test('unit, harga, total, dan tipe item mengikuti spreadsheet saat data lama salah', () => {
+  const merged = mergeRoForSync(
+    sheetOrder({
+      items: [
+        {
+          id: 'roi-1',
+          item_name: 'Meja Lesehan',
+          quantity_ordered: 6,
+          unit: 'unit',
+          unit_price: 125000,
+          total_price: 750000,
+          item_type: 'Perlengkapan Tetap',
+          stock_source: 'ON_PROSES',
+        },
+      ],
+    }),
+    existingOrder({
+      items: [
+        {
+          id: 'roi-1',
+          item_name: 'Meja Lesehan',
+          quantity_ordered: 6,
+          unit: '6',
+          unit_price: 0,
+          total_price: 750000000,
+          item_type: '750000',
+          quantity_fulfilled: 4,
+          stock_source: 'GUDANG_SCGA',
+          notes: 'sudah dicek',
+        },
+      ],
+    })
+  );
+  const meja = merged.items.find((it) => it.item_name === 'Meja Lesehan');
+
+  assert.equal(meja.unit, 'unit');
+  assert.equal(meja.unit_price, 125000);
+  assert.equal(meja.total_price, 750000);
+  assert.equal(meja.item_type, 'Perlengkapan Tetap');
+  assert.equal(meja.quantity_fulfilled, 4);
+  assert.equal(meja.stock_source, 'GUDANG_SCGA');
+  assert.equal(meja.notes, 'sudah dicek');
+});
+
+test('qty pesanan mengikuti sheet selama item belum diproses user', () => {
+  const merged = mergeRoForSync(
+    sheetOrder({
+      items: [{ id: 'roi-1', item_name: 'Meja Lesehan', quantity_ordered: 5, unit: 'unit' }],
+    }),
+    existingOrder({
+      items: [
+        {
+          id: 'roi-1',
+          item_name: 'Meja Lesehan',
+          quantity_ordered: 6,
+          quantity_fulfilled: 0,
+          stock_source: 'ON_PROSES',
+        },
+      ],
+    })
+  );
+  const meja = merged.items.find((it) => it.item_name === 'Meja Lesehan');
+  assert.equal(meja.quantity_ordered, 5);
+});
+
+test('qty pesanan item yang sudah diproses user tidak kembali ke sheet', () => {
+  const merged = mergeRoForSync(
+    sheetOrder({
+      items: [{ id: 'roi-1', item_name: 'Meja Lesehan', quantity_ordered: 5, unit: 'unit' }],
+    }),
+    existingOrder({
+      items: [
+        {
+          id: 'roi-1',
+          item_name: 'Meja Lesehan',
+          quantity_ordered: 6,
+          quantity_fulfilled: 2,
+          stock_source: 'GUDANG_SCGA',
+        },
+      ],
+    })
+  );
+  const meja = merged.items.find((it) => it.item_name === 'Meja Lesehan');
+  assert.equal(meja.quantity_ordered, 6);
+});
+
+test('item sheet yang hilang dan belum diproses dibuang, item berprogres dipertahankan', () => {
+  const merged = mergeRoItemsForSync(
+    [
+      { id: 'roi-103322-1-1', item_name: 'Item Lama', quantity_fulfilled: 0, stock_source: 'ON_PROSES' },
+      { id: 'roi-103322-1-2', item_name: 'Item Berprogres', quantity_fulfilled: 2, stock_source: 'GUDANG_SCGA' },
+      { id: 'roi-manual', item_name: 'Item Manual' },
+    ],
+    [{ id: 'roi-103322-2-1', item_name: 'Item Baru', quantity_ordered: 1 }],
+    '103322'
+  );
+
+  assert.deepEqual(
+    merged.map((it) => it.item_name).sort(),
+    ['Item Baru', 'Item Berprogres', 'Item Manual']
+  );
+});
+
+test('nama item sheet diperbarui jika belum diproses, nama item berprogres dipertahankan', () => {
+  const merged = mergeRoItemsForSync(
+    [
+      { id: 'roi-103322-1-1', item_name: 'Kode Lama', quantity_fulfilled: 0, stock_source: 'ON_PROSES' },
+      { id: 'roi-103322-1-2', item_name: 'Nama Lama', quantity_fulfilled: 1, stock_source: 'GUDANG_SCGA' },
+    ],
+    [
+      { id: 'roi-103322-1-1', item_name: 'Nama Baru dari Sheet' },
+      { id: 'roi-103322-1-2', item_name: 'Nama Baru Berprogres' },
+    ],
+    '103322'
+  );
+
+  assert.equal(merged.find((it) => it.id === 'roi-103322-1-1').item_name, 'Nama Baru dari Sheet');
+  assert.equal(merged.find((it) => it.id === 'roi-103322-1-2').item_name, 'Nama Lama');
+});

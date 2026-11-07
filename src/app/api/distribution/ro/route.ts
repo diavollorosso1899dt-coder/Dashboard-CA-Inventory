@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRequestOrders, createRequestOrder, updateRequestOrder, deleteRequestOrder, getAdminClient } from '@/lib/supabase/server';
 import { sortOrdersNewestFirst } from '@/lib/utils/ro-sorter';
-import { isRoFinalizedForActiveList } from '@/lib/distribution/ro-visibility';
+import { isRoFinalizedForActiveList, isStaleUnprocessedSheetRo } from '@/lib/distribution/ro-visibility';
 import { auditMutation } from '@/lib/audit/record-change';
 import { resolveActor } from '@/lib/auth/actor';
 
@@ -38,8 +38,11 @@ export async function GET(req: NextRequest) {
     let data = await getRequestOrders(true);
     if (activeOnly) {
       // RO yang sudah dialokasikan ke Ready Stock / PR tetap tampil di
-      // Kelola RO. Hanya RO final (selesai/dibatalkan) yang disembunyikan.
-      data = data.filter((o) => !isRoFinalizedForActiveList(o));
+      // Kelola RO. Hanya RO final (selesai/dibatalkan) dan RO sheet yang sudah
+      // hilang dari sheet tanpa progres yang disembunyikan.
+      data = data.filter(
+        (o) => !isRoFinalizedForActiveList(o) && !isStaleUnprocessedSheetRo(o)
+      );
     }
     return NextResponse.json(
       { data },
