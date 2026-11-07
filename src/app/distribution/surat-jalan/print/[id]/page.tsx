@@ -21,6 +21,8 @@ export default function PrintSuratJalanPage() {
   const [siblingDocs, setSiblingDocs] = useState<SuratJalan[]>([]);
   const [isConsolidated, setIsConsolidated] = useState<boolean>(true);
   const [loading, setLoading] = useState(true);
+  const [isSavingPdf, setIsSavingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadSJ() {
@@ -225,6 +227,7 @@ export default function PrintSuratJalanPage() {
       satuan,
       spesifikasi,
       sourceRo,
+      ref: item.source_ro || '',
       catatan,
       hasSourceRo: Boolean(item.source_ro),
     };
@@ -248,6 +251,43 @@ export default function PrintSuratJalanPage() {
       window.print();
     } finally {
       restoreTitle();
+    }
+  };
+
+  // Simpan PDF langsung mengunduh file .pdf asli (tanpa dialog cetak),
+  // sehingga tetap bekerja pada browser yang preview cetaknya bermasalah.
+  const handleDownloadPdf = async () => {
+    if (isSavingPdf) return;
+    setIsSavingPdf(true);
+    setPdfError(null);
+    try {
+      const { downloadSuratJalanPdf } = await import('@/lib/distribution/surat-jalan-pdf');
+      await downloadSuratJalanPdf({
+        sjNumbers: sjNumberList,
+        roNumbers: roNumberList,
+        outlet: tujuanOutlet,
+        date: tglDokumen,
+        sender: pengirimNama,
+        driver: driverNama,
+        plate: kendaraanPlat,
+        eta: `${new Date(rawDate || Date.now()).toLocaleDateString('id-ID')} (Sameday / Next-Day)`,
+        status: sj.status || 'SHIPPED',
+        docsCount: consolidatedData.docsCount,
+        items: itemRows.map((row) => ({
+          nama: row.namaBarang,
+          ref: row.ref,
+          qty: row.jumlah,
+          satuan: row.satuan,
+          catatan: row.catatan,
+        })),
+        totalQty: consolidatedData.totalQty,
+        receiver: penerimaNama,
+      });
+    } catch (err) {
+      console.error('Gagal membuat PDF Surat Jalan:', err);
+      setPdfError('Gagal membuat file PDF. Coba lagi, atau gunakan tombol Cetak lalu pilih "Save as PDF".');
+    } finally {
+      setIsSavingPdf(false);
     }
   };
 
@@ -278,19 +318,26 @@ export default function PrintSuratJalanPage() {
               <span className="leading-tight">Cetak Surat Jalan</span>
             </button>
             <button
-              onClick={handlePrintDocument}
-              className="flex w-full sm:w-auto items-center justify-center gap-2 px-4 sm:px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white text-[11px] sm:text-xs font-bold rounded-xl shadow-md transition cursor-pointer active:scale-95"
+              onClick={handleDownloadPdf}
+              disabled={isSavingPdf}
+              className="flex w-full sm:w-auto items-center justify-center gap-2 px-4 sm:px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white text-[11px] sm:text-xs font-bold rounded-xl shadow-md transition cursor-pointer active:scale-95 disabled:cursor-wait disabled:opacity-70"
             >
-              <Download className="w-4 h-4 shrink-0" />
-              <span className="leading-tight">Simpan PDF</span>
+              <Download className={`w-4 h-4 shrink-0 ${isSavingPdf ? 'animate-bounce' : ''}`} />
+              <span className="leading-tight">{isSavingPdf ? 'Menyiapkan PDF...' : 'Simpan PDF'}</span>
             </button>
           </div>
         </div>
 
         <p className="px-1 text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400">
-          Untuk menyimpan sebagai PDF, klik <strong>Simpan PDF</strong> lalu pilih tujuan{' '}
-          <strong>Save as PDF</strong> pada dialog cetak.
+          <strong>Simpan PDF</strong> langsung mengunduh file PDF resmi. Tombol{' '}
+          <strong>Cetak Surat Jalan</strong> membuka dialog cetak bila ingin mencetak ke printer.
         </p>
+
+        {pdfError && (
+          <p className="px-1 text-[10px] sm:text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+            {pdfError}
+          </p>
+        )}
 
         {/* Notifikasi Penggabungan Dokumen Outlet yang Sama */}
         {siblingDocs.length > 1 && (
