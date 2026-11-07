@@ -130,10 +130,19 @@ export async function buildSuratJalanPdf(data: SuratJalanPdfData): Promise<jsPDF
     `Ref. Request Order: ${roNumbers.join(', ')}`,
     boxWidth - boxPadding * 2,
   ) as string[];
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  const outletLines = doc.splitTextToSize(outlet, boxWidth - boxPadding * 2) as string[];
   const mergedLine = data.docsCount > 1 ? `Menggabungkan ${data.docsCount} Dokumen Distribusi Outlet` : null;
 
   const rightHeight =
-    boxPadding * 2 + 3.4 + 5.4 + refLines.length * 3.4 + (mergedLine ? 3.4 : 0) + 3.4;
+    boxPadding * 2 +
+    3.4 +
+    5.4 +
+    (outletLines.length - 1) * 4.4 +
+    refLines.length * 3.4 +
+    (mergedLine ? 3.4 : 0) +
+    3.4;
   const leftHeight = boxPadding * 2 + 3.4 + 4.8 + leftLines.length * 3.6;
   const boxHeight = Math.max(leftHeight, rightHeight, 22);
 
@@ -167,13 +176,12 @@ export async function buildSuratJalanPdf(data: SuratJalanPdfData): Promise<jsPDF
   doc.text('TUJUAN PENGIRIMAN:', MARGIN + boxWidth + boxGap + boxPadding, rightCursor);
 
   rightCursor += 5.2;
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(...SLATE_900);
-  doc.text(outlet, MARGIN + boxWidth + boxGap + boxPadding, rightCursor, {
-    maxWidth: boxWidth - boxPadding * 2,
-  });
+  doc.text(outletLines, MARGIN + boxWidth + boxGap + boxPadding, rightCursor);
 
-  rightCursor += 4.4;
+  rightCursor += 4.4 + (outletLines.length - 1) * 4.4;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.4);
   doc.setTextColor(...SLATE_600);
@@ -237,6 +245,7 @@ export async function buildSuratJalanPdf(data: SuratJalanPdfData): Promise<jsPDF
     startY: y + armadaHeight + 6,
     margin: { left: MARGIN, right: MARGIN, top: 14, bottom: 20 },
     theme: 'grid',
+    rowPageBreak: 'avoid',
     head: [['No', 'Nama Barang / Deskripsi Aset', 'Jumlah', 'Satuan', 'Kondisi / Catatan']],
     body,
     foot: itemCount > 0

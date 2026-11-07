@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { SuratJalan, SJItem } from '@/lib/supabase/types';
-import { Printer, ArrowLeft, Building2, Truck, ShieldCheck, CheckCircle, Layers, FileText, Download } from 'lucide-react';
+import { Printer, ArrowLeft, Building2, Truck, ShieldCheck, CheckCircle, Layers, FileText, Download, ImageDown } from 'lucide-react';
 
 interface MergedSJItem extends SJItem {
   source_ro?: string;
@@ -22,6 +22,7 @@ export default function PrintSuratJalanPage() {
   const [isConsolidated, setIsConsolidated] = useState<boolean>(true);
   const [loading, setLoading] = useState(true);
   const [isSavingPdf, setIsSavingPdf] = useState(false);
+  const [isSavingJpg, setIsSavingJpg] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -254,6 +255,29 @@ export default function PrintSuratJalanPage() {
     }
   };
 
+  // Data yang dipakai bersama oleh ekspor PDF dan JPG.
+  const exportPayload = {
+    sjNumbers: sjNumberList,
+    roNumbers: roNumberList,
+    outlet: tujuanOutlet,
+    date: tglDokumen,
+    sender: pengirimNama,
+    driver: driverNama,
+    plate: kendaraanPlat,
+    eta: `${new Date(rawDate || Date.now()).toLocaleDateString('id-ID')} (Sameday / Next-Day)`,
+    status: sj.status || 'SHIPPED',
+    docsCount: consolidatedData.docsCount,
+    items: itemRows.map((row) => ({
+      nama: row.namaBarang,
+      ref: row.ref,
+      qty: row.jumlah,
+      satuan: row.satuan,
+      catatan: row.catatan,
+    })),
+    totalQty: consolidatedData.totalQty,
+    receiver: penerimaNama,
+  };
+
   // Simpan PDF langsung mengunduh file .pdf asli (tanpa dialog cetak),
   // sehingga tetap bekerja pada browser yang preview cetaknya bermasalah.
   const handleDownloadPdf = async () => {
@@ -262,32 +286,28 @@ export default function PrintSuratJalanPage() {
     setPdfError(null);
     try {
       const { downloadSuratJalanPdf } = await import('@/lib/distribution/surat-jalan-pdf');
-      await downloadSuratJalanPdf({
-        sjNumbers: sjNumberList,
-        roNumbers: roNumberList,
-        outlet: tujuanOutlet,
-        date: tglDokumen,
-        sender: pengirimNama,
-        driver: driverNama,
-        plate: kendaraanPlat,
-        eta: `${new Date(rawDate || Date.now()).toLocaleDateString('id-ID')} (Sameday / Next-Day)`,
-        status: sj.status || 'SHIPPED',
-        docsCount: consolidatedData.docsCount,
-        items: itemRows.map((row) => ({
-          nama: row.namaBarang,
-          ref: row.ref,
-          qty: row.jumlah,
-          satuan: row.satuan,
-          catatan: row.catatan,
-        })),
-        totalQty: consolidatedData.totalQty,
-        receiver: penerimaNama,
-      });
+      await downloadSuratJalanPdf(exportPayload);
     } catch (err) {
       console.error('Gagal membuat PDF Surat Jalan:', err);
       setPdfError('Gagal membuat file PDF. Coba lagi, atau gunakan tombol Cetak lalu pilih "Save as PDF".');
     } finally {
       setIsSavingPdf(false);
+    }
+  };
+
+  // Simpan JPG: render dokumen ke <canvas> lalu unduh sebagai gambar.
+  const handleDownloadJpg = async () => {
+    if (isSavingJpg) return;
+    setIsSavingJpg(true);
+    setPdfError(null);
+    try {
+      const { downloadSuratJalanJpg } = await import('@/lib/distribution/surat-jalan-image');
+      await downloadSuratJalanJpg(exportPayload);
+    } catch (err) {
+      console.error('Gagal membuat JPG Surat Jalan:', err);
+      setPdfError('Gagal membuat gambar JPG. Coba lagi, atau gunakan tombol Simpan PDF.');
+    } finally {
+      setIsSavingJpg(false);
     }
   };
 
@@ -325,11 +345,19 @@ export default function PrintSuratJalanPage() {
               <Download className={`w-4 h-4 shrink-0 ${isSavingPdf ? 'animate-bounce' : ''}`} />
               <span className="leading-tight">{isSavingPdf ? 'Menyiapkan PDF...' : 'Simpan PDF'}</span>
             </button>
+            <button
+              onClick={handleDownloadJpg}
+              disabled={isSavingJpg}
+              className="flex w-full sm:w-auto items-center justify-center gap-2 px-4 sm:px-5 py-2.5 bg-emerald-700 hover:bg-emerald-600 border border-emerald-500 text-white text-[11px] sm:text-xs font-bold rounded-xl shadow-md transition cursor-pointer active:scale-95 disabled:cursor-wait disabled:opacity-70"
+            >
+              <ImageDown className={`w-4 h-4 shrink-0 ${isSavingJpg ? 'animate-bounce' : ''}`} />
+              <span className="leading-tight">{isSavingJpg ? 'Menyiapkan JPG...' : 'Simpan JPG'}</span>
+            </button>
           </div>
         </div>
 
         <p className="px-1 text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400">
-          <strong>Simpan PDF</strong> langsung mengunduh file PDF resmi. Tombol{' '}
+          <strong>Simpan PDF</strong> dan <strong>Simpan JPG</strong> langsung mengunduh file. Tombol{' '}
           <strong>Cetak Surat Jalan</strong> membuka dialog cetak bila ingin mencetak ke printer.
         </p>
 
