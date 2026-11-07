@@ -170,6 +170,48 @@ export async function listTombstones(
   }
 }
 
+/** Lepas beberapa blokir sekaligus berdasarkan kunci baris (mis. saat restore RO). */
+export async function removeTombstonesByKeys(
+  db: TombstoneDb | null | undefined,
+  keys: (string | null | undefined)[],
+  sourceKey: string = RO_TOMBSTONE_SOURCE
+): Promise<number> {
+  if (!db) return 0;
+
+  const canonical = new Set(keys.map((key) => canonicalTombstoneKey(key)).filter(Boolean));
+  if (canonical.size === 0) return 0;
+
+  try {
+    const { data, error } = await db
+      .from('sync_tombstones')
+      .select('id, row_key')
+      .eq('source_key', sourceKey);
+
+    if (error) {
+      console.warn('[tombstone] Gagal membaca blokir untuk dilepas:', error.message);
+      return 0;
+    }
+
+    const ids = (data || [])
+      .filter((row: any) => canonical.has(canonicalTombstoneKey(row?.row_key)))
+      .map((row: any) => row.id);
+
+    if (ids.length === 0) return 0;
+
+    const { error: deleteError } = await db.from('sync_tombstones').delete().in('id', ids);
+    if (deleteError) {
+      console.warn('[tombstone] Gagal melepas blokir:', deleteError.message);
+      return 0;
+    }
+
+    invalidateTombstoneCache(sourceKey);
+    return ids.length;
+  } catch (error: any) {
+    console.warn('[tombstone] Gagal melepas blokir:', error?.message || error);
+    return 0;
+  }
+}
+
 /** Lepas blokir supaya sync berikutnya boleh memasukkan baris itu lagi. */
 export async function removeTombstone(
   db: TombstoneDb | null | undefined,

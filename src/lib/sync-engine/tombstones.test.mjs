@@ -5,6 +5,7 @@ import {
   loadTombstoneKeys,
   addTombstones,
   removeTombstone,
+  removeTombstonesByKeys,
   invalidateTombstoneCache,
 } from './tombstones.ts';
 
@@ -21,6 +22,10 @@ function fakeDb(rows = [], options = {}) {
         },
         eq(column, value) {
           state.filters[column] = value;
+          return builder;
+        },
+        in(column, values) {
+          state.filters[column] = values;
           return builder;
         },
         order() {
@@ -128,4 +133,19 @@ test('klien tidak tersedia berarti daftar kosong', async () => {
   assert.equal(keys.size, 0);
   assert.equal(await addTombstones(null, 'request-orders', [{ key: 'RO-1' }]), 0);
   assert.equal(await removeTombstone(null, 'id-1'), false);
+});
+
+test('melepas beberapa blokir sekaligus berdasarkan kunci RO', async () => {
+  invalidateTombstoneCache();
+  const { db, calls } = fakeDb([
+    { id: 't1', row_key: '0005' },
+    { id: 't2', row_key: '104066' },
+    { id: 't3', row_key: 'lainnya' },
+  ]);
+
+  const removed = await removeTombstonesByKeys(db, ['RO-0005', 'ro-104066'], 'request-orders');
+  assert.equal(removed, 2);
+
+  const deleteCall = calls.find((call) => call.action === 'delete');
+  assert.deepEqual(deleteCall.filters.id, ['t1', 't2']);
 });

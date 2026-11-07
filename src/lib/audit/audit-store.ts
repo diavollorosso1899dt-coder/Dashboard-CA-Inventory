@@ -1,5 +1,16 @@
 import { TrashItem, AuditLogEntry, AuditEntityType, TrashEntityType, AuditActionType } from '@/lib/supabase/types';
-import { getAdminClient, updateAssetRequest, updateAssetTransfer, updateRequestOrder } from '@/lib/supabase/server';
+import {
+  deleteAssetTransfer,
+  deleteRequestOrder,
+  deleteSuratJalan,
+  deleteUserProfile,
+  getAdminClient,
+  updateAssetRequest,
+  updateAssetTransfer,
+  updateRequestOrder,
+} from '@/lib/supabase/server';
+import { removeTombstonesByKeys } from '@/lib/sync-engine/tombstones';
+import { AUDIT_ENTITY_TABLES } from './log-action';
 
 // In-memory fallback. Data utama selalu disimpan di Supabase (tabel
 // audit_logs & trash_items); memori hanya dipakai bila koneksi DB gagal.
@@ -143,6 +154,24 @@ export async function getAuditLogs(options?: {
   };
 }
 
+/** Ambil satu catatan audit log dari memori atau Supabase. */
+export async function getAuditLogById(logId: string): Promise<AuditLogEntry | null> {
+  const memoryLog = auditStore.logs.find((l) => l.id === logId);
+  if (memoryLog) return memoryLog;
+
+  try {
+    const admin = getAdminClient();
+    if (admin) {
+      const { data, error } = await admin.from('audit_logs').select('*').eq('id', logId).maybeSingle();
+      if (!error && data) return data as AuditLogEntry;
+    }
+  } catch (err) {
+    console.warn('[audit] Gagal ambil log dari Supabase:', err);
+  }
+
+  return null;
+}
+
 /**
  * Revert an audit log entry back to its previous state (Superuser Undo / Rollback)
  */
@@ -151,18 +180,7 @@ export async function revertAuditLog(
   actorName: string,
   actorRole: string
 ): Promise<{ success: boolean; message: string; data?: AuditLogEntry }> {
-  let log = auditStore.logs.find((l) => l.id === logId);
-  if (!log) {
-    try {
-      const admin = getAdminClient();
-      if (admin) {
-        const { data, error } = await admin.from('audit_logs').select('*').eq('id', logId).single();
-        if (!error && data) log = data as AuditLogEntry;
-      }
-    } catch (err) {
-      console.warn('[audit] Gagal ambil log untuk revert dari Supabase:', err);
-    }
-  }
+  const log = await getAuditLogById(logId);
   if (!log) {
     return { success: false, message: 'Catatan log tidak ditemukan.' };
   }
@@ -256,6 +274,244 @@ export async function revertAuditLog(
     console.error('Error reverting audit log:', err);
     return { success: false, message: `Terjadi kesalahan saat revert: ${err.message}` };
   }
+}
+
+/**
+ * Hapus satu catatan audit log tanpa menyentuh data aslinya.
+ * Dipakai untuk aksi yang datanya sudah tidak mungkin dikembalikan
+ * (mis. PERMANENT_DELETE / EMPTY_TRASH).
+ */
+export async function deleteAuditLogEntry(
+  logId: string
+): Promise<{ success: boolean; message: string }> {
+  let deleted = false;
+
+  try {
+    const admin = getAdminClient();
+    if (admin) {
+      const { error } = await admin.from('audit_logs').delete().eq('id', logId);
+      if (error) {
+        return { success: false, message: `Gagal menghapus catatan log: ${error.message}` };
+      }
+      deleted = true;
+    }
+  } catch (err: any) {
+    console.error('[audit] Gagal menghapus catatan log:', err);
+    return { success: false, message: `Gagal menghapus catatan log: ${err?.message || err}` };
+  }
+
+  const before = auditStore.logs.length;
+  auditStore.logs = auditStore.logs.filter((l) => l.id !== logId);
+  if (auditStore.logs.length !== before) deleted = true;
+
+  if (!deleted) {
+    return { success: false, message: 'Catatan log tidak ditemukan.' };
+  }
+
+  return { success: true, message: 'Catatan log berhasil dihapus dari riwayat audit.' };
+}
+
+function entitySubtitle(entityType: string, row: any): string {
+  switch (entityType) {
+    case 'ASET':
+      return `${row?.branch_name || 'Cabang'} • ${row?.rab_number || 'RAB'}`;
+    case 'RO':
+      return [row?.ro_number, row?.branch_name].filter(Boolean).join(' • ');
+    case 'SURAT_JALAN':
+      return [row?.sj_number || row?.nomor_sj, row?.branch_name].filter(Boolean).join(' • ');
+    case 'TRANSFER':
+      return `${row?.transfer_number || 'Transfer'} • ${row?.from_location || '-'} → ${row?.to_location || '-'}`;
+    case 'OUTLET':
+      return [row?.branch_name || row?.nama, row?.region].filter(Boolean).join(' • ');
+    case 'DISPOSISI':
+      return [row?.disposition_number || row?.kode_aset, row?.outlet_nama].filter(Boolean).join(' • ');
+    case 'PENGGUNA':
+      return [row?.email, row?.role].filter(Boolean).join(' • ');
+    default:
+      return '';
+  }
+}
+
+/**
+ * Untuk Surat Jalan & Transfer, simpan kedua baris yang berbagi ID yang sama
+ * agar pemulihan dari Tempat Sampah tidak meninggalkan data setengah jadi.
+ */
+async function buildTrashSnapshot(entityType: string, entityId: string, row: any): Promise<any> {
+  if (entityType !== 'SURAT_JALAN' && entityType !== 'TRANSFER') return row;
+
+  const admin = getAdminClient();
+  if (!admin) return row;
+
+  try {
+    const [{ data: sj }, { data: transfer }] = await Promise.all([
+      admin.from('surat_jalan').select('*').eq('id', entityId).maybeSingle(),
+      admin.from('asset_transfers').select('*').eq('id', entityId).maybeSingle(),
+    ]);
+
+    const bundle: Record<string, any> = {};
+    if (sj) bundle.surat_jalan = sj;
+    if (transfer) bundle.asset_transfers = transfer;
+    if (Object.keys(bundle).length > 0) return { __audit_bundle: bundle };
+  } catch (err) {
+    console.warn('[audit] Gagal membuat snapshot Surat Jalan/Transfer:', err);
+  }
+
+  return row;
+}
+
+/**
+ * Hapus data terkait sebuah log CREATE / RESTORE.
+ * Snapshot data diambil lebih dulu, lalu baris aktif dihapus. Setelah itu
+ * snapshot dipindahkan ke Tempat Sampah supaya masih bisa dipulihkan.
+ */
+export async function deleteAuditEntity(
+  log: AuditLogEntry,
+  actorName: string,
+  actorRole: string
+): Promise<{ success: boolean; message: string }> {
+  const table = AUDIT_ENTITY_TABLES[log.entity_type];
+  if (!log.entity_id || !table) {
+    return {
+      success: false,
+      message: 'Log ini tidak menyimpan ID data yang bisa dihapus.',
+    };
+  }
+
+  const admin = getAdminClient();
+  if (!admin) {
+    return { success: false, message: 'Koneksi Supabase tidak tersedia.' };
+  }
+
+  try {
+    const { data: row, error } = await admin
+      .from(table)
+      .select('*')
+      .eq('id', log.entity_id)
+      .maybeSingle();
+
+    if (error) {
+      return { success: false, message: `Gagal membaca data ${log.entity_type}: ${error.message}` };
+    }
+
+    // Data sudah tidak ada (mis. dihapus lewat modul lain) — anggap selesai.
+    if (!row) {
+      return {
+        success: true,
+        message: 'Data terkait sudah tidak ada di sistem.',
+      };
+    }
+
+    // Snapshot diambil sebelum data dihapus, termasuk pasangan Surat Jalan ↔
+    // Transfer Aset yang berbagi ID.
+    const snapshot = await buildTrashSnapshot(log.entity_type, log.entity_id, row);
+
+    // Hapus dari tabel aktif lebih dulu. Kalau penghapusan gagal, jangan buat
+    // item Tempat Sampah supaya tidak ada data ganda (aktif + sampah).
+    if (log.entity_type === 'SURAT_JALAN') {
+      const ok = await deleteSuratJalan(log.entity_id);
+      if (!ok) {
+        return { success: false, message: 'Gagal menghapus Surat Jalan dari tabel aktif.' };
+      }
+    } else if (log.entity_type === 'TRANSFER') {
+      const res = await deleteAssetTransfer(log.entity_id);
+      if (!res.success) {
+        return { success: false, message: 'Gagal menghapus Transfer Aset dari tabel aktif.' };
+      }
+    } else if (log.entity_type === 'PENGGUNA') {
+      const ok = await deleteUserProfile(log.entity_id);
+      if (!ok) {
+        return { success: false, message: 'Gagal menghapus data pengguna.' };
+      }
+    } else if (log.entity_type === 'RO') {
+      // Pakai nomor RO bila ada supaya tombstone sync memakai kunci yang benar.
+      const roKey = (row as any)?.ro_number || log.entity_id;
+      await deleteRequestOrder(roKey, actorName);
+    } else {
+      const { error: deleteError } = await admin.from(table).delete().eq('id', log.entity_id);
+      if (deleteError) {
+        return {
+          success: false,
+          message: `Gagal menghapus data ${log.entity_type}: ${deleteError.message}`,
+        };
+      }
+    }
+
+    // Beberapa fungsi hapus modul menelan error database. Verifikasi ulang agar
+    // item sampah tidak dibuat untuk data yang sebenarnya masih aktif.
+    const { data: leftover, error: verifyError } = await admin
+      .from(table)
+      .select('id')
+      .eq('id', log.entity_id)
+      .maybeSingle();
+
+    if (verifyError) {
+      return {
+        success: false,
+        message: `Gagal memverifikasi penghapusan ${log.entity_type}: ${verifyError.message}`,
+      };
+    }
+
+    if (leftover) {
+      return {
+        success: false,
+        message: `Data ${log.entity_type} masih ada di tabel aktif, penghapusan dibatalkan.`,
+      };
+    }
+
+    await moveItemToTrash(
+      log.entity_type as TrashEntityType,
+      log.entity_id,
+      log.entity_title || 'Data audit',
+      entitySubtitle(log.entity_type, row),
+      snapshot,
+      actorName,
+      actorRole,
+      `Dihapus dari Audit Log #${log.id.slice(-6)}`
+    );
+
+    return {
+      success: true,
+      message: `Data "${log.entity_title}" dipindahkan ke Tempat Sampah dan masih bisa dipulihkan.`,
+    };
+  } catch (err: any) {
+    console.error('[audit] Gagal menghapus data dari log:', err);
+    return { success: false, message: `Gagal menghapus data terkait: ${err?.message || err}` };
+  }
+}
+
+/**
+ * Pulihkan data yang dihapus ke Tempat Sampah berdasarkan log DELETE_TO_TRASH.
+ */
+export async function restoreDeletedEntity(
+  log: AuditLogEntry,
+  actorName: string,
+  actorRole: string
+): Promise<{ success: boolean; message: string }> {
+  if (!log.entity_id) {
+    return { success: false, message: 'Log ini tidak menyimpan ID data yang bisa dipulihkan.' };
+  }
+
+  const trash = await getTrashItems();
+  const item = trash.find(
+    (entry) => entry.entity_id === log.entity_id && entry.entity_type === log.entity_type
+  );
+
+  if (!item) {
+    return {
+      success: false,
+      message: 'Data tidak ditemukan di Tempat Sampah (mungkin sudah dipulihkan atau dimusnahkan).',
+    };
+  }
+
+  const result = await restoreItemFromTrash(item.id, actorName, actorRole);
+  if (!result.success) {
+    return { success: false, message: result.error || 'Gagal memulihkan data.' };
+  }
+
+  return {
+    success: true,
+    message: `Data "${item.title}" berhasil dipulihkan ke sistem aktif.`,
+  };
 }
 
 // -------------------------------------------------------------
@@ -374,32 +630,67 @@ export async function restoreItemFromTrash(
     return { success: false, error: 'Item tidak ditemukan di tempat sampah' };
   }
 
-  // Try removing from Supabase
+  const item = itemToRestore;
+  const admin = getAdminClient();
+  if (!admin) {
+    return { success: false, error: 'Koneksi Supabase tidak tersedia.' };
+  }
+
+  const original = item.original_data;
+  if (!original || typeof original !== 'object') {
+    return { success: false, error: 'Data asli item tidak tersimpan, tidak bisa dipulihkan.' };
+  }
+
+  // 1. Kembalikan ke tabel aktif lebih dulu. Kalau gagal, item tetap di
+  //    Tempat Sampah supaya tidak hilang dari daftar pemulihan.
   try {
-    const admin = getAdminClient();
-    if (admin) {
-      await admin.from('trash_items').delete().eq('id', trashId);
+    const bundle = (original as any).__audit_bundle;
+    if (bundle && typeof bundle === 'object') {
+      for (const [table, row] of Object.entries(bundle)) {
+        if (!row || typeof row !== 'object') continue;
+        const { error } = await admin.from(table).upsert([row as any]);
+        if (error) {
+          return { success: false, error: `Gagal memulihkan data ke tabel ${table}: ${error.message}` };
+        }
+      }
+    } else {
+      const table = AUDIT_ENTITY_TABLES[item.entity_type];
+      if (!table || !(original as any).id) {
+        return {
+          success: false,
+          error: `Pemulihan otomatis belum didukung untuk modul ${item.entity_type}.`,
+        };
+      }
+
+      const { error } = await admin.from(table).upsert([original]);
+      if (error) {
+        return { success: false, error: `Gagal memulihkan data ${item.entity_type}: ${error.message}` };
+      }
     }
+  } catch (err: any) {
+    console.warn('[restoreItemFromTrash] Failed restoring to Supabase:', err);
+    return { success: false, error: `Gagal memulihkan data: ${err?.message || err}` };
+  }
+
+  // 2. Baru hapus dari Tempat Sampah setelah data aktif berhasil dibuat.
+  try {
+    await admin.from('trash_items').delete().eq('id', trashId);
   } catch (err) {
     console.warn('Gagal menghapus dari trash_items di Supabase', err);
   }
 
   if (fromMemory) {
-    auditStore.trash.splice(index, 1);
+    const memoryIndex = auditStore.trash.findIndex((t) => t.id === trashId);
+    if (memoryIndex !== -1) auditStore.trash.splice(memoryIndex, 1);
   }
-  
-  const item = itemToRestore;
 
-  // If restoring an Asset, reinsert back to Supabase / memory cache
-  try {
-    if (item.entity_type === 'ASET') {
-      const admin = getAdminClient();
-      if (admin && item.original_data?.id) {
-        await admin.from('asset_requests').upsert([item.original_data]);
-      }
-    }
-  } catch (err) {
-    console.warn('[restoreItemFromTrash] Failed restoring to Supabase:', err);
+  // 3. RO yang dipulihkan harus dilepas dari tombstone sync agar tidak
+  //    langsung terhapus lagi oleh sinkronisasi Google Sheets berikutnya.
+  if (item.entity_type === 'RO') {
+    await removeTombstonesByKeys(admin, [
+      (original as any).ro_number,
+      (original as any).raw_ro_id,
+    ]);
   }
 
   // Record Audit Trail

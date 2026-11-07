@@ -24,7 +24,8 @@ import {
   X,
   AlertCircle
 } from 'lucide-react';
-import { TrashItem, AuditLogEntry, TrashEntityType, AuditActionType } from '@/lib/supabase/types';
+import { TrashItem, AuditLogEntry, AuditActionType } from '@/lib/supabase/types';
+import { auditLogActionMeta, resolveAuditLogAction } from '@/lib/audit/log-action';
 import { useAuth } from '@/components/auth/AuthContext';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
@@ -77,6 +78,7 @@ export function TrashAndLogView({
   const [logActionFilter, setLogActionFilter] = useState<string>('ALL');
   const [revertingLog, setRevertingLog] = useState<AuditLogEntry | null>(null);
   const [isReverting, setIsReverting] = useState(false);
+  const [logActionLoadingId, setLogActionLoadingId] = useState<string | null>(null);
 
   // Column Visibility for Trash
   const {
@@ -325,6 +327,50 @@ export function TrashAndLogView({
     router.refresh();
   };
 
+  const handleLogDelete = async (log: AuditLogEntry) => {
+    const kind = resolveAuditLogAction(log);
+    if (kind === 'revert') return;
+
+    const deletesEntity = kind === 'delete-entity';
+    const confirmation = deletesEntity
+      ? `Hapus data "${log.entity_title}"?\n\nData akan dipindahkan ke Tempat Sampah dan masih bisa dipulihkan.`
+      : `Hapus catatan log "${log.entity_title}" dari riwayat audit?\n\nData aslinya tidak berubah; hanya catatan log ini yang dihapus.`;
+
+    if (!confirm(confirmation)) return;
+
+    setLogActionLoadingId(log.id);
+    try {
+      const res = await fetch('/api/audit/logs/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          logId: log.id,
+          action: 'delete',
+          actorName: user?.full_name || 'Super User',
+          actorRole: user?.role || 'Super User',
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        showFeedback(
+          json.message ||
+            (deletesEntity
+              ? 'Data terkait berhasil dipindahkan ke Tempat Sampah.'
+              : 'Catatan log berhasil dihapus.')
+        );
+        loadLogs();
+        if (deletesEntity) loadTrash();
+        router.refresh();
+      } else {
+        showFeedback(json.error || json.message || 'Gagal menjalankan aksi.', 'error');
+      }
+    } catch (err: any) {
+      showFeedback(err.message, 'error');
+    } finally {
+      setLogActionLoadingId(null);
+    }
+  };
+
   // Export logs to CSV
   const handleExportLogsCsv = () => {
     const headers = ['Waktu', 'Aktor', 'Peran', 'Aksi', 'Modul', 'Judul Entitas', 'Rincian'];
@@ -368,6 +414,8 @@ export function TrashAndLogView({
         return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">{action}</span>;
     }
   };
+
+  const revertingFromTrash = revertingLog?.action_type === 'DELETE_TO_TRASH';
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
@@ -516,7 +564,11 @@ export function TrashAndLogView({
                 <option value="ASET">Modul Aset</option>
                 <option value="OUTLET">Modul Outlet</option>
                 <option value="ITEM">Katalog Item</option>
+                <option value="SURAT_JALAN">Surat Jalan</option>
                 <option value="DISPOSISI">Disposisi</option>
+                <option value="TRANSFER">Transfer Aset</option>
+                <option value="RO">Request Order (RO)</option>
+                <option value="PENGGUNA">Pengguna</option>
               </select>
 
               <button
@@ -941,7 +993,12 @@ export function TrashAndLogView({
                       </td>
                     </tr>
                   ) : (
-                    sortedLogs.map((log) => (
+                    sortedLogs.map((log) => {
+                      const logAction = resolveAuditLogAction(log);
+                      const actionMeta = auditLogActionMeta(logAction);
+                      const isLogActing = logActionLoadingId === log.id;
+
+                      return (
                       <tr key={log.id} className="hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c] transition-colors">
                         {isLogColVisible('timestamp') && (
                           <td className="py-3 px-4 whitespace-nowrap">
@@ -1000,26 +1057,38 @@ export function TrashAndLogView({
 
                         {isLogColVisible('actions') && (
                           <td className="py-3 px-4 text-right whitespace-nowrap">
-                            {log.previous_state &&
-                            !Array.isArray(log.previous_state) &&
-                            Object.keys(log.previous_state).length > 0 &&
-                            ['RO', 'ASET', 'OUTLET', 'PENGGUNA', 'SURAT_JALAN', 'DISPOSISI', 'TRANSFER'].includes(log.entity_type) ? (
+                            {logAction === 'revert' ? (
                               <button
                                 type="button"
+                                disabled={isLogActing}
                                 onClick={() => setRevertingLog(log)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:text-indigo-300 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800 text-xs font-bold transition-colors shadow-xs"
-                                title="Kembalikan perubahan ini ke kondisi sebelumnya"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:text-indigo-300 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800 text-xs font-bold transition-colors shadow-xs disabled:opacity-50"
+                                title={actionMeta.title}
                               >
-                                <RotateCcw className="w-3.5 h-3.5" />
-                                <span>Kembalikan</span>
+                                <RotateCcw className={`w-3.5 h-3.5 ${isLogActing ? 'animate-spin' : ''}`} />
+                                <span>{actionMeta.label}</span>
                               </button>
                             ) : (
-                              <span className="text-slate-400 text-[11px] italic">-</span>
+                              <button
+                                type="button"
+                                disabled={isLogActing}
+                                onClick={() => handleLogDelete(log)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/50 dark:text-rose-300 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800 text-xs font-bold transition-colors shadow-xs disabled:opacity-50"
+                                title={actionMeta.title}
+                              >
+                                {isLogActing ? (
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                )}
+                                <span>{isLogActing ? 'Memproses...' : actionMeta.label}</span>
+                              </button>
                             )}
                           </td>
                         )}
                       </tr>
-                    ))
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1100,10 +1169,14 @@ export function TrashAndLogView({
                 </div>
                 <div>
                   <h3 className="font-bold text-base text-[#1f1f1f] dark:text-[#e3e3e3]">
-                    Kembalikan Perubahan (Revert / Undo)
+                    {revertingFromTrash
+                      ? 'Pulihkan dari Tempat Sampah'
+                      : 'Kembalikan Perubahan (Revert / Undo)'}
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Pulihkan data ke nilai sebelum diubah untuk memperbaiki kesalahan input
+                    {revertingFromTrash
+                      ? 'Data akan dikembalikan ke daftar aktif dari Tempat Sampah'
+                      : 'Pulihkan data ke nilai sebelum diubah untuk memperbaiki kesalahan input'}
                   </p>
                 </div>
               </div>
@@ -1123,33 +1196,40 @@ export function TrashAndLogView({
               <div>Keterangan perubahan: <span className="italic text-slate-600 dark:text-slate-400">{revertingLog.details}</span></div>
             </div>
 
-            {/* Perbandingan Nilai Sebelum vs Sesudah */}
-            <div>
-              <div className="text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-2">
-                Perbandingan Nilai (Sebelum vs Sesudah):
+            {revertingFromTrash ? (
+              <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 p-3.5 text-xs text-emerald-800 dark:text-emerald-300">
+                Item akan dipulihkan dari Tempat Sampah ke tabel aktif. Setelah dipulihkan,
+                catatan log ini tetap tersimpan sebagai riwayat.
               </div>
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                <div className="grid grid-cols-3 bg-slate-100 dark:bg-slate-800/80 p-2.5 font-bold text-[11px] text-slate-600 dark:text-slate-300 uppercase">
-                  <div>Parameter / Field</div>
-                  <div className="text-emerald-700 dark:text-emerald-400">Nilai Sebelumnya (Dipulihkan)</div>
-                  <div className="text-rose-600 dark:text-rose-400">Nilai Saat Ini (Dibatalkan)</div>
+            ) : (
+              /* Perbandingan Nilai Sebelum vs Sesudah */
+              <div>
+                <div className="text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-2">
+                  Perbandingan Nilai (Sebelum vs Sesudah):
                 </div>
-                {Object.entries(revertingLog.previous_state || {}).map(([key, oldVal]) => {
-                  const newVal = (revertingLog.new_state || {})[key];
-                  return (
-                    <div key={key} className="grid grid-cols-3 p-2.5 items-center">
-                      <div className="font-mono text-slate-600 dark:text-slate-400">{key}</div>
-                      <div className="font-bold text-emerald-700 dark:text-emerald-300">
-                        {typeof oldVal === 'object' ? JSON.stringify(oldVal) : String(oldVal ?? '-')}
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                  <div className="grid grid-cols-3 bg-slate-100 dark:bg-slate-800/80 p-2.5 font-bold text-[11px] text-slate-600 dark:text-slate-300 uppercase">
+                    <div>Parameter / Field</div>
+                    <div className="text-emerald-700 dark:text-emerald-400">Nilai Sebelumnya (Dipulihkan)</div>
+                    <div className="text-rose-600 dark:text-rose-400">Nilai Saat Ini (Dibatalkan)</div>
+                  </div>
+                  {Object.entries(revertingLog.previous_state || {}).map(([key, oldVal]) => {
+                    const newVal = (revertingLog.new_state || {})[key];
+                    return (
+                      <div key={key} className="grid grid-cols-3 p-2.5 items-center">
+                        <div className="font-mono text-slate-600 dark:text-slate-400">{key}</div>
+                        <div className="font-bold text-emerald-700 dark:text-emerald-300">
+                          {typeof oldVal === 'object' ? JSON.stringify(oldVal) : String(oldVal ?? '-')}
+                        </div>
+                        <div className="text-slate-400 line-through">
+                          {typeof newVal === 'object' ? JSON.stringify(newVal) : String(newVal ?? '-')}
+                        </div>
                       </div>
-                      <div className="text-slate-400 line-through">
-                        {typeof newVal === 'object' ? JSON.stringify(newVal) : String(newVal ?? '-')}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
@@ -1167,11 +1247,12 @@ export function TrashAndLogView({
                   if (!revertingLog) return;
                   try {
                     setIsReverting(true);
-                    const res = await fetch('/api/audit/logs/revert', {
+                    const res = await fetch('/api/audit/logs/actions', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         logId: revertingLog.id,
+                        action: 'revert',
                         actorName: user?.full_name || 'Super User',
                         actorRole: user?.role || 'Super User',
                       }),
@@ -1181,9 +1262,10 @@ export function TrashAndLogView({
                       showFeedback(json.message || `Perubahan pada "${revertingLog.entity_title}" berhasil dikembalikan.`);
                       setRevertingLog(null);
                       loadLogs();
+                      loadTrash();
                       router.refresh();
                     } else {
-                      showFeedback(json.error || 'Gagal mengembalikan perubahan data.', 'error');
+                      showFeedback(json.error || json.message || 'Gagal mengembalikan perubahan data.', 'error');
                     }
                   } catch (err: any) {
                     showFeedback(`Terjadi kesalahan: ${err.message}`, 'error');
@@ -1194,7 +1276,15 @@ export function TrashAndLogView({
                 className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors disabled:opacity-50 shadow-sm"
               >
                 <RotateCcw className={`w-3.5 h-3.5 ${isReverting ? 'animate-spin' : ''}`} />
-                <span>{isReverting ? 'Mengembalikan...' : 'Ya, Kembalikan ke Sebelumnya'}</span>
+                <span>
+                  {isReverting
+                    ? revertingFromTrash
+                      ? 'Memulihkan...'
+                      : 'Mengembalikan...'
+                    : revertingFromTrash
+                      ? 'Ya, Pulihkan dari Tempat Sampah'
+                      : 'Ya, Kembalikan ke Sebelumnya'}
+                </span>
               </button>
             </div>
           </div>

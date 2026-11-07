@@ -459,7 +459,15 @@ export interface DispositionRequest {
 // ==========================================
 // 4. MANAJEMEN SAMPAH & AUDIT LOG TYPES
 // ==========================================
-export type TrashEntityType = 'ASET' | 'OUTLET' | 'ITEM' | 'SURAT_JALAN' | 'DISPOSISI' | 'TRANSFER';
+export type TrashEntityType =
+  | 'ASET'
+  | 'OUTLET'
+  | 'ITEM'
+  | 'SURAT_JALAN'
+  | 'DISPOSISI'
+  | 'TRANSFER'
+  | 'RO'
+  | 'PENGGUNA';
 
 /** Entitas yang dapat dicatat di audit log (lebih luas dari isi Tempat Sampah). */
 export type AuditEntityType = TrashEntityType | 'RO' | 'SO' | 'PENGGUNA' | 'SYSTEM';
