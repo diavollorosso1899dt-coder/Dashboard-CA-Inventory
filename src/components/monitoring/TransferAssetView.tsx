@@ -467,7 +467,11 @@ export function TransferAssetView({
         return;
       }
 
-      const roDate = ro.request_date || (ro.created_at ? ro.created_at.split('T')[0] : null);
+      // Kolom "Tgl Permintaan" mengikuti tanggal permintaan pada sheet RO.
+      const roDate =
+        ro.target_delivery_date ||
+        ro.request_date ||
+        (ro.created_at ? ro.created_at.split('T')[0] : null);
       (ro.items || []).forEach((item) => {
         // Hanya item yang berstatus Ready Stock (GUDANG_SCGA)
         if (item.stock_source === 'GUDANG_SCGA') {

@@ -34,6 +34,7 @@ import {
   normalizeConfirmedSjItems,
 } from '../distribution/confirm-surat-jalan';
 import { isForeignSheetRoItem, mergeRoForSync } from '../distribution/ro-sync-merge';
+import { applySheetRoDates } from '../distribution/ro-sheet-dates';
 import {
   RO_TOMBSTONE_SOURCE,
   addTombstones,
@@ -3162,7 +3163,9 @@ export async function syncRequestOrdersFromSheet(
 
         // Data yang sudah ada di aplikasi menang: status, tahap, catatan,
         // item, dan tanggal hasil update user tidak boleh kembali ke sheet.
-        return mergeRoForSync(o, existing);
+        // Khusus tanggal, sheet tetap sumber kebenaran agar koreksi tanggal
+        // di spreadsheet ikut terpakai.
+        return applySheetRoDates(mergeRoForSync(o, existing), o);
       });
 
       // Only write rows that are new or actually differ from the DB. New rows (no id) and
