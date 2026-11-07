@@ -14,6 +14,7 @@ export const dynamic = 'force-dynamic';
  */
 
 const BATCH_SIZE = 300;
+const DETAIL_PAGE_SIZE = 1000;
 
 function toNumberOrNull(value: any): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -122,6 +123,87 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     return NextResponse.json(
       { success: false, error: err?.message || 'Gagal menyimpan sesi Stock Opname.' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const admin = getAdminClient();
+    if (!admin) {
+      const sessionId = req.nextUrl.searchParams.get('id');
+      return NextResponse.json(
+        sessionId ? { success: true, session: null, items: [] } : { success: true, sessions: [] }
+      );
+    }
+
+    const sessionId = req.nextUrl.searchParams.get('id');
+    if (sessionId) {
+      const { data, error } = await admin
+        .from('so_sessions')
+        .select('*')
+        .eq('id', sessionId)
+        .limit(1);
+      if (error) throw new Error(error.message);
+
+      const session = (data || [])[0] ?? null;
+      if (!session) {
+        return NextResponse.json({ success: true, session: null, items: [] });
+      }
+
+      const includeItems = req.nextUrl.searchParams.get('includeItems') !== 'false';
+      if (!includeItems) {
+        return NextResponse.json({ success: true, session, items: [] });
+      }
+
+      const items: any[] = [];
+      for (let from = 0; ; from += DETAIL_PAGE_SIZE) {
+        const { data: chunk, error: chunkError } = await admin
+          .from('so_details')
+          .select('*')
+          .eq('session_id', sessionId)
+          .order('kode_barang')
+          .range(from, from + DETAIL_PAGE_SIZE - 1);
+        if (chunkError) throw new Error(chunkError.message);
+        if (!chunk || chunk.length === 0) break;
+        items.push(...chunk);
+        if (chunk.length < DETAIL_PAGE_SIZE) break;
+      }
+
+      return NextResponse.json({ success: true, session, items });
+    }
+
+    const region = normalizeSoRegion(req.nextUrl.searchParams.get('region'));
+
+    let data: any[] | null = null;
+    const query = region
+      ? admin
+          .from('so_sessions')
+          .select('*')
+          .eq('region', region)
+          .order('tanggal', { ascending: false })
+      : admin.from('so_sessions').select('*').order('tanggal', { ascending: false });
+
+    const firstAttempt = await query;
+    if (!firstAttempt.error) {
+      data = firstAttempt.data;
+    } else {
+      // Kolom region belum ada (migration belum dijalankan). Filter dari ID/tanggal.
+      const fallback = await admin
+        .from('so_sessions')
+        .select('*')
+        .order('tanggal', { ascending: false });
+      if (fallback.error) throw new Error(fallback.error.message);
+      data = (fallback.data || []).filter(
+        (session: any) => !region || resolveSessionRegion(session) === region
+      );
+    }
+
+    return NextResponse.json({ success: true, sessions: data || [] });
+  } catch (err: any) {
+    return NextResponse.json(
+      { success: false, error: err?.message || 'Gagal memuat sesi Stock Opname.' },
       { status: 500 }
     );
   }

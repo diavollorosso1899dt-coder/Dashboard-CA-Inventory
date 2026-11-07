@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { SOItem } from './inventoryEngine';
+import type { SOItem } from './inventoryEngine.ts';
 import {
   filterSessionsByRegion,
   resolveSessionRegion,
@@ -62,6 +62,22 @@ function getSafeStorage() {
 }
 
 let supabaseClient: SupabaseClient | null = null;
+
+/**
+ * Gabungkan daftar sesi lokal dengan daftar dari cloud.
+ *
+ * Cloud menang untuk ID yang sama (data terbaru), lalu diurutkan berdasarkan
+ * tanggal terbaru. Cache lokal tetap menyimpan daftar penuh, bukan hasil filter
+ * region, agar cache region lain tidak hilang.
+ */
+export function mergeSessionCache(local: SOSession[], cloud: SOSession[]): SOSession[] {
+  const map = new Map<string, SOSession>();
+  for (const session of local) map.set(session.id, session);
+  for (const session of cloud) map.set(session.id, session);
+  return Array.from(map.values()).sort((a, b) =>
+    (b.tanggal || '').localeCompare(a.tanggal || '')
+  );
+}
 
 /**
  * Kredensial Supabase bawaan aplikasi (dari environment).
@@ -156,6 +172,66 @@ export function initSupabaseFromStorage() {
     } catch (e) {
       console.warn('Could not auto-initialize Supabase client:', e);
     }
+  }
+}
+
+/**
+ * Baca daftar sesi lewat API server (service role).
+ *
+ * Tabel SO memakai RLS yang menolak SELECT dari anon key, sehingga membaca
+ * langsung dengan client Supabase di browser hanya mengembalikan daftar kosong
+ * di perangkat yang belum punya cache lokal. API server menjadi jalur utama;
+ * client langsung hanya dipakai sebagai fallback lama.
+ */
+async function fetchCloudSessionList(): Promise<SOSession[] | null> {
+  if (!getSupabaseConfig().isConfigured) return null;
+  try {
+    const res = await fetch('/api/so/sessions', { cache: 'no-store' });
+    if (!res.ok) return null;
+    const json = await res.json().catch(() => null);
+    if (!json?.success || !Array.isArray(json.sessions)) return null;
+    return json.sessions as SOSession[];
+  } catch (err) {
+    console.warn('Cloud session list fetch via API failed:', err);
+    return null;
+  }
+}
+
+/** Baca satu sesi beserta detail item lewat API server. */
+async function fetchCloudSessionDetail(
+  sessionId: string
+): Promise<{ session: SOSession | null; items: SOItem[] } | null> {
+  if (!getSupabaseConfig().isConfigured) return null;
+  try {
+    const res = await fetch(
+      `/api/so/sessions?id=${encodeURIComponent(sessionId)}&includeItems=true`,
+      { cache: 'no-store' }
+    );
+    if (!res.ok) return null;
+    const json = await res.json().catch(() => null);
+    if (!json?.success) return null;
+    return {
+      session: (json.session as SOSession) || null,
+      items: Array.isArray(json.items) ? (json.items as SOItem[]) : [],
+    };
+  } catch (err) {
+    console.warn('Cloud session detail fetch via API failed:', err);
+    return null;
+  }
+}
+
+/** Simpan detail sesi yang baru diambil dari cloud ke cache lokal. */
+function cacheSessionDetail(session: SOSession, items: SOItem[]) {
+  const safeStorage = getSafeStorage();
+  try {
+    safeStorage.setItem(`${STORAGE_KEYS.SESSION_DETAIL_PREFIX}${session.id}`, JSON.stringify(items));
+    const known = getAllSessionsSync();
+    if (!known.some((s) => s.id === session.id)) {
+      safeStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(mergeSessionCache(known, [session])));
+    }
+    safeStorage.setItem(STORAGE_KEYS.ACTIVE_SESSION_ID, session.id);
+  } catch (err) {
+    console.warn('Could not cache cloud session detail locally:', err);
   }
 }
 
@@ -272,6 +348,12 @@ export async function loadSession(sessionId: string): Promise<{ session: SOSessi
     return { session, items };
   }
 
+  const viaApi = await fetchCloudSessionDetail(sessionId);
+  if (viaApi?.session) {
+    cacheSessionDetail(viaApi.session, viaApi.items);
+    return { session: viaApi.session, items: viaApi.items };
+  }
+
   if (supabaseClient) {
     try {
       const { data: cloudSession, error: sErr } = await supabaseClient
@@ -296,8 +378,7 @@ export async function loadSession(sessionId: string): Promise<{ session: SOSessi
           if (chunk.length < PAGE_SIZE) break;
         }
 
-        safeStorage.setItem(`${STORAGE_KEYS.SESSION_DETAIL_PREFIX}${sessionId}`, JSON.stringify(finalItems));
-        safeStorage.setItem(STORAGE_KEYS.ACTIVE_SESSION_ID, sessionId);
+        cacheSessionDetail(cloudSession as SOSession, finalItems);
         return { session: cloudSession, items: finalItems };
       }
     } catch (err) {
@@ -324,6 +405,13 @@ export async function getAllSessions(region?: SoRegion): Promise<SOSession[]> {
   initSupabaseFromStorage();
   const localList = getAllSessionsSync();
 
+  const apiList = await fetchCloudSessionList();
+  if (apiList) {
+    const merged = mergeSessionCache(localList, apiList);
+    getSafeStorage().setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(merged));
+    return region ? filterSessionsByRegion(merged, region) : merged;
+  }
+
   if (supabaseClient) {
     try {
       const { data: cloudList, error } = await supabaseClient
@@ -332,12 +420,7 @@ export async function getAllSessions(region?: SoRegion): Promise<SOSession[]> {
         .order('tanggal', { ascending: false });
 
       if (!error && Array.isArray(cloudList)) {
-        const map = new Map<string, SOSession>();
-        for (const s of localList) map.set(s.id, s);
-        for (const s of cloudList) map.set(s.id, s);
-        const merged = Array.from(map.values()).sort((a, b) =>
-          (b.tanggal || '').localeCompare(a.tanggal || '')
-        );
+        const merged = mergeSessionCache(localList, cloudList as SOSession[]);
         // Simpan daftar penuh, bukan hasil filter, agar cache region lain tetap utuh.
         getSafeStorage().setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(merged));
         return region ? filterSessionsByRegion(merged, region) : merged;
