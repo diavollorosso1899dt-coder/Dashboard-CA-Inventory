@@ -297,7 +297,8 @@ export default function PrintSuratJalanPage() {
                   Divisi Central Asset Management &amp; Logistik Distribusi Nasional
                 </p>
                 <p className="text-[10px] sm:text-xs text-slate-400 leading-snug">
-                  Jl. Logistik Sentral No. 88, Kawasan Pergudangan Nasional &bull; Telp: (021) 555-0199
+                  <span className="block sm:inline">Jl. Logistik Sentral No. 88, Kawasan Pergudangan Nasional</span>
+                  <span className="block sm:inline sm:ml-1">&bull; Telp: (021) 555-0199</span>
                 </p>
               </div>
             </div>
