@@ -976,6 +976,7 @@ export async function updateAssetRequest(
           matchedItem.stock_source = 'GUDANG_SCGA';
           matchedItem.quantity_fulfilled = matchedItem.quantity_ordered;
           matchedItem.is_arrived_at_warehouse = true;
+          matchedItem.procurement_status = payload.procurement_status || 'selesai';
           if (payload.received_date) {
             matchedItem.pr_arrival_date = payload.received_date;
           }
@@ -4008,7 +4009,26 @@ export async function getPurchaseRequirementItems(
     if (ro.status === 'REJECTED' || (ro.status as string) === 'CANCELLED' || ro.current_stage === 'DIBATALKAN') continue;
     if (region !== 'ALL' && ro.region !== region) continue;
 
-    const prItems = (ro.items || []).filter((it) => it.stock_source === 'PR_VENDOR');
+    const prItems = (ro.items || []).filter((it) => {
+      const isPrItem =
+        it.stock_source === 'PR_VENDOR' ||
+        Boolean(it.procurement_status) ||
+        Boolean(it.pr_arrival_date);
+
+      if (!isPrItem) return false;
+
+      const isCompleted =
+        it.procurement_status === 'selesai' ||
+        it.is_arrived_at_warehouse === true ||
+        Boolean(it.pr_arrival_date) ||
+        it.stock_source === 'GUDANG_SCGA';
+
+      if (includeCompleted) {
+        return isCompleted;
+      } else {
+        return !isCompleted;
+      }
+    });
     for (const it of prItems) {
       const itemId = `ro-pr-${ro.id}-${it.id || encodeURIComponent(it.item_name)}`;
       if (seenIds.has(itemId)) continue;
@@ -4027,9 +4047,15 @@ export async function getPurchaseRequirementItems(
           procurement_status: (manualEdit?.procurement_status ||
             it.procurement_status) as PrProcurementStatus | undefined,
           pr_arrival_date: it.pr_arrival_date,
+          stock_source: it.stock_source,
         },
         ro
       );
+
+      const isReadyOrDone =
+        procStatus === 'selesai' ||
+        it.stock_source === 'GUDANG_SCGA' ||
+        it.is_arrived_at_warehouse === true;
 
       const assetReq: AssetRequest = {
         id: itemId,
@@ -4052,8 +4078,8 @@ export async function getPurchaseRequirementItems(
         rab_price: it.unit_price || 0,
         rab_total: it.total_price || (it.unit_price || 0) * it.quantity_ordered,
         acc_kadiv_request: true,
-        stock_status: 'Not Ready (Stok Kosong)',
-        quantity_stock_allocated: 0,
+        stock_status: isReadyOrDone ? 'Ready Stock (Gudang SCGA)' : 'Not Ready (Stok Kosong)',
+        quantity_stock_allocated: isReadyOrDone ? it.quantity_ordered : 0,
         quantity_pr: it.quantity_ordered,
         opening_date: ro.target_delivery_date || null,
         pr_datetime: ro.created_at || new Date().toISOString(),
@@ -4066,9 +4092,9 @@ export async function getPurchaseRequirementItems(
         realized_price: it.total_price || 0,
         negotiation_proof: null,
         acc_kadiv_procurement: false,
-        procurement_status: procStatus,
-        item_delivery_status: procStatus === 'selesai' ? 'Ready Gudang SCGA' : 'On Proses',
-        received_date: itemReceivedDate,
+        procurement_status: isReadyOrDone ? 'selesai' : procStatus,
+        item_delivery_status: isReadyOrDone ? 'Ready Gudang SCGA' : 'On Proses',
+        received_date: it.pr_arrival_date || itemReceivedDate,
         lead_time_days: 0,
         pic_receiver: ro.pic_receiver || '',
         notes: it.notes || `Sumber dari Request Order ${ro.ro_number}`,
@@ -4091,6 +4117,82 @@ export async function getPurchaseRequirementHistory(
 ): Promise<AssetRequest[]> {
   const items = await getPurchaseRequirementItems(region, true);
   return filterPurchaseRequirementHistory(items);
+}
+
+export async function clearAllPurchaseRequirements(): Promise<{
+  success: boolean;
+  deletedAssetRequestsCount: number;
+  resetRoItemsCount: number;
+}> {
+  const admin = getAdminClient();
+  let deletedAssetRequestsCount = 0;
+  let resetRoItemsCount = 0;
+
+  // 1. Kosongkan tabel asset_requests
+  if (admin) {
+    try {
+      const { data, error } = await admin
+        .from('asset_requests')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000')
+        .select('id');
+      if (!error && data) {
+        deletedAssetRequestsCount = data.length;
+      }
+    } catch (err: any) {
+      console.error('[Supabase clearAllPurchaseRequirements delete error]:', err.message);
+    }
+  }
+
+  // 2. Bersihkan in-memory cache asset requests
+  cache.items = [];
+  cache.manualEdits?.clear();
+  if (global.__ASSET_REQUESTS_CACHE__) {
+    global.__ASSET_REQUESTS_CACHE__.items = [];
+    global.__ASSET_REQUESTS_CACHE__.timestamp = 0;
+  }
+
+  // 3. Reset item RO yang berada dalam status PR atau riwayat PR
+  const roOrders = await getRequestOrders(true);
+  for (const ro of roOrders) {
+    let roModified = false;
+    const updatedItems = (ro.items || []).map((it) => {
+      if (
+        it.stock_source === 'PR_VENDOR' ||
+        it.procurement_status ||
+        it.pr_arrival_date ||
+        (it.stock_source === 'GUDANG_SCGA' && it.is_arrived_at_warehouse)
+      ) {
+        resetRoItemsCount++;
+        roModified = true;
+        const copy: any = { ...it };
+        if (copy.stock_source === 'PR_VENDOR') {
+          copy.stock_source = 'ON_PROSES';
+        }
+        delete copy.procurement_status;
+        delete copy.pr_arrival_date;
+        delete copy.is_arrived_at_warehouse;
+        return copy;
+      }
+      return it;
+    });
+
+    if (roModified) {
+      const nextStage = ro.current_stage === 'KELOLA_PR' ? 'REQUEST_ORDER' : ro.current_stage;
+      await updateRequestOrder(ro.id, {
+        items: updatedItems,
+        current_stage: nextStage,
+      });
+    }
+  }
+
+  invalidateRoCache();
+
+  return {
+    success: true,
+    deletedAssetRequestsCount,
+    resetRoItemsCount,
+  };
 }
 
 export interface MasterAssetItem {

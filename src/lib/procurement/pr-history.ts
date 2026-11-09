@@ -14,23 +14,37 @@ export function matchesPurchaseRequirementFilter(
   item: PurchaseRequirementFilterItem,
   includeCompleted = false
 ): boolean {
-  if (item.procurement_status === 'selesai') {
-    return includeCompleted;
+  const isItemCompleted =
+    item.procurement_status === 'selesai' ||
+    Boolean(item.item_delivery_status?.toLowerCase().includes('ready')) ||
+    Boolean(item.stock_status?.toLowerCase().includes('ready stock'));
+
+  if (includeCompleted) {
+    return isItemCompleted;
   }
 
+  if (isItemCompleted) return false;
+
   return (
-    !item.item_delivery_status?.toLowerCase().includes('ready') &&
-    !item.stock_status?.toLowerCase().includes('ready stock') &&
-    (item.quantity_pr > 0 ||
-      item.stock_status.includes('Not Ready') ||
-      Boolean(item.procurement_status))
+    item.quantity_pr > 0 ||
+    item.stock_status?.includes('Not Ready') ||
+    Boolean(item.procurement_status)
   );
 }
 
 export function filterPurchaseRequirementHistory<
-  T extends Pick<AssetRequest, 'procurement_status'>,
+  T extends {
+    procurement_status?: string | null;
+    stock_status?: string | null;
+    item_delivery_status?: string | null;
+  },
 >(items: T[]): T[] {
-  return items.filter((item) => item.procurement_status === 'selesai');
+  return items.filter(
+    (item) =>
+      item.procurement_status === 'selesai' ||
+      Boolean(item.item_delivery_status?.toLowerCase().includes('ready')) ||
+      Boolean(item.stock_status?.toLowerCase().includes('ready stock'))
+  );
 }
 
 export type PrProcurementStatus = 'selesai' | 'proses' | 'belum' | 'po';
@@ -50,6 +64,7 @@ export function resolveRoPrItemStatus(
     is_arrived_at_warehouse?: boolean;
     procurement_status?: PrProcurementStatus | null;
     pr_arrival_date?: string | null;
+    stock_source?: string | null;
   },
   ro: {
     current_stage?: string | null;
@@ -58,15 +73,13 @@ export function resolveRoPrItemStatus(
     arrival_datetime?: string | null;
   }
 ): { procurement_status: PrProcurementStatus; received_date: string | null } {
-  const orderedQty = Number(item.quantity_ordered) || 0;
-  const fulfilledQty = Number(item.quantity_fulfilled) || 0;
   const storedStatus = item.procurement_status || undefined;
 
   const isCompleted =
-    ro.current_stage === 'SELESAI' ||
     item.is_arrived_at_warehouse === true ||
-    (orderedQty > 0 && fulfilledQty >= orderedQty) ||
-    storedStatus === 'selesai';
+    Boolean(item.pr_arrival_date) ||
+    storedStatus === 'selesai' ||
+    (item.stock_source === 'GUDANG_SCGA' && Boolean(storedStatus));
 
   const procurement_status: PrProcurementStatus = isCompleted
     ? 'selesai'
