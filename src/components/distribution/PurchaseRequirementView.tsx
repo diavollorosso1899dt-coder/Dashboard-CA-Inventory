@@ -629,7 +629,7 @@ export default function PurchaseRequirementView({
                           )}
                           {isHistory && it.item_delivery_status && (
                             <div className="mt-1 text-[10px] font-medium text-slate-500 dark:text-slate-400">
-                              Distribusi: {it.item_delivery_status}
+                              Status RO: {it.item_delivery_status}
                             </div>
                           )}
                         </td>

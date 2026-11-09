@@ -68,17 +68,24 @@ export function resolveRoPrItemStatus(
   },
   ro: {
     current_stage?: string | null;
+    status?: string | null;
     pr_po_number?: string | null;
     received_date?: string | null;
     arrival_datetime?: string | null;
   }
 ): { procurement_status: PrProcurementStatus; received_date: string | null } {
   const storedStatus = item.procurement_status || undefined;
+  const orderedQty = Number(item.quantity_ordered) || 0;
+  const fulfilledQty = Number(item.quantity_fulfilled) || 0;
+  const isFinalRo =
+    ro.current_stage === 'SELESAI' || ro.status === 'COMPLETED';
 
   const isCompleted =
     item.is_arrived_at_warehouse === true ||
     Boolean(item.pr_arrival_date) ||
     storedStatus === 'selesai' ||
+    (orderedQty > 0 && fulfilledQty >= orderedQty) ||
+    isFinalRo ||
     (item.stock_source === 'GUDANG_SCGA' && Boolean(storedStatus));
 
   const procurement_status: PrProcurementStatus = isCompleted
@@ -90,6 +97,74 @@ export function resolveRoPrItemStatus(
     (isCompleted ? ro.received_date || ro.arrival_datetime || null : null);
 
   return { procurement_status, received_date };
+}
+
+export type PrRoDistributionStatus =
+  | 'Dibatalkan'
+  | 'Ready Antar'
+  | 'Terima Outlet'
+  | 'Selesai'
+  | 'Ready Stock'
+  | 'On Proses';
+
+/**
+ * Status RO yang ditampilkan di Riwayat PR.
+ *
+ * Status diambil dari tahap RO (sumber kebenaran dokumen), lalu fallback ke
+ * status item bila RO belum masuk tahap distribusi. Ini membuat Riwayat PR
+ * menyimpan jejak "Ready Stock" / "Ready Antar" sesuai posisi RO, bukan lagi
+ * label statis "Ready Gudang SCGA".
+ */
+export function resolveRoPrDistributionStatus(
+  item: {
+    stock_source?: string | null;
+    quantity_ordered?: number | null;
+    quantity_fulfilled?: number | null;
+    is_arrived_at_warehouse?: boolean;
+    procurement_status?: string | null;
+    pr_arrival_date?: string | null;
+  },
+  ro: { current_stage?: string | null; status?: string | null }
+): PrRoDistributionStatus {
+  const stage = String(ro.current_stage || '').toUpperCase();
+  const status = String(ro.status || '').toUpperCase();
+
+  if (stage === 'DIBATALKAN' || status === 'CANCELLED' || status === 'REJECTED') {
+    return 'Dibatalkan';
+  }
+
+  if (stage === 'SURAT_JALAN' || status === 'IN_DELIVERY') {
+    return 'Ready Antar';
+  }
+
+  if (
+    stage === 'ASET_SAMPAI' ||
+    stage === 'CHECKLIST' ||
+    stage === 'CHECKLIST_DONE' ||
+    stage === 'UPDATE_SLA' ||
+    status === 'CHECKLIST_DONE'
+  ) {
+    return 'Terima Outlet';
+  }
+
+  if (stage === 'SELESAI' || status === 'COMPLETED') {
+    return 'Selesai';
+  }
+
+  if (stage === 'READY_STOCK' || status === 'READY_STOCK') {
+    return 'Ready Stock';
+  }
+
+  const orderedQty = Number(item.quantity_ordered) || 0;
+  const fulfilledQty = Number(item.quantity_fulfilled) || 0;
+  const isItemReady =
+    item.stock_source === 'GUDANG_SCGA' ||
+    item.is_arrived_at_warehouse === true ||
+    item.procurement_status === 'selesai' ||
+    Boolean(item.pr_arrival_date) ||
+    (orderedQty > 0 && fulfilledQty >= orderedQty);
+
+  return isItemReady ? 'Ready Stock' : 'On Proses';
 }
 
 /**

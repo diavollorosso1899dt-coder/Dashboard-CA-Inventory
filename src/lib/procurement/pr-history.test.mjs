@@ -5,6 +5,7 @@ import {
   filterPurchaseRequirementHistory,
   matchesPurchaseRequirementFilter,
   mergeManualAssetEdit,
+  resolveRoPrDistributionStatus,
   resolveRoPrItemStatus,
   sanitizeAssetRequestDbPayload,
 } from './pr-history.ts';
@@ -231,6 +232,79 @@ test('resolveRoPrItemStatus: PO dan status belum dipertahankan', () => {
     { current_stage: 'READY_STOCK', pr_po_number: 'PO-AUTO' }
   );
   assert.equal(poFallback.procurement_status, 'po');
+});
+
+test('resolveRoPrDistributionStatus: status RO mengikuti tahap dokumen', () => {
+  const readyItem = {
+    quantity_ordered: 2,
+    quantity_fulfilled: 2,
+    stock_source: 'GUDANG_SCGA',
+    procurement_status: 'selesai',
+  };
+
+  assert.equal(
+    resolveRoPrDistributionStatus(readyItem, { current_stage: 'READY_STOCK', status: 'READY_STOCK' }),
+    'Ready Stock'
+  );
+  assert.equal(
+    resolveRoPrDistributionStatus(readyItem, { current_stage: 'SURAT_JALAN', status: 'IN_DELIVERY' }),
+    'Ready Antar'
+  );
+  assert.equal(
+    resolveRoPrDistributionStatus(readyItem, { current_stage: 'ASET_SAMPAI', status: 'CHECKLIST_DONE' }),
+    'Terima Outlet'
+  );
+  assert.equal(
+    resolveRoPrDistributionStatus(readyItem, { current_stage: 'SELESAI', status: 'COMPLETED' }),
+    'Selesai'
+  );
+  assert.equal(
+    resolveRoPrDistributionStatus(readyItem, { current_stage: 'DIBATALKAN', status: 'CANCELLED' }),
+    'Dibatalkan'
+  );
+});
+
+test('resolveRoPrDistributionStatus: item ready di RO campuran tetap Ready Stock', () => {
+  assert.equal(
+    resolveRoPrDistributionStatus(
+      { stock_source: 'GUDANG_SCGA', quantity_ordered: 2, quantity_fulfilled: 2 },
+      { current_stage: 'REQUEST_ORDER', status: 'NEED_PR' }
+    ),
+    'Ready Stock'
+  );
+  assert.equal(
+    resolveRoPrDistributionStatus(
+      { stock_source: 'ON_PROSES', quantity_ordered: 2, quantity_fulfilled: 0 },
+      { current_stage: 'REQUEST_ORDER', status: 'NEED_PR' }
+    ),
+    'On Proses'
+  );
+});
+
+test('extractPrReadyStockItemsForSo memakai qty PR dari Riwayat PR', () => {
+  const historyItems = [
+    {
+      id: 'pr-ready-1',
+      item_name: 'Dandang Orchid 18',
+      classification: 'Perlengkapan Tetap',
+      rab_number: 'RO-104014',
+      branch_name: 'Warung Nini Pontianak',
+      region: 'KALBAR',
+      quantity_pr: 1,
+      quantity_needed: 99,
+      procurement_status: 'selesai',
+      item_delivery_status: 'Ready Stock',
+      stock_status: 'Ready Stock (Gudang SCGA)',
+      received_date: '2026-11-09',
+    },
+  ];
+
+  const { items, totalQty } = extractPrReadyStockItemsForSo(historyItems);
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].qty, 1);
+  assert.equal(items[0].qty_penerimaan, 1);
+  assert.equal(totalQty, 1);
 });
 
 

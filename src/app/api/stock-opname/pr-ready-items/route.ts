@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getPurchaseRequirementItems, getAssetRequests } from '@/lib/supabase/server';
+import { getPurchaseRequirementHistory } from '@/lib/supabase/server';
 import { extractPrReadyStockItemsForSo } from '@/lib/procurement/pr-history';
-import { AssetRequest } from '@/lib/supabase/types';
 import { normalizeSoRegion } from '@/lib/so-harian/region';
 
 export const dynamic = 'force-dynamic';
@@ -12,25 +11,11 @@ export async function GET(req: NextRequest) {
     const region = normalizeSoRegion(searchParams.get('region'));
     const sinceDate = searchParams.get('sinceDate');
 
-    const [prAllItems, { data: allAssetRequests }] = await Promise.all([
-      getPurchaseRequirementItems('ALL', true),
-      getAssetRequests({ region: 'ALL', limit: 5000, fresh: true }),
-    ]);
-
-    const mergedMap = new Map<string, AssetRequest>();
-    for (const it of prAllItems || []) {
-      if (it?.id) mergedMap.set(it.id, it);
-    }
-    for (const it of allAssetRequests || []) {
-      if (it?.id && !mergedMap.has(it.id)) {
-        mergedMap.set(it.id, it);
-      }
-    }
-
-    const combined = Array.from(mergedMap.values()).filter(
-      (it) => !region || normalizeSoRegion(it.region) === region
-    );
-    const { items, totalQty } = extractPrReadyStockItemsForSo(combined, { sinceDate });
+    // Sumber Data Penerimaan Harian: Riwayat PR. Qty yang dipakai adalah
+    // quantity_pr (fallback quantity_needed) dari item PR yang sudah selesai /
+    // Ready Stock, sehingga angka penerimaan selalu berasal dari PR.
+    const historyItems = await getPurchaseRequirementHistory(region || 'ALL');
+    const { items, totalQty } = extractPrReadyStockItemsForSo(historyItems, { sinceDate });
 
     return NextResponse.json({
       success: true,

@@ -23,6 +23,7 @@ import {
   filterPurchaseRequirementHistory,
   matchesPurchaseRequirementFilter,
   mergeManualAssetEdit,
+  resolveRoPrDistributionStatus,
   resolveRoPrItemStatus,
   sanitizeAssetRequestDbPayload,
   PrProcurementStatus,
@@ -4057,6 +4058,21 @@ export async function getPurchaseRequirementItems(
         it.stock_source === 'GUDANG_SCGA' ||
         it.is_arrived_at_warehouse === true;
 
+      // Status RO mengikuti tahap dokumen (Ready Stock / Ready Antar / Terima
+      // Outlet / Selesai), bukan label statis. Riwayat PR memakai nilai ini
+      // supaya posisi RO ikut tersimpan dan terlihat oleh user.
+      const itemDeliveryStatus = resolveRoPrDistributionStatus(
+        {
+          stock_source: it.stock_source,
+          quantity_ordered: it.quantity_ordered,
+          quantity_fulfilled: it.quantity_fulfilled,
+          is_arrived_at_warehouse: it.is_arrived_at_warehouse,
+          procurement_status: manualEdit?.procurement_status || it.procurement_status,
+          pr_arrival_date: it.pr_arrival_date,
+        },
+        ro
+      );
+
       const assetReq: AssetRequest = {
         id: itemId,
         external_id: ro.ro_number,
@@ -4093,7 +4109,7 @@ export async function getPurchaseRequirementItems(
         negotiation_proof: null,
         acc_kadiv_procurement: false,
         procurement_status: isReadyOrDone ? 'selesai' : procStatus,
-        item_delivery_status: isReadyOrDone ? 'Ready Gudang SCGA' : 'On Proses',
+        item_delivery_status: itemDeliveryStatus,
         received_date: it.pr_arrival_date || itemReceivedDate,
         lead_time_days: 0,
         pic_receiver: ro.pic_receiver || '',
