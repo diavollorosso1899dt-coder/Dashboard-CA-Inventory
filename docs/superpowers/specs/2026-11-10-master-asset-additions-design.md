@@ -1,7 +1,7 @@
 # Master Asset Additions dari RO — Design
 
 Tanggal: 2026-11-10
-Status: Menunggu review spec
+Status: Disetujui untuk implementasi
 Terkait: `2026-11-06-stock-opname-per-region-design.md`,
 `2026-10-22-so-harian-cloud-rollover-design.md`
 
@@ -165,8 +165,9 @@ Alur server:
 1. Validasi `region` dengan `normalizeSoRegion()`.
 2. Filter item `CANCELLED`, nama kosong, dan duplikat dalam batch.
 3. Baca `master_asset_additions` region tersebut.
-4. Baca katalog item yang ada untuk melengkapi `classification`, `unit`,
-   `specification`, dan `photo_url` bila nama/SKU cocok.
+4. Baca snapshot katalog yang sudah di-cache (tanpa memicu tarik sheet baru)
+   untuk melengkapi `classification`, `unit`, `specification`, dan `photo_url`
+   bila nama/SKU cocok. Jika cache kosong, pakai metadata dari item RO.
 5. Insert item yang belum ada dengan `onConflict: 'region,normalized_name'`
    dan `ignoreDuplicates: true`.
 6. Cari sesi SO terbaru region tersebut dengan status `IN_PROGRESS`
