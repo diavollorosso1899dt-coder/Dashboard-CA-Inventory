@@ -34,8 +34,10 @@ export async function GET(req: NextRequest) {
             'region,item_name,normalized_name,sku,unit,classification,specification,photo_url,source,source_ro_number,is_active'
           )
           .eq('region', region)
-          .eq('is_active', true);
+          .eq('is_active', true)
+          .order('item_name', { ascending: true });
 
+        if (error) console.warn('[so/stock] Gagal membaca master tambahan:', error.message);
         if (!error && data) additions = data as MasterAdditionDraft[];
       } catch (err) {
         console.warn('[so/stock] Gagal membaca master tambahan:', err);
@@ -70,6 +72,9 @@ export async function GET(req: NextRequest) {
       (session) => !region || resolveSessionRegion(session) === region
     );
 
+    let bestSession: any = null;
+    let bestItems: any[] = [];
+
     for (const session of candidates) {
       const items: any[] = [];
       const PAGE_SIZE = 1000;
@@ -86,14 +91,19 @@ export async function GET(req: NextRequest) {
         if (chunk.length < PAGE_SIZE) break;
       }
 
-      const mergedItems = mergeSoStockWithAdditions(items, additions);
-      if (mergedItems.length > 0) {
-        return NextResponse.json({
-          success: true,
-          session,
-          items: mergedItems,
-        });
+      if (items.length > 0) {
+        bestSession = session;
+        bestItems = items;
+        break;
       }
+    }
+
+    if (bestSession) {
+      return NextResponse.json({
+        success: true,
+        session: bestSession,
+        items: mergeSoStockWithAdditions(bestItems, additions),
+      });
     }
 
     return NextResponse.json({
