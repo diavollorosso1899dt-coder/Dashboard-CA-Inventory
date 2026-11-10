@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/server';
 import { normalizeSoRegion, resolveSessionRegion } from '@/lib/so-harian/region';
+import {
+  mergeSoStockWithAdditions,
+  type MasterAdditionDraft,
+} from '@/lib/master/additions';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +24,23 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const region = normalizeSoRegion(searchParams.get('region'));
+
+    let additions: MasterAdditionDraft[] = [];
+    if (region) {
+      try {
+        const { data, error } = await admin
+          .from('master_asset_additions')
+          .select(
+            'region,item_name,normalized_name,sku,unit,classification,specification,photo_url,source,source_ro_number,is_active'
+          )
+          .eq('region', region)
+          .eq('is_active', true);
+
+        if (!error && data) additions = data as MasterAdditionDraft[];
+      } catch (err) {
+        console.warn('[so/stock] Gagal membaca master tambahan:', err);
+      }
+    }
 
     let sessions: any[] | null = null;
 
@@ -65,12 +86,21 @@ export async function GET(req: NextRequest) {
         if (chunk.length < PAGE_SIZE) break;
       }
 
-      if (items.length > 0) {
-        return NextResponse.json({ success: true, session, items });
+      const mergedItems = mergeSoStockWithAdditions(items, additions);
+      if (mergedItems.length > 0) {
+        return NextResponse.json({
+          success: true,
+          session,
+          items: mergedItems,
+        });
       }
     }
 
-    return NextResponse.json({ success: true, session: candidates[0] ?? null, items: [] });
+    return NextResponse.json({
+      success: true,
+      session: candidates[0] ?? null,
+      items: mergeSoStockWithAdditions([], additions),
+    });
   } catch (err: any) {
     return NextResponse.json(
       { success: false, error: err?.message || 'Gagal memuat stok SO.' },
