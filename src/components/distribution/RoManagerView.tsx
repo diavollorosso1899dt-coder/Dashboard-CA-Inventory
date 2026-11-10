@@ -57,6 +57,7 @@ import { RoDateField, getRoDateByField, matchesRoDateRange } from '@/lib/distrib
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 import { getAllSessionsSync, loadSession } from '@/lib/so-harian/storageService';
 import { SOItem } from '@/lib/so-harian/inventoryEngine';
+import { resolveSoStockQty } from '@/lib/so-harian/rollover';
 import { isRoFinalizedForActiveList } from '@/lib/distribution/ro-visibility';
 
 interface RoManagerViewProps {
@@ -315,63 +316,54 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     }
   };
 
-  const getSoStockForItem = (it: ROItem): { stok_sistem: number; qty_fisik?: number | null; satuan?: string; found: boolean } => {
+  const getSoStockForItem = (it: ROItem): {
+    stok_sistem: number;
+    qty_fisik?: number | null;
+    qty: number;
+    source: 'FISIK' | 'SISTEM';
+    satuan?: string;
+    found: boolean;
+  } => {
     if (!soStockItems || soStockItems.length === 0) {
-      return { stok_sistem: 0, found: false };
+      return { stok_sistem: 0, qty: 0, source: 'SISTEM', found: false };
     }
     const cleanName = (it.item_name || '').toLowerCase().trim();
     const cleanSku = (it.sku || '').toLowerCase().trim();
 
+    const toResult = (match: SOItem) => {
+      const resolved = resolveSoStockQty(match);
+      return {
+        stok_sistem: match.stok_sistem ?? 0,
+        qty_fisik: match.qty_fisik,
+        qty: resolved.qty,
+        source: resolved.source,
+        satuan: match.satuan || it.unit || 'pcs',
+        found: true
+      };
+    };
+
     if (cleanSku) {
       const matchSku = soStockItems.find(s => (s.kode_barang || '').toLowerCase().trim() === cleanSku);
-      if (matchSku) {
-        return {
-          stok_sistem: matchSku.stok_sistem ?? 0,
-          qty_fisik: matchSku.qty_fisik,
-          satuan: matchSku.satuan || it.unit || 'pcs',
-          found: true
-        };
-      }
+      if (matchSku) return toResult(matchSku);
     }
 
     const matchExact = soStockItems.find(s => (s.nama_barang || '').toLowerCase().trim() === cleanName);
-    if (matchExact) {
-      return {
-        stok_sistem: matchExact.stok_sistem ?? 0,
-        qty_fisik: matchExact.qty_fisik,
-        satuan: matchExact.satuan || it.unit || 'pcs',
-        found: true
-      };
-    }
+    if (matchExact) return toResult(matchExact);
 
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const normCleanName = norm(cleanName);
     if (normCleanName) {
       const matchNorm = soStockItems.find(s => norm(s.nama_barang || '') === normCleanName);
-      if (matchNorm) {
-        return {
-          stok_sistem: matchNorm.stok_sistem ?? 0,
-          qty_fisik: matchNorm.qty_fisik,
-          satuan: matchNorm.satuan || it.unit || 'pcs',
-          found: true
-        };
-      }
+      if (matchNorm) return toResult(matchNorm);
     }
 
     const matchPartial = soStockItems.find(s => {
       const sName = (s.nama_barang || '').toLowerCase().trim();
       return sName && (cleanName.includes(sName) || sName.includes(cleanName));
     });
-    if (matchPartial) {
-      return {
-        stok_sistem: matchPartial.stok_sistem ?? 0,
-        qty_fisik: matchPartial.qty_fisik,
-        satuan: matchPartial.satuan || it.unit || 'pcs',
-        found: true
-      };
-    }
+    if (matchPartial) return toResult(matchPartial);
 
-    return { stok_sistem: 0, found: false };
+    return { stok_sistem: 0, qty: 0, source: 'SISTEM', found: false };
   };
 
   // Sync selectedRegion with URL query param whenever it changes
@@ -2148,7 +2140,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                       {isSoStockLoading
                         ? 'Memuat stok SO Harian...'
                         : soSessionDate
-                          ? `Sinkron Stok Sistem SO Harian (${soSessionDate})`
+                          ? `Sinkron Stok SO Harian (${soSessionDate}) — qty fisik bila sudah dihitung, stok sistem bila belum`
                           : 'Stok SO Harian belum tersedia'}
                     </span>
                   </span>
@@ -2212,31 +2204,36 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                                     );
                                   }
 
-                                  const isEnough = soStock.stok_sistem >= it.quantity_ordered;
-                                  const isZeroOrNegative = soStock.stok_sistem <= 0;
+                                  const isEnough = soStock.qty >= it.quantity_ordered;
+                                  const isZeroOrNegative = soStock.qty <= 0;
+                                  const sourceLabel = soStock.source === 'FISIK' ? 'Fisik SO' : 'Sistem SO';
+                                  const sourceNote =
+                                    soStock.source === 'FISIK'
+                                      ? 'qty fisik hasil hitung SO Harian'
+                                      : 'stok sistem SO Harian (stok awal + penerimaan - RO)';
 
                                   if (isZeroOrNegative) {
                                     return (
-                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800" title={`Stok sistem gudang kosong atau habis pada SO Harian (${soStock.stok_sistem} ${soStock.satuan})`}>
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800" title={`${sourceLabel}: ${soStock.qty} ${soStock.satuan} — ${sourceNote}. Gudang kosong atau habis.`}>
                                         <AlertCircle className="w-3 h-3 text-rose-500" />
-                                        <span>Stok SO: 0 {soStock.satuan} (Kosong / Butuh PR)</span>
+                                        <span>Stok SO ({sourceLabel}): {soStock.qty} {soStock.satuan} (Kosong / Butuh PR)</span>
                                       </span>
                                     );
                                   }
 
                                   if (isEnough) {
                                     return (
-                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800" title={`Tersedia di gudang! Stok sistem SO: ${soStock.stok_sistem} ${soStock.satuan}`}>
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800" title={`Tersedia di gudang! ${sourceLabel}: ${soStock.qty} ${soStock.satuan} — ${sourceNote}.`}>
                                         <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                        <span>Stok SO: {soStock.stok_sistem} {soStock.satuan} (Tersedia / Cukup)</span>
+                                        <span>Stok SO ({sourceLabel}): {soStock.qty} {soStock.satuan} (Tersedia / Cukup)</span>
                                       </span>
                                     );
                                   }
 
                                   return (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title={`Stok sistem gudang kurang ${it.quantity_ordered - soStock.stok_sistem} ${soStock.satuan} (Total stok: ${soStock.stok_sistem})`}>
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title={`${sourceLabel}: ${soStock.qty} ${soStock.satuan} — ${sourceNote}. Kurang ${it.quantity_ordered - soStock.qty} ${soStock.satuan}.`}>
                                       <Clock className="w-3 h-3 text-amber-500" />
-                                      <span>Stok SO: {soStock.stok_sistem} {soStock.satuan} (Kurang {it.quantity_ordered - soStock.stok_sistem})</span>
+                                      <span>Stok SO ({sourceLabel}): {soStock.qty} {soStock.satuan} (Kurang {it.quantity_ordered - soStock.qty})</span>
                                     </span>
                                   );
                                 })()}

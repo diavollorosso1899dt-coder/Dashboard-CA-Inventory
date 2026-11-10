@@ -39,6 +39,33 @@ export interface OpeningStockDetail {
   lokasi: string;
 }
 
+export type SoStockQtySource = 'FISIK' | 'SISTEM';
+
+/**
+ * Angka stok SO acuan untuk satu item: qty fisik bila sudah dihitung,
+ * selain itu stok sistem (stok awal + penerimaan - RO).
+ *
+ * Dipakai rollover dan badge "Stok SO" di Kelola RO supaya keduanya
+ * menampilkan angka yang sama.
+ */
+export function resolveSoStockQty(item: {
+  qty_fisik?: number | string | null;
+  stok_sistem?: number | string | null;
+}): { qty: number; source: SoStockQtySource } {
+  const rawFisik = item?.qty_fisik;
+  const hasFisik =
+    rawFisik !== null &&
+    rawFisik !== undefined &&
+    String(rawFisik).trim() !== '' &&
+    Number.isFinite(Number(rawFisik));
+
+  if (hasFisik) {
+    return { qty: Number(rawFisik), source: 'FISIK' };
+  }
+
+  return { qty: Number(item?.stok_sistem) || 0, source: 'SISTEM' };
+}
+
 export interface MergedOpeningStock {
   stock: Map<string, number>;
   details: Map<string, OpeningStockDetail>;
@@ -93,14 +120,7 @@ export function buildCarryForwardEntries(items: SOItem[] = []): Map<string, Carr
     const code = String(item.kode_barang || '').trim();
     if (!code) continue;
 
-    const fisikRaw = item.qty_fisik;
-    const counted =
-      fisikRaw !== null &&
-      fisikRaw !== undefined &&
-      String(fisikRaw).trim() !== '' &&
-      Number.isFinite(Number(fisikRaw));
-
-    const qty = counted ? Number(fisikRaw) : Number(item.stok_sistem) || 0;
+    const { qty, source } = resolveSoStockQty(item);
     const rounded = Math.round((qty + Number.EPSILON) * 10000) / 10000;
 
     entries.set(code, {
@@ -110,7 +130,7 @@ export function buildCarryForwardEntries(items: SOItem[] = []): Map<string, Carr
       satuan: item.satuan || 'PCS',
       lokasi: item.lokasi || 'Gudang Utama',
       qty: rounded,
-      counted,
+      counted: source === 'FISIK',
     });
   }
 

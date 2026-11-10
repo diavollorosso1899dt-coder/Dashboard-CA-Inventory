@@ -5,6 +5,7 @@ import {
   pickPreviousSession,
   buildCarryForwardEntries,
   mergeOpeningStock,
+  resolveSoStockQty,
 } from './rollover.ts';
 import { mergeDailyInventory } from './inventoryEngine.ts';
 
@@ -48,6 +49,29 @@ test('pickPreviousSession tahan terhadap format tanggal ISO dan tidak peka uruta
   assert.equal(pickPreviousSession(sessions, '2026-10-31T08:00:00.000Z')?.id, 'a');
   assert.equal(normalizeSessionDate('2026-10-30T23:59:00.000Z'), '2026-10-30');
   assert.equal(normalizeSessionDate(''), null);
+});
+
+test('resolveSoStockQty memakai fisik bila sudah dihitung dan sistem bila belum', () => {
+  assert.deepEqual(resolveSoStockQty({ qty_fisik: 5, stok_sistem: 10 }), {
+    qty: 5,
+    source: 'FISIK',
+  });
+  assert.deepEqual(resolveSoStockQty({ qty_fisik: 0, stok_sistem: 10 }), {
+    qty: 0,
+    source: 'FISIK',
+  });
+  assert.deepEqual(resolveSoStockQty({ qty_fisik: null, stok_sistem: 10 }), {
+    qty: 10,
+    source: 'SISTEM',
+  });
+  assert.deepEqual(resolveSoStockQty({ qty_fisik: '', stok_sistem: 4 }), {
+    qty: 4,
+    source: 'SISTEM',
+  });
+  assert.deepEqual(resolveSoStockQty({ qty_fisik: null, stok_sistem: null }), {
+    qty: 0,
+    source: 'SISTEM',
+  });
 });
 
 test('buildCarryForwardEntries memakai qty fisik bila sudah dihitung, stok sistem bila belum', () => {
