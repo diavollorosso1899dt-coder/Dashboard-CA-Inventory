@@ -57,6 +57,10 @@ import {
   sanitizeSuratJalanDbPayload,
   stripUnknownColumns,
 } from '../distribution/transfer-sj-sync';
+import {
+  selectCatalogAdditions,
+  type MasterAdditionDraft,
+} from '../master/additions';
 export { sortOrdersNewestFirst };
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -4525,17 +4529,64 @@ export async function syncMasterAssetCatalogFromSheet(
   }
 }
 
+export function getCachedMasterAssetCatalog(): MasterAssetItem[] {
+  return cachedMasterCatalog ? [...cachedMasterCatalog] : [];
+}
+
+async function getActiveMasterAssetAdditions(): Promise<MasterAdditionDraft[]> {
+  const admin = getAdminClient();
+  if (!admin) return [];
+
+  try {
+    const { data, error } = await admin
+      .from('master_asset_additions')
+      .select(
+        'region,item_name,normalized_name,sku,unit,classification,specification,photo_url,source,source_ro_number,is_active'
+      )
+      .eq('is_active', true);
+
+    if (error) return [];
+    return (data || []) as MasterAdditionDraft[];
+  } catch (err) {
+    console.warn('Gagal membaca master asset additions:', err);
+    return [];
+  }
+}
+
 export async function getMasterAssetCatalog(): Promise<MasterAssetItem[]> {
+  let base: MasterAssetItem[];
+
   if (cachedMasterCatalog && Date.now() - masterCatalogLastFetched < 15 * 60 * 1000) {
-    return cachedMasterCatalog;
+    base = cachedMasterCatalog;
+  } else {
+    await syncMasterAssetCatalogFromSheet();
+    base = cachedMasterCatalog || [];
   }
 
-  const syncRes = await syncMasterAssetCatalogFromSheet();
-  if (syncRes.success && cachedMasterCatalog) {
-    return cachedMasterCatalog;
-  }
+  const additions = await getActiveMasterAssetAdditions();
+  if (additions.length === 0) return base;
 
-  return cachedMasterCatalog || [];
+  const missing = selectCatalogAdditions(base, additions);
+  if (missing.length === 0) return base;
+
+  const extra: MasterAssetItem[] = missing.map((draft, index) => ({
+    id: `mat-add-${index + 1}`,
+    item_name: draft.item_name,
+    system_item_name: draft.item_name,
+    unit: draft.unit,
+    classification: draft.classification,
+    specification:
+      draft.specification || getItemSpecification(draft.item_name) || '',
+    photo_url: draft.photo_url || getItemImageUrl(draft.item_name) || null,
+    standard_rab_price: 0,
+    total_requests: 0,
+    total_units_needed: 0,
+    is_new_item: true,
+  }));
+
+  return [...base, ...extra].sort((a, b) =>
+    a.item_name.localeCompare(b.item_name)
+  );
 }
 
 export function updateCachedMasterItem(
