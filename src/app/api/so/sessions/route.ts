@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/lib/supabase/server';
 import { normalizeSoRegion, resolveSessionRegion } from '@/lib/so-harian/region';
+import {
+  planSessionAppend,
+  type MasterAdditionDraft,
+  type SessionAppendRow,
+} from '@/lib/master/additions';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,19 +46,54 @@ export async function POST(req: NextRequest) {
     const region =
       normalizeSoRegion(session.region) ||
       resolveSessionRegion({ region: session.region, id: sessionId });
+
+    let preservedRows: SessionAppendRow[] = [];
+    if (region) {
+      try {
+        const { data, error } = await admin
+          .from('master_asset_additions')
+          .select(
+            'region,item_name,normalized_name,sku,unit,classification,specification,photo_url,source,source_ro_number,is_active'
+          )
+          .eq('region', region)
+          .eq('is_active', true);
+
+        if (!error && data) {
+          const sessionStatus = String(session.status || 'DRAFT').toUpperCase();
+          if (sessionStatus === 'IN_PROGRESS') {
+            preservedRows = planSessionAppend({
+              sessionId,
+              additions: data as MasterAdditionDraft[],
+              existingDetails: items.map((item) => ({
+                kode_barang: item?.kode_barang,
+                nama_barang: item?.nama_barang,
+              })),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(
+          '[so/sessions] Gagal mempertahankan item master tambahan:',
+          err
+        );
+      }
+    }
+
+    const finalItems = [...items, ...preservedRows];
+
     const sessionPayload: any = {
       id: sessionId,
       region,
       tanggal: session.tanggal || now.slice(0, 10),
       gudang: session.gudang ?? null,
       petugas: session.petugas ?? null,
-      total_items: items.length,
-      item_match: items.filter((i) => i.status_selisih === 'MATCH').length,
-      item_minus: items.filter((i) => i.status_selisih === 'MINUS').length,
-      item_plus: items.filter((i) => i.status_selisih === 'PLUS').length,
+      total_items: finalItems.length,
+      item_match: finalItems.filter((i) => i.status_selisih === 'MATCH').length,
+      item_minus: finalItems.filter((i) => i.status_selisih === 'MINUS').length,
+      item_plus: finalItems.filter((i) => i.status_selisih === 'PLUS').length,
       item_selisih:
-        items.filter((i) => i.status_selisih === 'MINUS').length +
-        items.filter((i) => i.status_selisih === 'PLUS').length,
+        finalItems.filter((i) => i.status_selisih === 'MINUS').length +
+        finalItems.filter((i) => i.status_selisih === 'PLUS').length,
       akurasi_persen: toNumberOrNull(session.akurasi_persen),
       status: session.status || 'DRAFT',
       updated_at: now,
@@ -77,8 +117,8 @@ export async function POST(req: NextRequest) {
 
     if (sessionError) throw new Error(sessionError.message);
 
-    if (items.length > 0) {
-      const detailPayload = items.map((i) => ({
+    if (finalItems.length > 0) {
+      const detailPayload = finalItems.map((i) => ({
         id: String(i.id),
         session_id: sessionId,
         kode_barang: i.kode_barang ?? '',
@@ -119,7 +159,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, sessionId, itemCount: items.length });
+    return NextResponse.json({
+      success: true,
+      sessionId,
+      itemCount: finalItems.length,
+    });
   } catch (err: any) {
     return NextResponse.json(
       { success: false, error: err?.message || 'Gagal menyimpan sesi Stock Opname.' },
