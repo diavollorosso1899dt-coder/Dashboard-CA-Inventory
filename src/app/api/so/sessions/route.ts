@@ -142,20 +142,29 @@ export async function POST(req: NextRequest) {
         if (detailError) throw new Error(detailError.message);
       }
 
-      // Hapus detail yang sudah tidak ada di sesi (mis. item dikeluarkan user)
-      // agar data cloud sama persis dengan yang terakhir disimpan.
-      const keepIds = new Set(detailPayload.map((d) => d.id));
-      const { data: existing, error: existingError } = await admin
-        .from('so_details')
-        .select('id')
-        .eq('session_id', sessionId);
-      if (existingError) throw new Error(existingError.message);
+      // Hapus detail yang sudah tidak ada di sesi (mis. item dikeluarkan user).
+      // Item tambahan dari master sengaja dipertahankan (spec §7.4): item yang
+      // berasal dari RO akan muncul lagi agar master stok SO tetap lengkap.
+      //
+      // Sweep hanya dijalankan saat client mengirim snapshot item yang nyata.
+      // Payload kosong tidak boleh dianggap "hapus semua detail" karena sesi
+      // yang belum termuat di perangkat akan kehilangan seluruh detailnya.
+      if (items.length > 0) {
+        const keepIds = new Set(detailPayload.map((d) => d.id));
+        const { data: existing, error: existingError } = await admin
+          .from('so_details')
+          .select('id')
+          .eq('session_id', sessionId);
+        if (existingError) throw new Error(existingError.message);
 
-      const staleIds = (existing || []).map((row: any) => row.id).filter((id: string) => !keepIds.has(id));
-      for (let idx = 0; idx < staleIds.length; idx += BATCH_SIZE) {
-        const chunk = staleIds.slice(idx, idx + BATCH_SIZE);
-        const { error: staleError } = await admin.from('so_details').delete().in('id', chunk);
-        if (staleError) throw new Error(staleError.message);
+        const staleIds = (existing || [])
+          .map((row: any) => row.id)
+          .filter((id: string) => !keepIds.has(id));
+        for (let idx = 0; idx < staleIds.length; idx += BATCH_SIZE) {
+          const chunk = staleIds.slice(idx, idx + BATCH_SIZE);
+          const { error: staleError } = await admin.from('so_details').delete().in('id', chunk);
+          if (staleError) throw new Error(staleError.message);
+        }
       }
     }
 
