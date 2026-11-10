@@ -8,6 +8,7 @@ import {
   mergeSoStockWithAdditions,
   mergeSoStockItemLists,
   selectCatalogAdditions,
+  selectPersistedAdditionRows,
 } from './additions.ts';
 
 const draft = (overrides = {}) => ({
@@ -311,4 +312,87 @@ test('selectCatalogAdditions melewati katalog yang sudah ada dan dedupe antar re
 
   assert.equal(result.length, 1);
   assert.equal(result[0].item_name, 'Meja');
+});
+
+test('selectPersistedAdditionRows mempertahankan baris tersimpan yang tidak ada di payload', () => {
+  const additions = [
+    draft({
+      item_name: 'Keset karet mie',
+      normalized_name: 'keset karet mie',
+      sku: null,
+    }),
+  ];
+  const persisted = [
+    {
+      id: 'row-keset',
+      kode_barang: 'Keset karet mie',
+      nama_barang: 'Keset karet mie',
+      qty_fisik: 8,
+    },
+    { id: 'row-kursi', kode_barang: 'SKU-2', nama_barang: 'Kursi', qty_fisik: 4 },
+  ];
+
+  const result = selectPersistedAdditionRows({
+    additions,
+    persistedDetails: persisted,
+    payloadDetails: [{ id: 'row-kursi', kode_barang: 'SKU-2', nama_barang: 'Kursi' }],
+  });
+
+  assert.deepEqual(result.map((row) => row.id), ['row-keset']);
+  assert.equal(result[0].qty_fisik, 8);
+});
+
+test('selectPersistedAdditionRows melewati baris yang sudah ada di payload', () => {
+  const additions = [
+    draft({
+      item_name: 'Keset karet mie',
+      normalized_name: 'keset karet mie',
+      sku: null,
+    }),
+  ];
+  const persisted = [
+    {
+      id: 'row-keset',
+      kode_barang: 'Keset karet mie',
+      nama_barang: 'Keset karet mie',
+    },
+  ];
+
+  const byName = selectPersistedAdditionRows({
+    additions,
+    persistedDetails: persisted,
+    payloadDetails: [
+      { id: 'other-id', kode_barang: 'Keset karet mie', nama_barang: 'Keset karet mie' },
+    ],
+  });
+  assert.deepEqual(byName, []);
+
+  const sameIdDifferentName = selectPersistedAdditionRows({
+    additions,
+    persistedDetails: persisted,
+    payloadDetails: [{ id: 'row-keset', kode_barang: 'X', nama_barang: 'Y' }],
+  });
+  assert.deepEqual(sameIdDifferentName, []);
+});
+
+test('planSessionAppend tidak membuat baris auto bila item sudah tersimpan di sesi', () => {
+  const rows = planSessionAppend({
+    sessionId: 'so-kalbar-2026-11-10',
+    additions: [
+      draft({
+        item_name: 'Keset karet mie',
+        normalized_name: 'keset karet mie',
+        sku: null,
+      }),
+    ],
+    existingDetails: [
+      {
+        id: 'row-tersimpan',
+        kode_barang: 'Keset karet mie',
+        nama_barang: 'Keset karet mie',
+      },
+    ],
+  });
+
+  assert.deepEqual(rows, []);
 });

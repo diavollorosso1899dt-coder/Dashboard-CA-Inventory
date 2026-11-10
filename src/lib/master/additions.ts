@@ -51,6 +51,7 @@ export interface ExistingAdditionLike {
 }
 
 export interface SessionDetailLike {
+  id?: string | null;
   kode_barang?: string | null;
   nama_barang?: string | null;
 }
@@ -225,6 +226,43 @@ function detailMatchesDraft(
   if (detailName && detailName === draft.normalized_name) return true;
   if (detailCode && detailCode === draft.normalized_name) return true;
   return false;
+}
+
+/**
+ * Baris detail yang sudah tersimpan di sesi dan cocok dengan item tambahan,
+ * tetapi tidak dikirim di payload. Baris ini harus dipertahankan apa adanya
+ * agar tidak diganti baris auto baru dengan qty 0.
+ */
+export function selectPersistedAdditionRows<T extends SessionDetailLike>(options: {
+  additions: MasterAdditionDraft[];
+  persistedDetails?: T[];
+  payloadDetails?: SessionDetailLike[];
+}): T[] {
+  const payload = options.payloadDetails || [];
+  const payloadIds = new Set(
+    payload
+      .map((row) => String(row.id || '').trim())
+      .filter(Boolean)
+  );
+  const seenIds = new Set<string>();
+  const rows: T[] = [];
+
+  for (const row of options.persistedDetails || []) {
+    const rowId = String(row.id || '').trim();
+    if (rowId && (payloadIds.has(rowId) || seenIds.has(rowId))) continue;
+
+    const matched = (options.additions || []).some(
+      (draft) =>
+        detailMatchesDraft(row, draft) &&
+        !payload.some((payloadRow) => detailMatchesDraft(payloadRow, draft))
+    );
+    if (!matched) continue;
+
+    if (rowId) seenIds.add(rowId);
+    rows.push(row);
+  }
+
+  return rows;
 }
 
 export function planSessionAppend(options: {

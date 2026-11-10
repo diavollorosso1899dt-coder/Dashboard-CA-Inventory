@@ -3,6 +3,7 @@ import { getAdminClient } from '@/lib/supabase/server';
 import { normalizeSoRegion, resolveSessionRegion } from '@/lib/so-harian/region';
 import {
   planSessionAppend,
+  selectPersistedAdditionRows,
   type MasterAdditionDraft,
   type SessionAppendRow,
 } from '@/lib/master/additions';
@@ -47,8 +48,35 @@ export async function POST(req: NextRequest) {
       normalizeSoRegion(session.region) ||
       resolveSessionRegion({ region: session.region, id: sessionId });
 
-    let preservedRows: SessionAppendRow[] = [];
+    let persistedDetails: any[] = [];
+    let persistedDetailsLoaded = false;
     if (region) {
+      try {
+        for (let from = 0; ; from += DETAIL_PAGE_SIZE) {
+          const { data, error } = await admin
+            .from('so_details')
+            .select('*')
+            .eq('session_id', sessionId)
+            .order('kode_barang')
+            .order('id')
+            .range(from, from + DETAIL_PAGE_SIZE - 1);
+          if (error) throw new Error(error.message);
+          if (!data || data.length === 0) break;
+          persistedDetails.push(...data);
+          if (data.length < DETAIL_PAGE_SIZE) break;
+        }
+        persistedDetailsLoaded = true;
+      } catch (err) {
+        console.warn(
+          '[so/sessions] Gagal membaca detail sesi tersimpan:',
+          err
+        );
+      }
+    }
+
+    let preservedRows: SessionAppendRow[] = [];
+    let persistedAdditionRows: any[] = [];
+    if (region && persistedDetailsLoaded) {
       try {
         const { data, error } = await admin
           .from('master_asset_additions')
@@ -61,13 +89,30 @@ export async function POST(req: NextRequest) {
         if (!error && data) {
           const sessionStatus = String(session.status || 'DRAFT').toUpperCase();
           if (sessionStatus === 'IN_PROGRESS') {
+            const additions = data as MasterAdditionDraft[];
+            const payloadDetails = items.map((item) => ({
+              id: item?.id,
+              kode_barang: item?.kode_barang,
+              nama_barang: item?.nama_barang,
+            }));
+
             preservedRows = planSessionAppend({
               sessionId,
-              additions: data as MasterAdditionDraft[],
-              existingDetails: items.map((item) => ({
-                kode_barang: item?.kode_barang,
-                nama_barang: item?.nama_barang,
-              })),
+              additions,
+              existingDetails: [
+                ...payloadDetails,
+                ...persistedDetails.map((row) => ({
+                  id: row?.id,
+                  kode_barang: row?.kode_barang,
+                  nama_barang: row?.nama_barang,
+                })),
+              ],
+            });
+
+            persistedAdditionRows = selectPersistedAdditionRows({
+              additions,
+              persistedDetails,
+              payloadDetails,
             });
           }
         }
@@ -79,7 +124,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const finalItems = [...items, ...preservedRows];
+    const finalItems = [
+      ...items,
+      ...persistedAdditionRows,
+      ...preservedRows,
+    ];
 
     const sessionPayload: any = {
       id: sessionId,
@@ -150,14 +199,18 @@ export async function POST(req: NextRequest) {
       // Payload kosong tidak boleh dianggap "hapus semua detail" karena sesi
       // yang belum termuat di perangkat akan kehilangan seluruh detailnya.
       if (items.length > 0) {
-        const keepIds = new Set(detailPayload.map((d) => d.id));
-        const { data: existing, error: existingError } = await admin
-          .from('so_details')
-          .select('id')
-          .eq('session_id', sessionId);
-        if (existingError) throw new Error(existingError.message);
+        let existingRows: any[] = persistedDetails;
+        if (!persistedDetailsLoaded) {
+          const { data: existing, error: existingError } = await admin
+            .from('so_details')
+            .select('id')
+            .eq('session_id', sessionId);
+          if (existingError) throw new Error(existingError.message);
+          existingRows = existing || [];
+        }
 
-        const staleIds = (existing || [])
+        const keepIds = new Set(detailPayload.map((d) => d.id));
+        const staleIds = existingRows
           .map((row: any) => row.id)
           .filter((id: string) => !keepIds.has(id));
         for (let idx = 0; idx < staleIds.length; idx += BATCH_SIZE) {
