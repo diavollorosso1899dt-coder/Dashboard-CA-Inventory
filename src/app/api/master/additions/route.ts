@@ -9,7 +9,6 @@ import {
   buildMasterAdditionDrafts,
   planSessionAppend,
   selectNewAdditionDrafts,
-  type MasterAdditionDraft,
   type SessionDetailLike,
 } from '@/lib/master/additions';
 
@@ -56,6 +55,7 @@ async function readSessionDetails(
       .select('id,kode_barang,nama_barang')
       .eq('session_id', sessionId)
       .order('kode_barang')
+      .order('id')
       .range(from, from + DETAIL_PAGE_SIZE - 1);
 
     if (error) throw new Error(error.message);
@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
         success: true,
         addedToMaster: 0,
         addedToSession: 0,
-        skipped: 0,
+        skipped: items.length,
         migrationRequired: false,
       });
     }
@@ -214,7 +214,7 @@ export async function POST(req: NextRequest) {
       success: true,
       addedToMaster: newDrafts.length,
       addedToSession,
-      skipped: drafts.length - newDrafts.length,
+      skipped: items.length - newDrafts.length,
       sessionId,
       migrationRequired: false,
       warning: sessionWarning || undefined,
@@ -249,27 +249,37 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const { data, error } = await admin
-      .from(ADDITIONS_TABLE)
-      .select(ADDITION_COLUMNS)
-      .eq('region', region)
-      .eq('is_active', true)
-      .order('item_name', { ascending: true });
+    const items: any[] = [];
 
-    if (error) {
-      if (isMissingTableError(error)) {
-        return NextResponse.json({
-          success: true,
-          items: [],
-          migrationRequired: true,
-        });
+    for (let from = 0; ; from += DETAIL_PAGE_SIZE) {
+      const { data, error } = await admin
+        .from(ADDITIONS_TABLE)
+        .select(ADDITION_COLUMNS)
+        .eq('region', region)
+        .eq('is_active', true)
+        .order('item_name', { ascending: true })
+        .order('id')
+        .range(from, from + DETAIL_PAGE_SIZE - 1);
+
+      if (error) {
+        if (isMissingTableError(error)) {
+          return NextResponse.json({
+            success: true,
+            items: [],
+            migrationRequired: true,
+          });
+        }
+        throw new Error(error.message);
       }
-      throw new Error(error.message);
+
+      if (!data || data.length === 0) break;
+      items.push(...data);
+      if (data.length < DETAIL_PAGE_SIZE) break;
     }
 
     return NextResponse.json({
       success: true,
-      items: data || [],
+      items,
       migrationRequired: false,
     });
   } catch (err: any) {
