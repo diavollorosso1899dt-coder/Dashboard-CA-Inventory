@@ -3,7 +3,9 @@
  *
  * RO yang itemnya sudah dialokasikan (Ready Stock / PR Vendor) tetap harus
  * terlihat supaya data alokasinya tidak "hilang" dari Kelola RO. Yang
- * disembunyikan hanya RO yang benar-benar selesai atau dibatalkan.
+ * disembunyikan adalah RO yang sudah sampai di outlet (Aset Sampai, Checklist,
+ * Update SLA) karena proses gudang sudah selesai, ditambah RO yang benar-benar
+ * selesai atau dibatalkan.
  */
 export interface RoVisibilityInput {
   status?: string | null;
@@ -19,7 +21,17 @@ export interface RoStaleVisibilityInput {
   items?: Array<{ stock_source?: string | null; quantity_fulfilled?: number | null }> | null;
 }
 
-const FINAL_STAGES = new Set(['SELESAI', 'COMPLETED', 'DIBATALKAN', 'REJECTED', 'CANCELLED']);
+const FINAL_STAGES = new Set([
+  'ASET_SAMPAI',
+  'CHECKLIST',
+  'CHECKLIST_DONE',
+  'UPDATE_SLA',
+  'SELESAI',
+  'COMPLETED',
+  'DIBATALKAN',
+  'REJECTED',
+  'CANCELLED',
+]);
 const UNPROCESSED_STAGES = new Set(['INPUT_SYSTEM', 'REQUEST_ORDER']);
 
 export function isRoFinalizedForActiveList(ro: RoVisibilityInput): boolean {

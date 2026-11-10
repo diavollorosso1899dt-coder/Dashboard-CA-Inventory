@@ -35,6 +35,47 @@ test('RO dengan item butuh PR tetap tampil di Kelola RO', () => {
   );
 });
 
+test('RO yang sudah Aset Sampai disembunyikan dari daftar aktif', () => {
+  assert.equal(
+    isRoFinalizedForActiveList({
+      status: 'CHECKLIST_DONE',
+      current_stage: 'ASET_SAMPAI',
+      items: [{ stock_source: 'GUDANG_SCGA' }],
+    }),
+    true
+  );
+});
+
+test('RO tahap checklist/update SLA juga keluar dari daftar aktif', () => {
+  assert.equal(
+    isRoFinalizedForActiveList({
+      status: 'CHECKLIST_DONE',
+      current_stage: 'CHECKLIST',
+      items: [{ stock_source: 'GUDANG_SCGA' }],
+    }),
+    true
+  );
+  assert.equal(
+    isRoFinalizedForActiveList({
+      status: 'CHECKLIST_DONE',
+      current_stage: 'UPDATE_SLA',
+      items: [{ stock_source: 'GUDANG_SCGA' }],
+    }),
+    true
+  );
+});
+
+test('RO yang masih Ready Antar tetap tampil sampai aset sampai', () => {
+  assert.equal(
+    isRoFinalizedForActiveList({
+      status: 'IN_DELIVERY',
+      current_stage: 'SURAT_JALAN',
+      items: [{ stock_source: 'GUDANG_SCGA' }],
+    }),
+    false
+  );
+});
+
 test('RO yang sudah selesai disembunyikan dari daftar aktif', () => {
   assert.equal(
     isRoFinalizedForActiveList({
