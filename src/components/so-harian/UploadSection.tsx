@@ -36,6 +36,7 @@ import {
   mergeOpeningStock,
   OpeningStockDetail,
 } from '@/lib/so-harian/rollover';
+import { mergeMasterStockAdditions } from '@/lib/master/additions';
 import DataPreviewModal from './DataPreviewModal';
 import { matchesRegion } from '@/lib/utils/region-helper';
 import type { SoRegion } from '@/lib/so-harian/region';
@@ -643,7 +644,7 @@ export default function UploadSection({
     downloadBlob(blob, filename);
   };
 
-  const handleCompile = () => {
+  const handleCompile = async () => {
     setErrorMessage('');
 
     const masterStock = new Map<string, number>();
@@ -720,12 +721,47 @@ export default function UploadSection({
       }
     }
 
+    // Item yang ditambahkan otomatis dari RO disimpan di Supabase, bukan di
+    // Google Sheets. Gabungkan sebagai stok awal 0 tanpa menimpa master sheet.
+    let additionStock = masterStock;
+    let additionDetails = masterDetails;
+    try {
+      const res = await fetch(`/api/master/additions?region=${region}`, {
+        cache: 'no-store',
+      });
+      const json = await res.json().catch(() => null);
+      const rows = Array.isArray(json?.items) ? json.items : [];
+
+      if (json?.success && rows.length > 0) {
+        const merged = mergeMasterStockAdditions({
+          stock: masterStock,
+          details: masterDetails,
+          additions: rows,
+        });
+        additionStock = merged.stock;
+        additionDetails = merged.details;
+
+        for (const [key, detail] of additionDetails.entries()) {
+          const nameNorm = normalizeInventoryKey(detail?.nama_barang);
+          const codeNorm = normalizeInventoryKey(key);
+          if (nameNorm && !nameToSkuMap.has(nameNorm)) {
+            nameToSkuMap.set(nameNorm, key);
+          }
+          if (codeNorm && !nameToSkuMap.has(codeNorm)) {
+            nameToSkuMap.set(codeNorm, key);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Gagal memuat master tambahan dari Supabase:', err);
+    }
+
     // Hasil SO hari sebelumnya menjadi acuan stok awal; master hanya
     // melengkapi SKU baru yang belum ada di hasil SO tersebut.
     const preferCarryForward = openingSourceMode === 'SO_SEBELUMNYA' && carryForwardMap.size > 0;
     const opening = mergeOpeningStock({
-      master: masterStock,
-      masterDetails,
+      master: additionStock,
+      masterDetails: additionDetails,
       carryForward: carryForwardMap,
       preferCarryForward,
     });
