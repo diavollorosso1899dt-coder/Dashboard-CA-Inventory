@@ -59,6 +59,7 @@ import { getAllSessionsSync, loadSession } from '@/lib/so-harian/storageService'
 import { SOItem } from '@/lib/so-harian/inventoryEngine';
 import { resolveSoStockQty } from '@/lib/so-harian/rollover';
 import { isRoFinalizedForActiveList } from '@/lib/distribution/ro-visibility';
+import { mergeSoStockItemLists } from '@/lib/master/additions';
 
 interface RoManagerViewProps {
   initialOrders?: RequestOrder[];
@@ -300,12 +301,25 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         console.warn('Gagal memuat stok SO dari server:', cloudErr);
       }
 
-      // 3. Pakai sesi dengan tanggal terbaru. Jika tanggalnya sama, data lokal
-      //    dianggap lebih baru karena baru saja disimpan di perangkat ini.
+      // 3. Pakai sesi dengan tanggal terbaru. Jika tanggalnya sama, gabungkan
+      //    keduanya: item lokal menang (hitungan fisik terbaru), item cloud-only
+      //    tetap dipertahankan (termasuk item master tambahan dari RO).
       const useCloud =
         cloudPick.items.length > 0 &&
         (!localPick.items.length || (cloudPick.tanggal || '') > (localPick.tanggal || ''));
-      const pick = useCloud ? cloudPick : localPick;
+
+      let pick = useCloud ? cloudPick : localPick;
+      if (
+        !useCloud &&
+        localPick.items.length > 0 &&
+        cloudPick.items.length > 0 &&
+        (localPick.tanggal || '') === (cloudPick.tanggal || '')
+      ) {
+        pick = {
+          tanggal: localPick.tanggal,
+          items: mergeSoStockItemLists(localPick.items, cloudPick.items),
+        };
+      }
 
       setSoSessionDate(pick.tanggal);
       setSoStockItems(pick.items);
@@ -874,6 +888,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   // Handler: Save Process Decision (Stok vs PR vs Batal)
   const handleSaveProcessDecision = async () => {
     if (!selectedRoForProcess) return;
+    const targetRegion = soStockRegion;
     try {
       setIsSubmitting(true);
       // Item groups based on user decision:
@@ -1008,6 +1023,61 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
         window.dispatchEvent(new Event('ca_ro_updated'));
       } catch {}
 
+      // Catat item non-cancel yang belum ada di master katalog/master stok SO.
+      // Kegagalan di sini tidak boleh membatalkan penyimpanan RO.
+      let masterFeedback = '';
+      try {
+        const candidates = selectedRoForProcess.items
+          .filter(
+            (it) =>
+              String(it.stock_source || '').trim().toUpperCase() !== 'CANCELLED'
+          )
+          .filter((it) => String(it.item_name || '').trim())
+          .map((it) => ({
+            item_name: it.item_name,
+            sku: it.sku || '',
+            unit: it.unit || '',
+            item_type: it.item_type || '',
+            classification: it.item_type || '',
+            stock_source: it.stock_source || '',
+          }));
+
+        if (candidates.length > 0) {
+          const addRes = await fetch('/api/master/additions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              region: targetRegion,
+              ro_number: targetRoNo,
+              items: candidates,
+            }),
+          });
+          const addJson = await addRes.json().catch(() => null);
+
+          if (addJson?.migrationRequired) {
+            masterFeedback =
+              ' Master tambahan belum aktif; jalankan supabase/master-asset-additions.sql.';
+          } else if (
+            addJson?.success &&
+            (Number(addJson.addedToMaster) > 0 ||
+              Number(addJson.addedToSession) > 0)
+          ) {
+            masterFeedback = ` ${Number(addJson.addedToMaster) || 0} item baru masuk master, ${
+              Number(addJson.addedToSession) || 0
+            } masuk sesi SO.`;
+          } else if (!addJson?.success) {
+            masterFeedback = ' Master tambahan gagal disinkronkan.';
+          }
+        }
+      } catch (err) {
+        console.warn('Gagal menyinkronkan master tambahan:', err);
+        masterFeedback = ' Master tambahan gagal disinkronkan.';
+      }
+
+      try {
+        await fetchSoStock(targetRegion);
+      } catch {}
+
       if (allDone) {
         if (prItems.length === 0 && readyItems.length > 0) {
           setToast({
@@ -1030,6 +1100,14 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
           type: 'success',
           message: `Alokasi item berhasil disimpan! Dokumen tetap ada di Kelola RO; ${readyItems.length + prItems.length} item sudah dialokasikan, tersisa ${pendingItems.length} item On Proses.`,
         });
+      }
+
+      if (masterFeedback) {
+        setToast((prev) =>
+          prev
+            ? { ...prev, message: `${prev.message}${masterFeedback}` }
+            : prev
+        );
       }
 
       setSelectedRoForProcess(null);
