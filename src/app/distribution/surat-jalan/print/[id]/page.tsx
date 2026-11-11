@@ -4,6 +4,13 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { SuratJalan, SJItem } from '@/lib/supabase/types';
 import { parsePrintIds, selectPrintDocuments } from '@/lib/distribution/surat-jalan-print';
+import {
+  buildRoRequestDateIndex,
+  collectRoReferences,
+  resolveItemRequestDate,
+  type RoRequestDateIndex,
+} from '@/lib/distribution/surat-jalan-request-date';
+import { formatDateSlash } from '@/lib/utils/date-formatter';
 import { Printer, ArrowLeft, Building2, Truck, ShieldCheck, CheckCircle, Layers, FileText, Download, ImageDown } from 'lucide-react';
 
 interface MergedSJItem extends SJItem {
@@ -26,6 +33,7 @@ export default function PrintSuratJalanPage() {
   const [isSavingPdf, setIsSavingPdf] = useState(false);
   const [isSavingJpg, setIsSavingJpg] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [roDateIndex, setRoDateIndex] = useState<RoRequestDateIndex | null>(null);
 
   useEffect(() => {
     async function loadSJ() {
@@ -139,6 +147,52 @@ export default function PrintSuratJalanPage() {
     if (id || outletParam) loadSJ();
   }, [id, outletParam, idsParam]);
 
+  // Ambil tanggal permintaan hanya untuk RO yang direferensikan item yang
+  // akan dicetak. Endpoint terarah ini menghindari mengunduh seluruh daftar RO.
+  useEffect(() => {
+    const docsToResolve =
+      isConsolidated && printDocs.length > 0 ? printDocs : sj ? [sj] : [];
+    const refs = collectRoReferences(docsToResolve);
+
+    if (refs.ids.length === 0 && refs.numbers.length === 0) {
+      setRoDateIndex(buildRoRequestDateIndex([]));
+      return;
+    }
+
+    let cancelled = false;
+    setRoDateIndex(null);
+
+    const params = new URLSearchParams();
+    if (refs.ids.length > 0) params.set('ids', refs.ids.join(','));
+    if (refs.numbers.length > 0) params.set('numbers', refs.numbers.join(','));
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    fetch(`/api/distribution/ro/dates?${params.toString()}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        setRoDateIndex(
+          buildRoRequestDateIndex(Array.isArray(json?.data) ? json.data : [])
+        );
+      })
+      .catch((err) => {
+        console.error('Gagal memuat tanggal permintaan RO:', err);
+        if (!cancelled) setRoDateIndex(buildRoRequestDateIndex([]));
+      })
+      .finally(() => clearTimeout(timeout));
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [sj, printDocs, isConsolidated]);
+
   // Tandai body agar aturan @media print global (yang menyembunyikan <main>
   // untuk dokumen BAST) tidak ikut menyembunyikan halaman Surat Jalan ini.
   useEffect(() => {
@@ -190,7 +244,15 @@ export default function PrintSuratJalanPage() {
     };
   }, [sj, printDocs, isConsolidated]);
 
-  if (loading) {
+  // Tahan render dokumen sampai tanggal permintaan selesai dimuat, supaya
+  // hasil Cetak/PDF/JPG tidak pernah menampilkan "-" karena balapan fetch.
+  const dateDocs =
+    isConsolidated && printDocs.length > 0 ? printDocs : sj ? [sj] : [];
+  const dateRefs = collectRoReferences(dateDocs);
+  const isResolvingRequestDates =
+    roDateIndex === null && (dateRefs.ids.length > 0 || dateRefs.numbers.length > 0);
+
+  if (loading || isResolvingRequestDates) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-slate-500 font-medium animate-pulse flex items-center gap-2">
@@ -246,11 +308,13 @@ export default function PrintSuratJalanPage() {
     const spesifikasi = item.specification || item.classification || '';
     const sourceRo = item.source_ro ? `[Ref: ${item.source_ro}] ` : '';
     const catatan = item.catatan || item.notes || (spesifikasi ? spesifikasi : 'Kondisi Baik & Tersegel');
+    const tglPermintaan = resolveItemRequestDate(item, roDateIndex);
 
     return {
       key: item.id || `item-${index}`,
       no: index + 1,
       namaBarang,
+      tglPermintaan: tglPermintaan ? formatDateSlash(tglPermintaan) : '-',
       jumlah,
       satuan,
       spesifikasi,
@@ -296,6 +360,7 @@ export default function PrintSuratJalanPage() {
     docsCount: consolidatedData.docsCount,
     items: itemRows.map((row) => ({
       nama: row.namaBarang,
+      tglPermintaan: row.tglPermintaan,
       ref: row.ref,
       qty: row.jumlah,
       satuan: row.satuan,
@@ -415,7 +480,10 @@ export default function PrintSuratJalanPage() {
               <input
                 type="checkbox"
                 checked={isConsolidated}
-                onChange={(e) => setIsConsolidated(e.target.checked)}
+                onChange={(e) => {
+                  setRoDateIndex(null);
+                  setIsConsolidated(e.target.checked);
+                }}
                 className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
               <span>Gabung Item Dokumen Terpilih</span>
@@ -528,6 +596,7 @@ export default function PrintSuratJalanPage() {
                 <tr className="bg-slate-800 text-white font-semibold">
                   <th className="py-2.5 px-3 w-12 text-center">No</th>
                   <th className="py-2.5 px-3">Nama Barang / Deskripsi Aset</th>
+                  <th className="py-2.5 px-3 text-center w-28">Tgl Permintaan</th>
                   <th className="py-2.5 px-3 text-center w-24">Jumlah</th>
                   <th className="py-2.5 px-3 text-center w-24">Satuan</th>
                   <th className="py-2.5 px-3">Kondisi / Catatan</th>
@@ -546,6 +615,7 @@ export default function PrintSuratJalanPage() {
                           </div>
                         )}
                       </td>
+                      <td className="py-3 px-3 text-center font-mono text-slate-700">{row.tglPermintaan}</td>
                       <td className="py-3 px-3 text-center font-bold text-slate-900">{row.jumlah}</td>
                       <td className="py-3 px-3 text-center text-slate-600">{row.satuan}</td>
                       <td className="py-3 px-3 text-slate-500 italic">{row.catatan}</td>
@@ -553,7 +623,7 @@ export default function PrintSuratJalanPage() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={5} className="py-6 text-center text-slate-400">
+                    <td colSpan={6} className="py-6 text-center text-slate-400">
                       Tidak ada rincian item dalam Surat Jalan ini
                     </td>
                   </tr>
@@ -562,7 +632,7 @@ export default function PrintSuratJalanPage() {
               {itemRows.length > 0 && (
                 <tfoot>
                   <tr className="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-300">
-                    <td colSpan={2} className="py-2.5 px-3 text-right uppercase tracking-wider text-[11px]">
+                    <td colSpan={3} className="py-2.5 px-3 text-right uppercase tracking-wider text-[11px]">
                       Total Keseluruhan Barang ({itemRows.length} Baris):
                     </td>
                     <td className="py-2.5 px-3 text-center font-mono text-sm text-indigo-700">
@@ -601,6 +671,10 @@ export default function PrintSuratJalanPage() {
                   <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-7 text-[10px]">
                     <span className="rounded-md bg-indigo-50 px-2 py-0.5 font-bold text-indigo-700 border border-indigo-100">
                       {row.jumlah} {row.satuan}
+                    </span>
+                    <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600">
+                      Tgl Permintaan:{' '}
+                      <strong className="font-semibold text-slate-800">{row.tglPermintaan}</strong>
                     </span>
                     <span className="text-slate-500 italic break-words">{row.catatan}</span>
                   </div>

@@ -368,8 +368,11 @@ export type SJStatus = 'SHIPPED' | 'DELIVERED' | 'Diproses' | 'Dalam Pengiriman'
 
 export interface SJItem {
   id?: string;
+  asset_id?: string;
   item_name?: string;
   nama_barang?: string;
+  /** Tanggal permintaan efektif dari RO terkait (YYYY-MM-DD). */
+  tgl_permintaan?: string | null;
   specification?: string;
   quantity?: number;
   qty?: number;

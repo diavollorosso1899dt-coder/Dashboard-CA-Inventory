@@ -196,6 +196,7 @@ function drawPageFooter(ctx: CanvasRenderingContext2D, page: number, total: numb
 interface ItemRow {
   no: number;
   nama: string;
+  tglPermintaan: string;
   ref?: string;
   qty: string;
   satuan: string;
@@ -204,11 +205,19 @@ interface ItemRow {
 
 function buildItemRows(data: SuratJalanPdfData): ItemRow[] {
   if (data.items.length === 0) {
-    return [{ no: 1, nama: 'Tidak ada rincian item dalam Surat Jalan ini', qty: '-', satuan: '-', catatan: '-' }];
+    return [{
+      no: 1,
+      nama: 'Tidak ada rincian item dalam Surat Jalan ini',
+      tglPermintaan: '-',
+      qty: '-',
+      satuan: '-',
+      catatan: '-',
+    }];
   }
   return data.items.map((item, index) => ({
     no: index + 1,
     nama: safeText(item.nama, 'Barang Aset'),
+    tglPermintaan: safeText(item.tglPermintaan, '-'),
     ref: item.ref ? safeText(item.ref) : undefined,
     qty: String(item.qty ?? '-'),
     satuan: safeText(item.satuan, 'Unit'),
@@ -216,14 +225,14 @@ function buildItemRows(data: SuratJalanPdfData): ItemRow[] {
   }));
 }
 
-const COLUMN_WIDTHS_MM = [10, 90, 17, 17, 52];
+const COLUMN_WIDTHS_MM = [10, 70, 26, 17, 17, 46];
 const CELL_PAD_X = 2;
 const CELL_PAD_Y = 1.9;
 
 function rowHeight(ctx: CanvasRenderingContext2D, row: ItemRow): number {
   const nameLines = wrapLines(ctx, row.nama, COLUMN_WIDTHS_MM[1] - CELL_PAD_X * 2).length;
   const refLines = row.ref ? 1 : 0;
-  const catatanLines = wrapLines(ctx, row.catatan, COLUMN_WIDTHS_MM[4] - CELL_PAD_X * 2).length;
+  const catatanLines = wrapLines(ctx, row.catatan, COLUMN_WIDTHS_MM[5] - CELL_PAD_X * 2).length;
   const nameHeight = nameLines * 3.4 + refLines * 3.1;
   const catatanHeight = catatanLines * 3.2;
   return Math.max(nameHeight, catatanHeight, 4) + CELL_PAD_Y * 2;
@@ -262,11 +271,11 @@ export function buildSuratJalanJpgPages(data: SuratJalanPdfData): HTMLCanvasElem
     ctx.font = fontCss(7.8, '700');
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-    const labels = ['No', 'Nama Barang / Deskripsi Aset', 'Jumlah', 'Satuan', 'Kondisi / Catatan'];
+    const labels = ['No', 'Nama Barang / Deskripsi Aset', 'Tgl Permintaan', 'Jumlah', 'Satuan', 'Kondisi / Catatan'];
     let x = MARGIN_MM;
     labels.forEach((label, index) => {
       const width = COLUMN_WIDTHS_MM[index];
-      if (index === 0 || index === 2 || index === 3) {
+      if (index === 0 || index === 2 || index === 3 || index === 4) {
         ctx.textAlign = 'center';
         ctx.fillText(label, mm(x + width / 2), mm(y + height / 2));
       } else {
@@ -483,26 +492,33 @@ export function buildSuratJalanJpgPages(data: SuratJalanPdfData): HTMLCanvasElem
     }
 
     x += COLUMN_WIDTHS_MM[1];
-    drawText(ctx, row.qty, x + COLUMN_WIDTHS_MM[2] / 2, textY, {
+    drawText(ctx, row.tglPermintaan, x + COLUMN_WIDTHS_MM[2] / 2, textY, {
+      sizePt: 7.4,
+      color: COLORS.slate700,
+      align: 'center',
+    });
+
+    x += COLUMN_WIDTHS_MM[2];
+    drawText(ctx, row.qty, x + COLUMN_WIDTHS_MM[3] / 2, textY, {
       sizePt: 7.8,
       weight: '700',
       color: COLORS.slate900,
       align: 'center',
     });
 
-    x += COLUMN_WIDTHS_MM[2];
-    drawText(ctx, row.satuan, x + COLUMN_WIDTHS_MM[3] / 2, textY, {
+    x += COLUMN_WIDTHS_MM[3];
+    drawText(ctx, row.satuan, x + COLUMN_WIDTHS_MM[4] / 2, textY, {
       sizePt: 7.8,
       color: COLORS.slate600,
       align: 'center',
     });
 
-    x += COLUMN_WIDTHS_MM[3];
+    x += COLUMN_WIDTHS_MM[4];
     drawText(ctx, row.catatan, x + CELL_PAD_X, textY, {
       sizePt: 7.3,
       italic: true,
       color: COLORS.slate500,
-      maxWidthMm: COLUMN_WIDTHS_MM[4] - CELL_PAD_X * 2,
+      maxWidthMm: COLUMN_WIDTHS_MM[5] - CELL_PAD_X * 2,
       lineHeightMm: 3.2,
     });
 
@@ -543,21 +559,21 @@ export function buildSuratJalanJpgPages(data: SuratJalanPdfData): HTMLCanvasElem
     color: COLORS.slate900,
     align: 'right',
   });
-  totalX += COLUMN_WIDTHS_MM[1];
-  drawText(ctx, String(data.totalQty), totalX + COLUMN_WIDTHS_MM[2] / 2, totalTextY, {
+  totalX += COLUMN_WIDTHS_MM[1] + COLUMN_WIDTHS_MM[2];
+  drawText(ctx, String(data.totalQty), totalX + COLUMN_WIDTHS_MM[3] / 2, totalTextY, {
     sizePt: 9.5,
     weight: '700',
     color: COLORS.indigo700,
     align: 'center',
   });
-  totalX += COLUMN_WIDTHS_MM[2];
-  drawText(ctx, 'UNIT', totalX + COLUMN_WIDTHS_MM[3] / 2, totalTextY, {
+  totalX += COLUMN_WIDTHS_MM[3];
+  drawText(ctx, 'UNIT', totalX + COLUMN_WIDTHS_MM[4] / 2, totalTextY, {
     sizePt: 7.6,
     weight: '700',
     color: COLORS.slate700,
     align: 'center',
   });
-  totalX += COLUMN_WIDTHS_MM[3];
+  totalX += COLUMN_WIDTHS_MM[4];
   drawText(ctx, 'Lengkap & Siap Kirim', totalX + CELL_PAD_X, totalTextY, {
     sizePt: 7.3,
     italic: true,

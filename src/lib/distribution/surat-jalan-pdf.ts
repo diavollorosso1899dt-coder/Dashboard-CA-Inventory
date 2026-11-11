@@ -2,6 +2,8 @@ import type { jsPDF } from 'jspdf';
 
 export interface SuratJalanPdfItem {
   nama: string;
+  /** Tanggal permintaan RO dalam format tampilan, mis. `10/11/2026`. */
+  tglPermintaan?: string;
   ref?: string;
   qty: number | string;
   satuan: string;
@@ -232,13 +234,14 @@ export async function buildSuratJalanPdf(data: SuratJalanPdfData): Promise<jsPDF
   const body = data.items.map((item, index) => [
     String(index + 1),
     item.ref ? `${safeText(item.nama, 'Barang Aset')}\n[Ref: ${item.ref}]` : safeText(item.nama, 'Barang Aset'),
+    safeText(item.tglPermintaan, '-'),
     String(item.qty ?? '-'),
     safeText(item.satuan, 'Unit'),
     safeText(item.catatan, '-'),
   ]);
 
   if (body.length === 0) {
-    body.push(['-', 'Tidak ada rincian item dalam Surat Jalan ini', '-', '-', '-']);
+    body.push(['-', 'Tidak ada rincian item dalam Surat Jalan ini', '-', '-', '-', '-']);
   }
 
   autoTable(doc, {
@@ -246,10 +249,10 @@ export async function buildSuratJalanPdf(data: SuratJalanPdfData): Promise<jsPDF
     margin: { left: MARGIN, right: MARGIN, top: 14, bottom: 20 },
     theme: 'grid',
     rowPageBreak: 'avoid',
-    head: [['No', 'Nama Barang / Deskripsi Aset', 'Jumlah', 'Satuan', 'Kondisi / Catatan']],
+    head: [['No', 'Nama Barang / Deskripsi Aset', 'Tgl Permintaan', 'Jumlah', 'Satuan', 'Kondisi / Catatan']],
     body,
     foot: itemCount > 0
-      ? [['', `TOTAL KESELURUHAN BARANG (${itemCount} BARIS):`, String(data.totalQty), 'UNIT', 'Lengkap & Siap Kirim']]
+      ? [['', `TOTAL KESELURUHAN BARANG (${itemCount} BARIS):`, '', String(data.totalQty), 'UNIT', 'Lengkap & Siap Kirim']]
       : [],
     styles: {
       font: 'helvetica',
@@ -279,9 +282,10 @@ export async function buildSuratJalanPdf(data: SuratJalanPdfData): Promise<jsPDF
     columnStyles: {
       0: { cellWidth: 10, halign: 'center' },
       1: { cellWidth: 'auto' },
-      2: { cellWidth: 17, halign: 'center', fontStyle: 'bold', textColor: SLATE_900 },
-      3: { cellWidth: 17, halign: 'center', textColor: SLATE_600 },
-      4: { cellWidth: 52, textColor: SLATE_500, fontStyle: 'italic', fontSize: 7.3 },
+      2: { cellWidth: 26, halign: 'center', textColor: SLATE_700, fontSize: 7.4 },
+      3: { cellWidth: 17, halign: 'center', fontStyle: 'bold', textColor: SLATE_900 },
+      4: { cellWidth: 17, halign: 'center', textColor: SLATE_600 },
+      5: { cellWidth: 46, textColor: SLATE_500, fontStyle: 'italic', fontSize: 7.3 },
     },
     didParseCell: (hook) => {
       if (hook.section === 'body' && hook.column.index === 1) {
@@ -291,11 +295,11 @@ export async function buildSuratJalanPdf(data: SuratJalanPdfData): Promise<jsPDF
       if (hook.section === 'foot') {
         if (hook.column.index === 0) hook.cell.styles.textColor = [255, 255, 255];
         if (hook.column.index === 1) hook.cell.styles.halign = 'right';
-        if (hook.column.index === 2) {
+        if (hook.column.index === 3) {
           hook.cell.styles.fontSize = 9.5;
           hook.cell.styles.textColor = INDIGO_700;
         }
-        if (hook.column.index === 4) hook.cell.styles.fontStyle = 'italic';
+        if (hook.column.index === 5) hook.cell.styles.fontStyle = 'italic';
       }
     },
   });
