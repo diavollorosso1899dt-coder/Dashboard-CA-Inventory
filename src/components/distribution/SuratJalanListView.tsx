@@ -47,6 +47,8 @@ import {
   normalizeConfirmedSjItems,
 } from '@/lib/distribution/confirm-surat-jalan';
 import { resolveTransferRegion } from '@/lib/distribution/transfer-sj-sync';
+import { normalizeSjStatus } from '@/lib/distribution/sj-status';
+import { buildPrintUrl } from '@/lib/distribution/surat-jalan-print';
 
 interface SuratJalanListViewProps {
   isHistoryOnly?: boolean;
@@ -61,14 +63,6 @@ const SJ_COLUMNS: ColumnItem[] = [
   { id: 'status', label: 'Status', defaultVisible: true },
   { id: 'actions', label: 'Aksi', defaultVisible: true, alwaysVisible: true },
 ];
-
-export function normalizeSjStatus(status?: string): 'PROCESSED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' {
-  const s = (status || '').toUpperCase().trim();
-  if (s === 'SELESAI' || s === 'DELIVERED' || s === 'DITERIMA DI OUTLET') return 'DELIVERED';
-  if (s === 'DALAM PENGIRIMAN' || s === 'SHIPPED' || s === 'IN_TRANSIT') return 'SHIPPED';
-  if (s === 'DIBATALKAN' || s === 'CANCELLED') return 'CANCELLED';
-  return 'PROCESSED';
-}
 
 export interface GroupedSuratJalanRow {
   key: string;
@@ -100,6 +94,9 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [groupByOutlet, setGroupByOutlet] = useState<boolean>(true);
+  // Gabungkan per outlet hanya untuk dokumen aktif. Riwayat/Semua ditampilkan
+  // per dokumen agar dokumen yang sudah diterima tidak tercetak ulang.
+  const shouldGroupByOutlet = groupByOutlet && statusFilter === 'ACTIVE' && !isHistoryMode;
   const [detailModalGroup, setDetailModalGroup] = useState<GroupedSuratJalanRow | null>(null);
   const [deliveryProofTargetGroup, setDeliveryProofTargetGroup] = useState<GroupedSuratJalanRow | SuratJalan | null>(null);
   const [trackingModalSj, setTrackingModalSj] = useState<SuratJalan | null>(null);
@@ -597,8 +594,9 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
   };
 
   // 2. KELOMPOKKAN JIKA ADA NAMA OUTLET YANG SAMA DALAM 1 DAFTAR CETAK
+  // Pengelompokan hanya aktif untuk dokumen aktif; riwayat/semua tetap per dokumen.
   const groupedList = useMemo<GroupedSuratJalanRow[]>(() => {
-    if (!groupByOutlet) {
+    if (!shouldGroupByOutlet) {
       return filteredList.map((sj) => {
         const outName = sj.tujuan_outlet_nama || sj.branch_name || 'Outlet Cabang';
         const units = (sj.items || []).reduce(
@@ -652,7 +650,10 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
     });
 
     return Array.from(map.values());
-  }, [filteredList, groupByOutlet]);
+  }, [filteredList, shouldGroupByOutlet]);
+
+  const buildGroupPrintUrl = (group: GroupedSuratJalanRow) =>
+    buildPrintUrl(group.primarySj.id, group.outletName, group.docs || [group.primarySj]);
 
   const customSortFns = useMemo(
     () => ({
@@ -897,19 +898,21 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
 
         {/* View Mode & Grouping Toggles */}
         <div className="flex items-center gap-2 self-end md:self-auto flex-wrap">
-          {/* Tombol Pengelompokan Outlet */}
-          <button
-            onClick={() => setGroupByOutlet(!groupByOutlet)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border ${
-              groupByOutlet
-                ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700 shadow-2xs'
-                : 'bg-white dark:bg-[#1e1f20] text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700'
-            }`}
-            title="Kumpulkan dan gabungkan seluruh dokumen pengiriman dengan nama outlet yang sama"
-          >
-            <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-            <span>Gabung per Outlet ({groupedList.length})</span>
-          </button>
+          {/* Tombol Pengelompokan Outlet — hanya untuk dokumen aktif */}
+          {statusFilter === 'ACTIVE' && !isHistoryMode && (
+            <button
+              onClick={() => setGroupByOutlet(!groupByOutlet)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+                groupByOutlet
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700 shadow-2xs'
+                  : 'bg-white dark:bg-[#1e1f20] text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700'
+              }`}
+              title="Kumpulkan dan gabungkan seluruh dokumen pengiriman aktif dengan nama outlet yang sama"
+            >
+              <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              <span>Gabung per Outlet ({groupedList.length})</span>
+            </button>
+          )}
 
           {/* View Mode Toggle: Tabel (Utama) vs Kartu */}
           <div className="flex items-center gap-0.5 bg-[#f0f4f9] dark:bg-[#1e1f20] p-1 rounded-full border border-[#e0e2ec] dark:border-[#444746]">
@@ -948,7 +951,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
           <div className="p-3 px-4 border-b border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#1e1f20] flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-bold text-[#444746] dark:text-[#c4c7c5]">
-                Daftar Dokumen Distribusi {statusFilter === 'ACTIVE' ? 'Aktif' : statusFilter === 'DELIVERED' ? 'Diterima di Outlet (SLA)' : ''} ({groupedList.length} Outlet{groupByOutlet ? ', Tergabung' : ''})
+                Daftar Dokumen Distribusi {statusFilter === 'ACTIVE' ? 'Aktif' : statusFilter === 'DELIVERED' ? 'Diterima di Outlet (SLA)' : ''} ({groupedList.length} {shouldGroupByOutlet ? 'Outlet' : 'Dokumen'}{shouldGroupByOutlet ? ', Tergabung' : ''})
               </span>
               {statusFilter === 'ACTIVE' && (
                 <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800">
@@ -1171,7 +1174,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                     const isReceived = norm === 'DELIVERED';
                     const driver = group.primarySj.driver_nama || group.primarySj.driver_name || group.primarySj.expedition || 'Armada Internal SCGA';
                     const plate = group.primarySj.kendaraan_plat || group.primarySj.vehicle_number;
-                    const printUrl = `/distribution/surat-jalan/print/${encodeURIComponent(group.primarySj.id)}?outlet=${encodeURIComponent(group.outletName)}`;
+                    const printUrl = buildGroupPrintUrl(group);
 
                     return isHistoryMode ? (
                       <tr key={group.key} className="hover:bg-[#f8fafd] dark:hover:bg-[#282a2c]/60 transition-colors">
@@ -1522,7 +1525,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                               <Link
                                 href={printUrl}
                                 className="p-1.5 rounded-full border border-[#e0e2ec] dark:border-[#444746] hover:bg-[#e0e2ec] dark:hover:bg-[#333537] text-[#444746] dark:text-[#c4c7c5] transition-colors cursor-pointer"
-                                title="Cetak Surat Jalan Terpadu Outlet Ini"
+                                title={group.docs.length > 1 ? 'Cetak Surat Jalan Terpadu Outlet Ini' : 'Cetak Surat Jalan'}
                               >
                                 <Printer className="h-3.5 w-3.5" />
                               </Link>
@@ -1575,7 +1578,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
               const sjNo = group.sjNumbers.join(' / ');
               const norm = normalizeSjStatus(group.primarySj.status);
               const isInTransit = norm === 'SHIPPED' || norm === 'PROCESSED';
-              const printUrl = `/distribution/surat-jalan/print/${encodeURIComponent(group.primarySj.id)}?outlet=${encodeURIComponent(group.outletName)}`;
+              const printUrl = buildGroupPrintUrl(group);
 
               return (
                 <div
@@ -1987,7 +1990,7 @@ export default function SuratJalanListView({ isHistoryOnly = false }: SuratJalan
                   Tutup
                 </button>
                 <Link
-                  href={`/distribution/surat-jalan/print/${encodeURIComponent(detailModalGroup.primarySj.id)}?outlet=${encodeURIComponent(detailModalGroup.outletName)}`}
+                  href={buildGroupPrintUrl(detailModalGroup)}
                   className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />

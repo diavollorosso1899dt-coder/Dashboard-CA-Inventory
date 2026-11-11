@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { SuratJalan, SJItem } from '@/lib/supabase/types';
+import { parsePrintIds, selectPrintDocuments } from '@/lib/distribution/surat-jalan-print';
 import { Printer, ArrowLeft, Building2, Truck, ShieldCheck, CheckCircle, Layers, FileText, Download, ImageDown } from 'lucide-react';
 
 interface MergedSJItem extends SJItem {
@@ -16,10 +17,11 @@ export default function PrintSuratJalanPage() {
   const router = useRouter();
   const id = params?.id as string;
   const outletParam = searchParams ? searchParams.get('outlet') : null;
+  const idsParam = searchParams ? searchParams.getAll('ids').join(',') : '';
 
   const [sj, setSj] = useState<SuratJalan | null>(null);
-  const [siblingDocs, setSiblingDocs] = useState<SuratJalan[]>([]);
-  const [isConsolidated, setIsConsolidated] = useState<boolean>(true);
+  const [printDocs, setPrintDocs] = useState<SuratJalan[]>([]);
+  const [isConsolidated, setIsConsolidated] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
   const [isSavingPdf, setIsSavingPdf] = useState(false);
   const [isSavingJpg, setIsSavingJpg] = useState(false);
@@ -88,6 +90,7 @@ export default function PrintSuratJalanPage() {
 
         // Tentukan nama outlet target (dari found atau parameter URL)
         const targetOutlet = outletParam || (found?.tujuan_outlet_nama || found?.branch_name);
+        const explicitPrintIds = parsePrintIds(idsParam);
 
         if (targetOutlet && allDocs.length > 0) {
           const cleanTarget = targetOutlet.toLowerCase().trim();
@@ -96,12 +99,34 @@ export default function PrintSuratJalanPage() {
             return docOutlet === cleanTarget;
           });
 
-          setSiblingDocs(siblings);
-          if (!found && siblings.length > 0) {
-            found = siblings[0];
+          if (!found) {
+            found = explicitPrintIds.length > 0
+              ? siblings.find((doc) => explicitPrintIds.includes(doc.id)) || null
+              : siblings[0] || null;
+          }
+
+          if (found) {
+            const selected = selectPrintDocuments({
+              primary: found,
+              siblings,
+              explicitIds: explicitPrintIds,
+            });
+            setPrintDocs(selected);
+            setIsConsolidated(selected.length > 1);
+          } else {
+            setPrintDocs([]);
+            setIsConsolidated(false);
           }
         } else if (found) {
-          setSiblingDocs([found]);
+          const selected = selectPrintDocuments({
+            primary: found,
+            explicitIds: explicitPrintIds,
+          });
+          setPrintDocs(selected);
+          setIsConsolidated(selected.length > 1);
+        } else {
+          setPrintDocs([]);
+          setIsConsolidated(false);
         }
 
         setSj(found || null);
@@ -112,7 +137,7 @@ export default function PrintSuratJalanPage() {
       }
     }
     if (id || outletParam) loadSJ();
-  }, [id, outletParam]);
+  }, [id, outletParam, idsParam]);
 
   // Tandai body agar aturan @media print global (yang menyembunyikan <main>
   // untuk dokumen BAST) tidak ikut menyembunyikan halaman Surat Jalan ini.
@@ -121,12 +146,14 @@ export default function PrintSuratJalanPage() {
     return () => document.body.classList.remove('print-sj');
   }, []);
 
-  // Kumpulkan & gabungkan semua item jika ada nama outlet yang sama
+  // Kumpulkan item dari dokumen yang dipilih untuk dicetak bersama.
   const consolidatedData = useMemo(() => {
     if (!sj) return null;
 
-    // Jika konsolidasi aktif dan ada dokumen dengan outlet sama lebih dari 1
-    const docsToMerge = isConsolidated && siblingDocs.length > 0 ? siblingDocs : [sj];
+    // Hanya gabungkan dokumen yang dipilih eksplisit lewat parameter `ids`.
+    // Tanpa `ids`, cetak dokumen utama saja agar aset yang sudah pernah
+    // didistribusikan tidak tercetak ulang.
+    const docsToMerge = isConsolidated && printDocs.length > 0 ? printDocs : [sj];
 
     // Gabungkan seluruh item
     const mergedItems: MergedSJItem[] = [];
@@ -161,7 +188,7 @@ export default function PrintSuratJalanPage() {
       items: mergedItems,
       totalQty,
     };
-  }, [sj, siblingDocs, isConsolidated]);
+  }, [sj, printDocs, isConsolidated]);
 
   if (loading) {
     return (
@@ -367,8 +394,8 @@ export default function PrintSuratJalanPage() {
           </p>
         )}
 
-        {/* Notifikasi Penggabungan Dokumen Outlet yang Sama */}
-        {siblingDocs.length > 1 && (
+        {/* Notifikasi Dokumen yang Dipilih untuk Cetak Bersama */}
+        {printDocs.length > 1 && (
           <div className="p-3.5 px-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2.5 text-blue-900 dark:text-blue-200">
               <div className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">
@@ -376,10 +403,10 @@ export default function PrintSuratJalanPage() {
               </div>
               <div>
                 <span className="font-bold">
-                  {siblingDocs.length} Dokumen Pengiriman Terkumpul untuk Outlet {tujuanOutlet}
+                  {printDocs.length} Dokumen Pengiriman Dipilih untuk Outlet {tujuanOutlet}
                 </span>
                 <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-0.5">
-                  Seluruh aset dengan nama outlet yang sama otomatis dirangkum dalam <strong>1 daftar cetak Surat Jalan resmi</strong>.
+                  Hanya dokumen yang dipilih dari daftar yang digabung ke cetak ini. Dokumen yang sudah diterima tidak ikut tercetak ulang.
                 </p>
               </div>
             </div>
@@ -391,7 +418,7 @@ export default function PrintSuratJalanPage() {
                 onChange={(e) => setIsConsolidated(e.target.checked)}
                 className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
-              <span>Gabung Semua Item Outlet Ini</span>
+              <span>Gabung Item Dokumen Terpilih</span>
             </label>
           </div>
         )}

@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { SuratJalan } from '@/lib/supabase/types';
 import { formatDateOnly } from '@/lib/utils/date-formatter';
-import { normalizeSjStatus } from './SuratJalanListView';
+import { normalizeSjStatus } from '@/lib/distribution/sj-status';
 
 interface SuratJalanTrackingModalProps {
   isOpen: boolean;
