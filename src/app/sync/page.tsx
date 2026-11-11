@@ -13,9 +13,25 @@ import {
   Undo2,
 } from 'lucide-react';
 import { SyncSourceCard, type SyncSourceView } from '@/components/sync/SyncSourceCard';
-import { SyncHistoryTable, type SyncRunView } from '@/components/sync/SyncHistoryTable';
+import {
+  SyncHistoryTable,
+  SYNC_HISTORY_COLUMNS,
+  type SyncRunView,
+} from '@/components/sync/SyncHistoryTable';
+import ColumnVisibilityPicker, {
+  type ColumnItem,
+  useColumnVisibility,
+} from '@/components/ui/ColumnVisibilityPicker';
 
 export const dynamic = 'force-dynamic';
+
+const SYNC_TOMBSTONE_COLUMNS: ColumnItem[] = [
+  { id: 'ro_number', label: 'Nomor RO', defaultVisible: true, alwaysVisible: true },
+  { id: 'deleted_by', label: 'Dihapus oleh', defaultVisible: true },
+  { id: 'time', label: 'Waktu', defaultVisible: true },
+  { id: 'reason', label: 'Alasan', defaultVisible: true },
+  { id: 'actions', label: 'Aksi', defaultVisible: true, alwaysVisible: true },
+];
 
 interface TombstoneView {
   id: string;
@@ -41,6 +57,17 @@ export default function SyncPage() {
   const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [tombstones, setTombstones] = useState<TombstoneView[]>([]);
   const [releasingTombstone, setReleasingTombstone] = useState<string | null>(null);
+
+  const {
+    visibleColumns: visibleHistoryColumns,
+    setVisibleColumns: setVisibleHistoryColumns,
+  } = useColumnVisibility('ca_sync_history_columns', SYNC_HISTORY_COLUMNS);
+
+  const {
+    visibleColumns: visibleTombstoneColumns,
+    setVisibleColumns: setVisibleTombstoneColumns,
+    isVisible: isTombstoneColumnVisible,
+  } = useColumnVisibility('ca_sync_tombstone_columns', SYNC_TOMBSTONE_COLUMNS);
 
   const refresh = useCallback(async () => {
     try {
@@ -268,25 +295,43 @@ function syncKeHantaran(e) {
 
       {/* Riwayat */}
       <div>
-        <h2 className="mb-2 text-sm font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
-          Riwayat 20 Run Terakhir
-        </h2>
-        <SyncHistoryTable runs={runs} />
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
+            Riwayat 20 Run Terakhir
+          </h2>
+          <ColumnVisibilityPicker
+            columns={SYNC_HISTORY_COLUMNS}
+            visibleColumns={visibleHistoryColumns}
+            onChange={setVisibleHistoryColumns}
+            storageKey="ca_sync_history_columns"
+          />
+        </div>
+        <SyncHistoryTable runs={runs} visibleColumns={visibleHistoryColumns} />
       </div>
 
       {/* RO yang diblokir */}
       <div className="panel-card p-5 space-y-3">
-        <div className="flex items-start gap-2">
-          <ShieldOff className="h-4 w-4 mt-0.5 text-[#b3261e] dark:text-[#f2b8b5]" />
-          <div>
-            <h2 className="text-sm font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
-              RO yang Diblokir ({tombstones.length})
-            </h2>
-            <p className="text-xs text-[#444746] dark:text-[#c4c7c5] mt-1 max-w-2xl">
-              RO yang Anda hapus manual dicatat di sini dan tidak akan dimasukkan lagi oleh sync,
-              termasuk setelah aplikasi di-deploy ulang. Lepas blokir bila RO tersebut memang masih
-              berlaku.
-            </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-2">
+            <ShieldOff className="h-4 w-4 mt-0.5 text-[#b3261e] dark:text-[#f2b8b5]" />
+            <div>
+              <h2 className="text-sm font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
+                RO yang Diblokir ({tombstones.length})
+              </h2>
+              <p className="text-xs text-[#444746] dark:text-[#c4c7c5] mt-1 max-w-2xl">
+                RO yang Anda hapus manual dicatat di sini dan tidak akan dimasukkan lagi oleh sync,
+                termasuk setelah aplikasi di-deploy ulang. Lepas blokir bila RO tersebut memang masih
+                berlaku.
+              </p>
+            </div>
+          </div>
+          <div className="shrink-0">
+            <ColumnVisibilityPicker
+              columns={SYNC_TOMBSTONE_COLUMNS}
+              visibleColumns={visibleTombstoneColumns}
+              onChange={setVisibleTombstoneColumns}
+              storageKey="ca_sync_tombstone_columns"
+            />
           </div>
         </div>
 
@@ -300,9 +345,15 @@ function syncKeHantaran(e) {
               <thead className="bg-[#f0f4f9] dark:bg-[#282a2c] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] border-b border-[#e0e2ec] dark:border-[#333538]">
                 <tr>
                   <th className="py-2 px-3">Nomor RO</th>
-                  <th className="py-2 px-3">Dihapus oleh</th>
-                  <th className="py-2 px-3">Waktu</th>
-                  <th className="py-2 px-3">Alasan</th>
+                  {isTombstoneColumnVisible('deleted_by') && (
+                    <th className="py-2 px-3">Dihapus oleh</th>
+                  )}
+                  {isTombstoneColumnVisible('time') && (
+                    <th className="py-2 px-3">Waktu</th>
+                  )}
+                  {isTombstoneColumnVisible('reason') && (
+                    <th className="py-2 px-3">Alasan</th>
+                  )}
                   <th className="py-2 px-3 text-right">Aksi</th>
                 </tr>
               </thead>
@@ -315,11 +366,17 @@ function syncKeHantaran(e) {
                     <td className="py-2 px-3 font-semibold">
                       {row.display_key || row.row_key}
                     </td>
-                    <td className="py-2 px-3">{row.created_by || '-'}</td>
-                    <td className="py-2 px-3 whitespace-nowrap">
-                      {row.created_at ? new Date(row.created_at).toLocaleString('id-ID') : '-'}
-                    </td>
-                    <td className="py-2 px-3">{row.reason || '-'}</td>
+                    {isTombstoneColumnVisible('deleted_by') && (
+                      <td className="py-2 px-3">{row.created_by || '-'}</td>
+                    )}
+                    {isTombstoneColumnVisible('time') && (
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        {row.created_at ? new Date(row.created_at).toLocaleString('id-ID') : '-'}
+                      </td>
+                    )}
+                    {isTombstoneColumnVisible('reason') && (
+                      <td className="py-2 px-3">{row.reason || '-'}</td>
+                    )}
                     <td className="py-2 px-3 text-right">
                       <button
                         type="button"

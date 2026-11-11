@@ -23,16 +23,37 @@ import { calculateVariance, SOItem } from '@/lib/so-harian/inventoryEngine';
 import NotesModal from './NotesModal';
 import BarcodeScannerModal from './BarcodeScannerModal';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
+import ColumnVisibilityPicker, {
+  type ColumnItem,
+  useColumnVisibility,
+} from '@/components/ui/ColumnVisibilityPicker';
 
 interface PhysicalCountTableProps {
   items: SOItem[];
   onUpdateItems: React.Dispatch<React.SetStateAction<SOItem[]>> | ((items: SOItem[] | ((prev: SOItem[]) => SOItem[])) => void);
 }
 
+const SO_COLUMNS: ColumnItem[] = [
+  { id: 'no', label: 'No', defaultVisible: true },
+  { id: 'nama', label: 'Nama Item Barang', defaultVisible: true, alwaysVisible: true },
+  { id: 'kode', label: 'Kode / SKU', defaultVisible: true },
+  { id: 'kategori', label: 'Kategori', defaultVisible: true },
+  { id: 'satuan', label: 'Satuan', defaultVisible: true },
+  { id: 'stok_awal', label: 'Stok Awal', defaultVisible: true },
+  { id: 'masuk', label: 'Masuk', defaultVisible: true },
+  { id: 'ro', label: 'RO (Keluar)', defaultVisible: true },
+  { id: 'stok_sistem', label: 'Stok Sistem', defaultVisible: true },
+  { id: 'qty_fisik', label: 'Input Fisik SO', defaultVisible: true, alwaysVisible: true },
+  { id: 'selisih', label: 'Selisih', defaultVisible: true },
+  { id: 'status', label: 'Status', defaultVisible: true },
+  { id: 'catatan', label: 'Catatan', defaultVisible: true },
+];
+
 interface PhysicalCountRowProps {
   item: SOItem;
   globalIdx: number;
   isHighlighted: boolean;
+  visibleColumns: Record<string, boolean>;
   onPhysicalChange: (itemId: string, rawValue: string | number | null | undefined) => void;
   onStep: (itemId: string, delta: number) => void;
   onOpenNote: (item: SOItem) => void;
@@ -47,6 +68,7 @@ const PhysicalCountRow = React.memo(function PhysicalCountRow({
   item,
   globalIdx,
   isHighlighted,
+  visibleColumns,
   onPhysicalChange,
   onStep,
   onOpenNote,
@@ -56,6 +78,7 @@ const PhysicalCountRow = React.memo(function PhysicalCountRow({
     item.qty_fisik !== null && item.qty_fisik !== undefined ? String(item.qty_fisik) : ''
   );
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const show = (columnId: string) => visibleColumns[columnId] !== false;
 
   // Sync external changes (e.g. bulk match, barcode scanner, or reset)
   useEffect(() => {
@@ -101,53 +124,69 @@ const PhysicalCountRow = React.memo(function PhysicalCountRow({
           : 'hover:bg-slate-50/50 dark:hover:bg-slate-700/30'
       }`}
     >
-      <td className="py-2.5 px-3 text-center text-slate-400">{globalIdx}</td>
+      {show('no') && (
+        <td className="py-2.5 px-3 text-center text-slate-400">{globalIdx}</td>
+      )}
       <td className="py-2.5 px-3">
         <div className="font-bold text-slate-900 dark:text-white text-xs">{item.nama_barang}</div>
         {item.lokasi && (
           <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{item.lokasi}</div>
         )}
       </td>
-      <td className="py-2.5 px-2 text-center">
-        <span className="font-mono text-[11px] font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-700/60 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600">
-          {item.kode_barang}
-        </span>
-      </td>
-      <td className="py-2.5 px-3 text-center">
-        <span
-          className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block ${
-            item.kategori === 'Perlengkapan Tetap'
-              ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
-              : 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
-          }`}
-        >
-          {item.kategori || 'Peralatan'}
-        </span>
-      </td>
-      <td className="py-2.5 px-2 text-center text-slate-500 font-mono text-[11px]">{item.satuan}</td>
-      <td className="py-2.5 px-2 text-right font-medium text-slate-500">
-        <div>{item.stok_awal}</div>
-        {item.stok_awal_sumber === 'SO_SEBELUMNYA' ? (
-          <div
-            className="text-[9px] font-bold text-sky-600 dark:text-sky-400"
-            title="Stok awal dari hasil SO hari sebelumnya"
+      {show('kode') && (
+        <td className="py-2.5 px-2 text-center">
+          <span className="font-mono text-[11px] font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-700/60 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600">
+            {item.kode_barang}
+          </span>
+        </td>
+      )}
+      {show('kategori') && (
+        <td className="py-2.5 px-3 text-center">
+          <span
+            className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block ${
+              item.kategori === 'Perlengkapan Tetap'
+                ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
+                : 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+            }`}
           >
-            SO lalu
-          </div>
-        ) : item.stok_awal_sumber === 'MASTER' ? (
-          <div
-            className="text-[9px] text-amber-600 dark:text-amber-400"
-            title="Stok awal dari master spreadsheet"
-          >
-            master
-          </div>
-        ) : null}
-      </td>
-      <td className="py-2.5 px-2 text-right font-medium text-emerald-600">+{item.qty_penerimaan}</td>
-      <td className="py-2.5 px-2 text-right font-medium text-rose-600">-{item.qty_ro}</td>
-      <td className="py-2.5 px-3 text-right bg-slate-100/70 dark:bg-slate-900/40 font-black text-slate-900 dark:text-white">
-        {item.stok_sistem}
-      </td>
+            {item.kategori || 'Peralatan'}
+          </span>
+        </td>
+      )}
+      {show('satuan') && (
+        <td className="py-2.5 px-2 text-center text-slate-500 font-mono text-[11px]">{item.satuan}</td>
+      )}
+      {show('stok_awal') && (
+        <td className="py-2.5 px-2 text-right font-medium text-slate-500">
+          <div>{item.stok_awal}</div>
+          {item.stok_awal_sumber === 'SO_SEBELUMNYA' ? (
+            <div
+              className="text-[9px] font-bold text-sky-600 dark:text-sky-400"
+              title="Stok awal dari hasil SO hari sebelumnya"
+            >
+              SO lalu
+            </div>
+          ) : item.stok_awal_sumber === 'MASTER' ? (
+            <div
+              className="text-[9px] text-amber-600 dark:text-amber-400"
+              title="Stok awal dari master spreadsheet"
+            >
+              master
+            </div>
+          ) : null}
+        </td>
+      )}
+      {show('masuk') && (
+        <td className="py-2.5 px-2 text-right font-medium text-emerald-600">+{item.qty_penerimaan}</td>
+      )}
+      {show('ro') && (
+        <td className="py-2.5 px-2 text-right font-medium text-rose-600">-{item.qty_ro}</td>
+      )}
+      {show('stok_sistem') && (
+        <td className="py-2.5 px-3 text-right bg-slate-100/70 dark:bg-slate-900/40 font-black text-slate-900 dark:text-white">
+          {item.stok_sistem}
+        </td>
+      )}
 
       {/* Input Fisik with +/- buttons */}
       <td className="py-2 px-3 text-center bg-sky-50/40 dark:bg-sky-950/20">
@@ -182,67 +221,73 @@ const PhysicalCountRow = React.memo(function PhysicalCountRow({
       </td>
 
       {/* Selisih */}
-      <td className="py-2.5 px-3 text-center font-black">
-        {item.selisih !== null ? (
-          <span
-            className={
-              item.selisih === 0
-                ? 'text-emerald-600'
-                : item.selisih < 0
-                ? 'text-rose-600'
-                : 'text-amber-600'
-            }
-          >
-            {item.selisih > 0 ? `+${item.selisih}` : item.selisih}
-          </span>
-        ) : (
-          <span className="text-slate-300">-</span>
-        )}
-      </td>
+      {show('selisih') && (
+        <td className="py-2.5 px-3 text-center font-black">
+          {item.selisih !== null ? (
+            <span
+              className={
+                item.selisih === 0
+                  ? 'text-emerald-600'
+                  : item.selisih < 0
+                  ? 'text-rose-600'
+                  : 'text-amber-600'
+              }
+            >
+              {item.selisih > 0 ? `+${item.selisih}` : item.selisih}
+            </span>
+          ) : (
+            <span className="text-slate-300">-</span>
+          )}
+        </td>
+      )}
 
       {/* Status Badge */}
-      <td className="py-2.5 px-3 text-center">
-        {item.status_selisih === 'MATCH' && (
-          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300">
-            <CheckCircle2 className="w-3 h-3" />
-            <span>MATCH</span>
-          </span>
-        )}
-        {item.status_selisih === 'MINUS' && (
-          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300">
-            <MinusCircle className="w-3 h-3" />
-            <span>MINUS</span>
-          </span>
-        )}
-        {item.status_selisih === 'PLUS' && (
-          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
-            <AlertTriangle className="w-3 h-3" />
-            <span>PLUS</span>
-          </span>
-        )}
-        {item.status_selisih === 'UNCHECKED' && (
-          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
-            <HelpCircle className="w-3 h-3" />
-            <span>BELUM</span>
-          </span>
-        )}
-      </td>
+      {show('status') && (
+        <td className="py-2.5 px-3 text-center">
+          {item.status_selisih === 'MATCH' && (
+            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>MATCH</span>
+            </span>
+          )}
+          {item.status_selisih === 'MINUS' && (
+            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300">
+              <MinusCircle className="w-3 h-3" />
+              <span>MINUS</span>
+            </span>
+          )}
+          {item.status_selisih === 'PLUS' && (
+            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
+              <AlertTriangle className="w-3 h-3" />
+              <span>PLUS</span>
+            </span>
+          )}
+          {item.status_selisih === 'UNCHECKED' && (
+            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
+              <HelpCircle className="w-3 h-3" />
+              <span>BELUM</span>
+            </span>
+          )}
+        </td>
+      )}
 
       {/* Catatan */}
-      <td className="py-2.5 px-3 text-center">
-        <button
-          type="button"
-          onClick={() => onOpenNote(item)}
-          className={`p-1.5 rounded-lg border text-[11px] font-semibold flex items-center space-x-1 mx-auto transition-colors ${
-            item.catatan
-              ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300'
-              : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <MessageSquare className="w-3.5 h-3.5" />
-          <span>{item.catatan ? 'Edit' : '+ Ket'}</span>
-        </button>
-      </td>
+      {show('catatan') && (
+        <td className="py-2.5 px-3 text-center">
+          <button
+            type="button"
+            onClick={() => onOpenNote(item)}
+            className={`p-1.5 rounded-lg border text-[11px] font-semibold flex items-center space-x-1 mx-auto transition-colors ${
+              item.catatan
+                ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300'
+                : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>{item.catatan ? 'Edit' : '+ Ket'}</span>
+          </button>
+        </td>
+      )}
     </tr>
   );
 });
@@ -259,6 +304,11 @@ export default function PhysicalCountTable({ items = [], onUpdateItems }: Physic
   // Pagination states for high-performance with thousands of items
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+
+  const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
+    'ca_so_physical_columns',
+    SO_COLUMNS
+  );
 
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
@@ -588,6 +638,12 @@ export default function PhysicalCountTable({ items = [], onUpdateItems }: Physic
 
         {/* Status Filter Chips */}
         <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto">
+          <ColumnVisibilityPicker
+            columns={SO_COLUMNS}
+            visibleColumns={visibleColumns}
+            onChange={setVisibleColumns}
+            storageKey="ca_so_physical_columns"
+          />
           <button
             onClick={() => handleFilterChange('ALL')}
             className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
@@ -646,7 +702,9 @@ export default function PhysicalCountTable({ items = [], onUpdateItems }: Physic
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
               <tr>
-                <th className="py-3 px-3 w-10 text-center">#</th>
+                {isVisible('no') && (
+                  <th className="py-3 px-3 w-10 text-center">#</th>
+                )}
                 <th className="py-3 px-3 min-w-[220px]">
                   <SortableHeader
                     label="Nama Item Barang"
@@ -656,76 +714,90 @@ export default function PhysicalCountTable({ items = [], onUpdateItems }: Physic
                     onSort={handleSoSort}
                   />
                 </th>
-                <th className="py-3 px-2 text-center w-28">
-                  <SortableHeader
-                    label="Kode / SKU"
-                    field="kode_barang"
-                    currentSortField={soSortField}
-                    currentSortDirection={soSortDirection}
-                    onSort={handleSoSort}
-                    align="center"
-                  />
-                </th>
-                <th className="py-3 px-3 text-center">
-                  <SortableHeader
-                    label="Kategori"
-                    field="kategori"
-                    currentSortField={soSortField}
-                    currentSortDirection={soSortDirection}
-                    onSort={handleSoSort}
-                    align="center"
-                  />
-                </th>
-                <th className="py-3 px-2 text-center">
-                  <SortableHeader
-                    label="Sat"
-                    field="satuan"
-                    currentSortField={soSortField}
-                    currentSortDirection={soSortDirection}
-                    onSort={handleSoSort}
-                    align="center"
-                  />
-                </th>
-                <th className="py-3 px-2 text-right">
-                  <SortableHeader
-                    label="Awal"
-                    field="stok_awal"
-                    currentSortField={soSortField}
-                    currentSortDirection={soSortDirection}
-                    onSort={handleSoSort}
-                    align="right"
-                  />
-                </th>
-                <th className="py-3 px-2 text-right text-emerald-600">
-                  <SortableHeader
-                    label="Masuk"
-                    field="total_masuk"
-                    currentSortField={soSortField}
-                    currentSortDirection={soSortDirection}
-                    onSort={handleSoSort}
-                    align="right"
-                  />
-                </th>
-                <th className="py-3 px-2 text-right text-rose-600">
-                  <SortableHeader
-                    label="RO"
-                    field="total_keluar"
-                    currentSortField={soSortField}
-                    currentSortDirection={soSortDirection}
-                    onSort={handleSoSort}
-                    align="right"
-                  />
-                </th>
-                <th className="py-3 px-3 text-right bg-slate-100/70 dark:bg-slate-900/40 font-black">
-                  <SortableHeader
-                    label="Stok Sistem"
-                    field="stok_sistem"
-                    currentSortField={soSortField}
-                    currentSortDirection={soSortDirection}
-                    onSort={handleSoSort}
-                    align="right"
-                  />
-                </th>
+                {isVisible('kode') && (
+                  <th className="py-3 px-2 text-center w-28">
+                    <SortableHeader
+                      label="Kode / SKU"
+                      field="kode_barang"
+                      currentSortField={soSortField}
+                      currentSortDirection={soSortDirection}
+                      onSort={handleSoSort}
+                      align="center"
+                    />
+                  </th>
+                )}
+                {isVisible('kategori') && (
+                  <th className="py-3 px-3 text-center">
+                    <SortableHeader
+                      label="Kategori"
+                      field="kategori"
+                      currentSortField={soSortField}
+                      currentSortDirection={soSortDirection}
+                      onSort={handleSoSort}
+                      align="center"
+                    />
+                  </th>
+                )}
+                {isVisible('satuan') && (
+                  <th className="py-3 px-2 text-center">
+                    <SortableHeader
+                      label="Sat"
+                      field="satuan"
+                      currentSortField={soSortField}
+                      currentSortDirection={soSortDirection}
+                      onSort={handleSoSort}
+                      align="center"
+                    />
+                  </th>
+                )}
+                {isVisible('stok_awal') && (
+                  <th className="py-3 px-2 text-right">
+                    <SortableHeader
+                      label="Awal"
+                      field="stok_awal"
+                      currentSortField={soSortField}
+                      currentSortDirection={soSortDirection}
+                      onSort={handleSoSort}
+                      align="right"
+                    />
+                  </th>
+                )}
+                {isVisible('masuk') && (
+                  <th className="py-3 px-2 text-right text-emerald-600">
+                    <SortableHeader
+                      label="Masuk"
+                      field="total_masuk"
+                      currentSortField={soSortField}
+                      currentSortDirection={soSortDirection}
+                      onSort={handleSoSort}
+                      align="right"
+                    />
+                  </th>
+                )}
+                {isVisible('ro') && (
+                  <th className="py-3 px-2 text-right text-rose-600">
+                    <SortableHeader
+                      label="RO"
+                      field="total_keluar"
+                      currentSortField={soSortField}
+                      currentSortDirection={soSortDirection}
+                      onSort={handleSoSort}
+                      align="right"
+                    />
+                  </th>
+                )}
+                {isVisible('stok_sistem') && (
+                  <th className="py-3 px-3 text-right bg-slate-100/70 dark:bg-slate-900/40 font-black">
+                    <SortableHeader
+                      label="Stok Sistem"
+                      field="stok_sistem"
+                      currentSortField={soSortField}
+                      currentSortDirection={soSortDirection}
+                      onSort={handleSoSort}
+                      align="right"
+                    />
+                  </th>
+                )}
                 <th className="py-3 px-3 text-center bg-sky-50/70 dark:bg-sky-950/30 font-black w-44">
                   <SortableHeader
                     label="Input Fisik SO"
@@ -736,33 +808,42 @@ export default function PhysicalCountTable({ items = [], onUpdateItems }: Physic
                     align="center"
                   />
                 </th>
-                <th className="py-3 px-3 text-center">
-                  <SortableHeader
-                    label="Selisih"
-                    field="selisih"
-                    currentSortField={soSortField}
-                    currentSortDirection={soSortDirection}
-                    onSort={handleSoSort}
-                    align="center"
-                  />
-                </th>
-                <th className="py-3 px-3 text-center">
-                  <SortableHeader
-                    label="Status"
-                    field="status_selisih"
-                    currentSortField={soSortField}
-                    currentSortDirection={soSortDirection}
-                    onSort={handleSoSort}
-                    align="center"
-                  />
-                </th>
-                <th className="py-3 px-3 text-center w-28">Catatan</th>
+                {isVisible('selisih') && (
+                  <th className="py-3 px-3 text-center">
+                    <SortableHeader
+                      label="Selisih"
+                      field="selisih"
+                      currentSortField={soSortField}
+                      currentSortDirection={soSortDirection}
+                      onSort={handleSoSort}
+                      align="center"
+                    />
+                  </th>
+                )}
+                {isVisible('status') && (
+                  <th className="py-3 px-3 text-center">
+                    <SortableHeader
+                      label="Status"
+                      field="status_selisih"
+                      currentSortField={soSortField}
+                      currentSortDirection={soSortDirection}
+                      onSort={handleSoSort}
+                      align="center"
+                    />
+                  </th>
+                )}
+                {isVisible('catatan') && (
+                  <th className="py-3 px-3 text-center w-28">Catatan</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 text-slate-700 dark:text-slate-300">
               {paginatedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="py-12 text-center text-slate-400">
+                  <td
+                    colSpan={SO_COLUMNS.filter((column) => isVisible(column.id)).length}
+                    className="py-12 text-center text-slate-400"
+                  >
                     Tidak ada barang yang cocok dengan kriteria filter.
                   </td>
                 </tr>
@@ -776,6 +857,7 @@ export default function PhysicalCountTable({ items = [], onUpdateItems }: Physic
                       item={item}
                       globalIdx={globalIdx}
                       isHighlighted={isHighlighted}
+                      visibleColumns={visibleColumns}
                       onPhysicalChange={handlePhysicalChange}
                       onStep={handleStep}
                       onOpenNote={setSelectedNoteItem}
