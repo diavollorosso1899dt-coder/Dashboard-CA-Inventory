@@ -11,17 +11,26 @@
 
 ## Pemicu
 
-- Manual: tombol di `/sync` atau "Sync Data" di header.
+- Manual: tombol di `/sync`, "Sync Data" di header, atau "Tarik Spreadsheet RO" di Kelola RO.
+- Otomatis dari UI: Kelola RO memeriksa `/api/sync/status` saat halaman dibuka atau
+  tab kembali fokus. Bila sync RO terakhir sudah lebih dari 60 detik, halaman memanggil
+  `/api/distribution/ro/sync-sheet` sekali. Poll 15 detik hanya membaca Supabase;
+  ini pelengkap, bukan pengganti webhook/cron.
 - Cron: setiap hari 19.00 UTC = 02.00 WIB (hanya berjalan di deployment Vercel).
 - Webhook: `POST /api/sync` dengan header `x-sync-token` dan body
   `{"trigger":"WEBHOOK"}`. Pemicu ini di-debounce sesuai env
   `SYNC_WEBHOOK_DEBOUNCE_MINUTES` (default 5 menit; produksi memakai 1 menit).
 
-Tidak ada sync otomatis di lingkungan lokal (`npm run dev`): penjadwal hanya
-ada di Vercel Cron. Agar baris baru langsung masuk setelah sheet diedit,
-pasang webhook Apps Script (contoh skrip ada di halaman `/sync`), buat trigger
-`On edit`/`On change` untuk fungsi tersebut, dan isi env `SYNC_TOKEN` di server.
-Tanpa `SYNC_TOKEN`, webhook akan ditolak `401`.
+Skrip Google Apps Script di halaman `/sync` menyediakan fungsi `pasangTrigger()`
+yang memasang tiga trigger sekaligus: `On edit`, `On change`, dan timer 5 menit.
+Timer tersebut adalah jaring pengaman bila satu kali edit terlewat atau webhook
+sedang di-debounce. Jalankan `pasangTrigger()` sekali setelah mengisi
+`WEBHOOK_URL` dan `SYNC_TOKEN`.
+
+Tidak ada penjadwal di lingkungan lokal (`npm run dev`): penjadwal hanya ada di
+Vercel Cron atau trigger Apps Script. Agar baris baru langsung masuk setelah sheet
+diedit, pasang webhook Apps Script (contoh skrip ada di halaman `/sync`) dan isi
+env `SYNC_TOKEN` di server. Tanpa `SYNC_TOKEN`, webhook akan ditolak `401`.
 Frekuensi cron dapat dinaikkan di `vercel.json` bila paket Vercel mengizinkan.
 
 ## Tombstone (RO yang dihapus manual)
@@ -49,8 +58,12 @@ Dry-run tidak mengubah tabel bisnis, Storage, cache katalog, atau riwayat run.
 
 - `401` → token/cookie/CRON_SECRET tidak cocok.
 - `409` → masih ada run aktif; tunggu maksimal 15 menit.
+- `200` dengan `skipped: true` dan alasan `debounced` → webhook masuk saat window
+  debounce; timer 5 menit atau edit berikutnya akan menyusul.
 - `PARTIAL` → sebagian sumber gagal; lihat detail di `/sync`.
 - Baris hilang dari sheet → menjadi `is_stale = true`, tidak dihapus.
+- Kelola RO menampilkan "Belum sync" atau jam sync lama → cek `/api/sync/status`;
+  halaman akan mencoba auto-sync saat dibuka/fokus bila sync RO terakhir >60 detik.
 
 ## Hasil verifikasi
 

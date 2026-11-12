@@ -172,26 +172,24 @@ export default function SyncPage() {
     }
   };
 
-  const webhookScriptCode = `// Fungsi ini TIDAK berjalan otomatis dari namanya.
-// Setelah menempel skrip, buat trigger: ikon jam > Add Trigger
-//   Function     : syncKeHantaran
-//   Event source : From spreadsheet
-//   Event type   : On edit (atau On change / On form submit)
-function syncKeHantaran(e) {
-  // Masukkan URL domain dashboard Anda
-  var webhookUrl = "https://your-dashboard-domain.com/api/sync";
+  const webhookScriptCode = `// ==== KONFIGURASI: ISI DUA BARIS INI ====
+// Domain dashboard Anda, tanpa garis miring di akhir.
+var WEBHOOK_URL = "https://your-dashboard-domain.com/api/sync";
+// Samakan dengan env SYNC_TOKEN di server.
+var SYNC_TOKEN = "ISI_TOKEN_RAHASIA";
 
+/**
+ * Kirim sinyal sync ke dashboard.
+ * Dipanggil oleh trigger On edit, On change, dan timer 5 menit.
+ * Server men-debounce webhook, jadi aman dipanggil berkali-kali.
+ */
+function syncKeHantaran(e) {
   var options = {
     "method": "POST",
     "headers": {
       "Content-Type": "application/json",
-      // Samakan dengan env SYNC_TOKEN di server. Tanpa token, endpoint
-      // hanya menerima sync manual dari dashboard yang sudah login.
-      "x-sync-token": "ISI_TOKEN_RAHASIA"
+      "x-sync-token": SYNC_TOKEN
     },
-    // WEBHOOK di-debounce (default 1 menit lewat env SYNC_WEBHOOK_DEBOUNCE_MINUTES)
-    // agar satu kali edit tidak memicu sync berulang-ulang. Master katalog tidak
-    // ikut di sini; katalog disegarkan cron harian atau sync manual penuh.
     "payload": JSON.stringify({
       "trigger": "WEBHOOK",
       "sources": ["asset-requests", "request-orders"]
@@ -200,10 +198,36 @@ function syncKeHantaran(e) {
   };
 
   try {
-    UrlFetchApp.fetch(webhookUrl, options);
-  } catch(err) {
+    var response = UrlFetchApp.fetch(WEBHOOK_URL, options);
+    Logger.log("Sync HTTP " + response.getResponseCode() + ": " + response.getContentText());
+  } catch (err) {
     Logger.log("Sync error: " + err);
   }
+}
+
+/**
+ * Jalankan SEKALI dari editor Apps Script setelah konfigurasi diisi.
+ * Memasang tiga trigger:
+ *   1. On edit    - setiap sel diedit
+ *   2. On change  - baris ditambah/dihapus atau perubahan struktur
+ *   3. Timer 5 menit - jaring pengaman bila trigger edit terlewat
+ */
+function pasangTrigger() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Hindari trigger ganda bila fungsi ini dijalankan ulang.
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "syncKeHantaran") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+
+  ScriptApp.newTrigger("syncKeHantaran").forSpreadsheet(ss).onEdit().create();
+  ScriptApp.newTrigger("syncKeHantaran").forSpreadsheet(ss).onChange().create();
+  ScriptApp.newTrigger("syncKeHantaran").timeBased().everyMinutes(5).create();
+
+  Logger.log("Trigger syncKeHantaran terpasang: On edit, On change, timer 5 menit.");
 }`;
 
   return (
@@ -453,7 +477,7 @@ function syncKeHantaran(e) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-[#1f1f1f] dark:text-[#e3e3e3] font-bold text-sm">
             <Zap className="h-4 w-4 text-[#b06000] dark:text-[#ffb951]" />
-            <span>Skrip Push Otomatis Google Apps Script (Opsional)</span>
+            <span>Skrip Push Otomatis Google Apps Script</span>
           </div>
           <button
             onClick={() => {
@@ -472,9 +496,11 @@ function syncKeHantaran(e) {
           </button>
         </div>
         <p className="text-xs text-[#444746] dark:text-[#c4c7c5]">
-          Jika ingin Google Sheets mentrigger pembaruan setiap ada baris baru, pasang skrip ini pada
-          menu <strong>Extensions &gt; Apps Script</strong>, lalu buat trigger
-          <em> On edit</em> untuk fungsi <code>syncKeHantaran</code> (lihat komentar di skrip):
+          Jika ingin Google Sheets mendorong pembaruan otomatis, tempel skrip ini pada
+          menu <strong>Extensions &gt; Apps Script</strong>, isi <code>WEBHOOK_URL</code> dan{' '}
+          <code>SYNC_TOKEN</code>, lalu jalankan fungsi <code>pasangTrigger</code> sekali.
+          Fungsi itu memasang trigger <em>On edit</em>, <em>On change</em>, dan timer 5 menit
+          sebagai jaring pengaman:
         </p>
 
         <pre className="rounded-2xl bg-[#1e1f20] dark:bg-[#131314] p-3.5 text-[11px] text-[#6dd58c] font-mono overflow-x-auto border border-[#444746]">

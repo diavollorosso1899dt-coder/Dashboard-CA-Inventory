@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   FileCheck2, 
   PlusCircle, 
@@ -60,6 +60,18 @@ import { SOItem } from '@/lib/so-harian/inventoryEngine';
 import { resolveSoStockQty } from '@/lib/so-harian/rollover';
 import { isRoFinalizedForActiveList } from '@/lib/distribution/ro-visibility';
 import { mergeSoStockItemLists } from '@/lib/master/additions';
+import { readRoStatusSnapshot, shouldAutoSync, RO_AUTO_SYNC_MIN_INTERVAL_MS } from '@/lib/distribution/ro-auto-sync';
+
+/** Jam sync terakhir; tanggal ikut ditampilkan bila bukan hari ini. */
+function formatSyncClock(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '-';
+  const time = date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  const sameDay = date.toDateString() === new Date().toDateString();
+  return sameDay
+    ? time
+    : `${date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })} ${time}`;
+}
 
 interface RoManagerViewProps {
   initialOrders?: RequestOrder[];
@@ -239,7 +251,12 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isAutoSyncing, setIsAutoSyncing] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const autoSyncInFlightRef = useRef(false);
+  const lastAutoSyncCheckRef = useRef(0);
+  const lastAutoSyncAttemptRef = useRef(0);
 
   const applyDatePreset = (preset: 'today' | '7days' | 'month' | 'clear') => {
     if (preset === 'clear') {
@@ -410,23 +427,84 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     }
   };
 
-  // Background Auto-Sync effect (every 30 seconds & event listener)
+  /**
+   * Cek sync RO terakhir. Bila sudah lewat 1 menit, tarik Sheet sekali agar
+   * data yang baru masuk tidak menunggu cron harian.
+   */
+  const maybeAutoSync = async (force = false) => {
+    if (autoSyncInFlightRef.current) return;
+    const now = Date.now();
+    if (!force && now - lastAutoSyncCheckRef.current < 30_000) return;
+    lastAutoSyncCheckRef.current = now;
+    autoSyncInFlightRef.current = true;
+
+    try {
+      const statusRes = await fetch('/api/sync/status', { cache: 'no-store' });
+      if (!statusRes.ok) {
+        // Status tidak tersedia (mis. Supabase/DNS sedang gangguan). Jangan
+        // memicu sync yang hampir pasti gagal juga.
+        console.warn('Status sync tidak tersedia:', `HTTP ${statusRes.status}`);
+        return;
+      }
+      const status = await statusRes.json();
+      const snapshot = readRoStatusSnapshot(status);
+      if (snapshot.lastSyncAt) setLastSyncAt(snapshot.lastSyncAt);
+      if (!shouldAutoSync(snapshot, new Date(now))) return;
+      if (!force && now - lastAutoSyncAttemptRef.current < RO_AUTO_SYNC_MIN_INTERVAL_MS) return;
+      lastAutoSyncAttemptRef.current = now;
+
+      setIsAutoSyncing(true);
+      const res = await fetch('/api/distribution/ro/sync-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.success) {
+        setLastSyncAt(new Date().toISOString());
+        await fetchLatestOrders(false);
+      } else {
+        // Lock atau kegagalan sync tidak perlu mengganggu user; manual sync
+        // tetap tersedia dan percobaan berikutnya terjadi saat tab difokuskan.
+        console.warn('Auto sync RO tidak berjalan:', json.message || `HTTP ${res.status}`);
+      }
+    } catch (err: any) {
+      console.warn('Auto sync RO error:', err?.message || err);
+    } finally {
+      autoSyncInFlightRef.current = false;
+      setIsAutoSyncing(false);
+    }
+  };
+
+  // Background refresh + auto-sync saat halaman dibuka/fokus.
   useEffect(() => {
     const handleUpdate = () => {
       fetchLatestOrders(false);
     };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchLatestOrders(false);
+        maybeAutoSync();
+      }
+    };
+
     window.addEventListener('ca_ro_updated', handleUpdate);
     window.addEventListener('storage', handleUpdate);
+    document.addEventListener('visibilitychange', handleVisibility);
 
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         fetchLatestOrders(false);
       }
-    }, 30000);
+    }, 15000);
+
+    // Jangan tunggu poll pertama: tarik data saat halaman dibuka.
+    maybeAutoSync(true);
 
     return () => {
       window.removeEventListener('ca_ro_updated', handleUpdate);
       window.removeEventListener('storage', handleUpdate);
+      document.removeEventListener('visibilitychange', handleVisibility);
       clearInterval(interval);
     };
   }, []);
@@ -851,6 +929,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
       if (json.success) {
         setSyncFeedback(json.message);
+        setLastSyncAt(new Date().toISOString());
         // Refresh orders
         const getRes = await fetch('/api/distribution/ro?active=true');
         const getData = await getRes.json();
@@ -1640,10 +1719,33 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
+            <span
+              aria-live="polite"
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#747775] dark:text-[#8e918f]"
+              title={
+                lastSyncAt
+                  ? `Sync RO terakhir: ${new Date(lastSyncAt).toLocaleString('id-ID')}`
+                  : 'Belum ada sync RO'
+              }
+            >
+              {isAutoSyncing ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Clock className="h-3.5 w-3.5" />
+              )}
+              <span>
+                {isAutoSyncing
+                  ? 'Memeriksa data terbaru...'
+                  : lastSyncAt
+                  ? `Sync ${formatSyncClock(lastSyncAt)}`
+                  : 'Belum sync'}
+              </span>
+            </span>
+
             {/* Sync Official Google Sheet */}
             <button
               onClick={handleSyncSheet}
-              disabled={isSyncing}
+              disabled={isSyncing || isAutoSyncing}
               title={
                 startDate || endDate
                   ? `Tarik data Spreadsheet RO sesuai rentang tanggal (${startDate || 'Awal'} s/d ${endDate || 'Akhir'})`
