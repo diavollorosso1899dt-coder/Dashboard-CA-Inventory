@@ -131,6 +131,12 @@ const SLA_ITEM_COLUMNS: ColumnItem[] = [
   { id: 'actions', label: 'Detail RO', alwaysVisible: true },
 ];
 
+function toSortTime(value?: string | null): number | null {
+  if (!value) return null;
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? null : time;
+}
+
 function formatMonthYear(ym: string): string {
   const parts = ym.split('-');
   if (parts.length < 2) return ym;
@@ -678,16 +684,36 @@ export default function InteractiveSlaDashboard({
       branch_name: (a: any, b: any) =>
         (a.parentRo?.branch_name || '').localeCompare(b.parentRo?.branch_name || '', 'id', { sensitivity: 'base' }),
       request_date: (a: any, b: any) => {
-        const da = a.parentRo?.order_date ? Date.parse(a.parentRo.order_date) : 0;
-        const db = b.parentRo?.order_date ? Date.parse(b.parentRo.order_date) : 0;
+        const da = toSortTime(a.request_date);
+        const db = toSortTime(b.request_date);
+        if (da === null && db === null) return 0;
+        if (da === null) return 1;
+        if (db === null) return -1;
         return da - db;
       },
       target_delivery_date: (a: any, b: any) => {
-        const da = a.parentRo?.request_date ? Date.parse(a.parentRo.request_date) : 0;
-        const db = b.parentRo?.request_date ? Date.parse(b.parentRo.request_date) : 0;
+        // Baris tanpa target memakai SLA standar 14 hari dari tanggal order,
+        // sama seperti yang ditampilkan di kolom ("SLA Standar 14h").
+        const effectiveTarget = (row: any) => {
+          const target = toSortTime(row.target_delivery_date);
+          if (target !== null) return target;
+          const request = toSortTime(row.request_date);
+          return request === null ? Number.POSITIVE_INFINITY : request + 14 * 24 * 60 * 60 * 1000;
+        };
+        return effectiveTarget(a) - effectiveTarget(b);
+      },
+      sla_lead_time: (a: any, b: any) => {
+        const da = a.slaLeadTimeDays;
+        const db = b.slaLeadTimeDays;
+        if (da === null || da === undefined) return db === null || db === undefined ? 0 : 1;
+        if (db === null || db === undefined) return -1;
         return da - db;
       },
-      sla_lead_time: (a: any, b: any) => (a.lead_time_days || 0) - (b.lead_time_days || 0),
+      sla_status: (a: any, b: any) => {
+        // Urutkan dari yang paling kritis: Terlambat → Kritis → Tepat → Selesai.
+        const rank: Record<string, number> = { OVERDUE: 0, CRITICAL: 1, ON_TIME: 2, COMPLETED: 3 };
+        return (rank[a.slaCategory] ?? 4) - (rank[b.slaCategory] ?? 4);
+      },
       quantity: (a: any, b: any) => (Number(a.quantity_ordered) || 0) - (Number(b.quantity_ordered) || 0),
       stock_source: (a: any, b: any) =>
         (Number(a.received_quantity) || 0) - (Number(b.received_quantity) || 0),
