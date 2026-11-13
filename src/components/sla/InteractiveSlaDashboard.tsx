@@ -104,6 +104,31 @@ interface EnrichedSlaItem {
   slaLeadTimeDays?: number | null;
 }
 
+/**
+ * RO yang sudah dibatalkan/ditolak tidak perlu masuk antrean tindak lanjut.
+ */
+function isRoClosedForFollowUp(ro: Pick<EnrichedRO, 'status' | 'current_stage'>): boolean {
+  return (
+    ro.status === 'CANCELLED' ||
+    ro.status === 'REJECTED' ||
+    ro.current_stage === 'DIBATALKAN'
+  );
+}
+
+/**
+ * Item dianggap selesai untuk keperluan follow-up bila sudah dibatalkan,
+ * sudah diterima seluruhnya di outlet, atau RO-nya sudah dibatalkan.
+ * Item yang baru terpenuhi sebagian tetap masuk antrean.
+ */
+function isItemClosedForFollowUp(it: EnrichedSlaItem): boolean {
+  if (it.stock_source === 'CANCELLED') return true;
+  if (isRoClosedForFollowUp(it.parentRo)) return true;
+  if (it.isFulfilled) return true;
+  if (it.received_quantity >= it.quantity_ordered) return true;
+  if (it.transfer_status === 'RECEIVED') return true;
+  return false;
+}
+
 const SLA_RO_COLUMNS: ColumnItem[] = [
   { id: 'ro_number', label: 'No. RO & Wilayah', alwaysVisible: true },
   { id: 'branch_name', label: 'Cabang Outlet' },
@@ -560,11 +585,21 @@ export default function InteractiveSlaDashboard({
   // 5. Final Displayed Lists (applying Status Filter)
   const finalFilteredOrders = useMemo(() => {
     if (statusFilter === 'ALL') return baseFilteredOrders;
+    if (statusFilter === 'OVERDUE' || statusFilter === 'CRITICAL') {
+      return baseFilteredOrders.filter(
+        (o) => o.slaCategory === statusFilter && !isRoClosedForFollowUp(o)
+      );
+    }
     return baseFilteredOrders.filter((o) => o.slaCategory === statusFilter);
   }, [baseFilteredOrders, statusFilter]);
 
   const finalFilteredItems = useMemo(() => {
     if (statusFilter === 'ALL') return baseFilteredItems;
+    if (statusFilter === 'OVERDUE' || statusFilter === 'CRITICAL') {
+      return baseFilteredItems.filter(
+        (it) => it.slaCategory === statusFilter && !isItemClosedForFollowUp(it)
+      );
+    }
     return baseFilteredItems.filter((it) => it.slaCategory === statusFilter);
   }, [baseFilteredItems, statusFilter]);
 
@@ -591,9 +626,11 @@ export default function InteractiveSlaDashboard({
       totalItemsFulfilled += o.totalQtyFulfilled;
 
       if (o.slaCategory === 'COMPLETED') completedRoCount++;
-      else if (o.slaCategory === 'OVERDUE') overdueRoCount++;
-      else if (o.slaCategory === 'CRITICAL') criticalRoCount++;
-      else onTimeRoCount++;
+      else if (o.slaCategory === 'OVERDUE') {
+        if (!isRoClosedForFollowUp(o)) overdueRoCount++;
+      } else if (o.slaCategory === 'CRITICAL') {
+        if (!isRoClosedForFollowUp(o)) criticalRoCount++;
+      } else onTimeRoCount++;
 
       if (o.request_date && (o.target_delivery_date || o.arrival_datetime)) {
         const start = new Date(o.request_date).getTime();
@@ -615,9 +652,11 @@ export default function InteractiveSlaDashboard({
 
     scopeItems.forEach((it) => {
       if (it.slaCategory === 'COMPLETED') completedItemCount++;
-      else if (it.slaCategory === 'OVERDUE') overdueItemCount++;
-      else if (it.slaCategory === 'CRITICAL') criticalItemCount++;
-      else onTimeItemCount++;
+      else if (it.slaCategory === 'OVERDUE') {
+        if (!isItemClosedForFollowUp(it)) overdueItemCount++;
+      } else if (it.slaCategory === 'CRITICAL') {
+        if (!isItemClosedForFollowUp(it)) criticalItemCount++;
+      } else onTimeItemCount++;
     });
 
     const onTimeRoTotal = completedRoCount + onTimeRoCount;
@@ -661,8 +700,12 @@ export default function InteractiveSlaDashboard({
       if (!matchesRegion(it.region, selectedRegion)) return false;
       if (selectedBranches.length > 0 && !selectedBranches.includes((it.branch_name || '').trim())) return false;
       const status = (it.item_delivery_status || '').toLowerCase();
-      const isDone = status.includes('terima outlet') || status.includes('lengkap');
-      return !isDone && it.lead_time_days > 14;
+      const isDone =
+        status.includes('terima outlet') ||
+        status.includes('lengkap') ||
+        status.includes('selesai');
+      const isCancelled = status.includes('batal') || status.includes('cancel');
+      return !isDone && !isCancelled && it.lead_time_days > 14;
     });
   }, [initialAssetRequests, selectedRegion, selectedBranches]);
 
@@ -762,7 +805,11 @@ export default function InteractiveSlaDashboard({
   // Export Overdue Items to CSV for immediate procurement follow-up
   const handleExportOverdue = () => {
     if (viewMode === 'ITEM') {
-      const overdueList = baseFilteredItems.filter((it) => it.slaCategory === 'OVERDUE' || it.slaCategory === 'CRITICAL');
+      const overdueList = baseFilteredItems.filter(
+        (it) =>
+          (it.slaCategory === 'OVERDUE' || it.slaCategory === 'CRITICAL') &&
+          !isItemClosedForFollowUp(it)
+      );
       if (overdueList.length === 0) {
         alert('Tidak ada data item RO yang terlambat/kritis untuk diekspor pada filter aktif saat ini.');
         return;
@@ -793,7 +840,11 @@ export default function InteractiveSlaDashboard({
       link.click();
       document.body.removeChild(link);
     } else {
-      const overdueList = baseFilteredOrders.filter((o) => o.slaCategory === 'OVERDUE' || o.slaCategory === 'CRITICAL');
+      const overdueList = baseFilteredOrders.filter(
+        (o) =>
+          (o.slaCategory === 'OVERDUE' || o.slaCategory === 'CRITICAL') &&
+          !isRoClosedForFollowUp(o)
+      );
       if (overdueList.length === 0) {
         alert('Tidak ada data dokumen RO yang terlambat/kritis untuk diekspor pada filter aktif saat ini.');
         return;
@@ -850,6 +901,7 @@ export default function InteractiveSlaDashboard({
     for (const ro of enrichedOrders) {
       if (!matchesRegion(ro.region, selectedRegion)) continue;
       if (selectedBranches.length > 0 && !selectedBranches.includes((ro.branch_name || '').trim())) continue;
+      if (isRoClosedForFollowUp(ro)) continue;
       if (ro.slaCategory === 'CRITICAL' || (ro.slaCategory === 'OVERDUE' && ro.fulfillmentPct < 100)) {
         list.push({
           name: ro.branch_name,
@@ -2126,7 +2178,7 @@ export default function InteractiveSlaDashboard({
             <div className="p-3.5 border-b border-[#e0e2ec] dark:border-[#444746] font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3] flex items-center justify-between">
               <span>1. Item RO Melewati Tanggal Permintaan Target</span>
               <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-100 text-rose-800 font-bold">
-                {baseFilteredItems.filter((it) => it.slaCategory === 'OVERDUE').length} Baris Item
+                {baseFilteredItems.filter((it) => it.slaCategory === 'OVERDUE' && !isItemClosedForFollowUp(it)).length} Baris Item
               </span>
             </div>
             <div className="overflow-x-auto">
@@ -2144,7 +2196,7 @@ export default function InteractiveSlaDashboard({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
-                  {baseFilteredItems.filter((it) => it.slaCategory === 'OVERDUE').slice(0, 30).map((it) => (
+                  {baseFilteredItems.filter((it) => it.slaCategory === 'OVERDUE' && !isItemClosedForFollowUp(it)).slice(0, 30).map((it) => (
                     <tr key={`${it.roId}::${it.id}`} className="hover:bg-rose-50/40 dark:hover:bg-rose-950/20">
                       <td className="py-2.5 px-3 font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">{it.item_name}</td>
                       <td className="py-2.5 px-3 font-semibold text-rose-700 dark:text-rose-400">{it.ro_number}</td>
