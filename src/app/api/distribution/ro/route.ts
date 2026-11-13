@@ -106,8 +106,9 @@ export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const idParam = searchParams.get('id');
-    const body = idParam ? null : await req.json().catch(() => null);
+    const body = await req.json().catch(() => null);
     const targetId = idParam || body?.id || body?.ro_number;
+    const reason = String(searchParams.get('reason') || body?.reason || '').trim();
 
     if (!targetId) {
       return NextResponse.json({ error: 'ID atau nomor RO harus disediakan' }, { status: 400 });
@@ -115,7 +116,7 @@ export async function DELETE(req: NextRequest) {
 
     const previous = await getRoSnapshot(targetId);
     const actor = resolveActor(req);
-    const ok = await deleteRequestOrder(targetId, actor.name);
+    const ok = await deleteRequestOrder(targetId, actor.name, reason || undefined);
 
     if (ok) {
       await auditMutation(req, {
@@ -123,7 +124,7 @@ export async function DELETE(req: NextRequest) {
         entityTitle: roTitle(previous?.ro_number || targetId, previous?.branch_name),
         entityId: previous?.id || targetId,
         actionType: 'PERMANENT_DELETE',
-        details: `Menghapus dokumen RO ${previous?.ro_number || targetId}${previous?.branch_name ? ` (${previous.branch_name})` : ''} secara permanen.`,
+        details: `Menghapus dokumen RO ${previous?.ro_number || targetId}${previous?.branch_name ? ` (${previous.branch_name})` : ''} secara permanen.${reason ? ` Alasan: ${reason}` : ''}`,
         previousState: previous || undefined,
       });
     }

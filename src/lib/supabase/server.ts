@@ -2661,7 +2661,11 @@ export function markRoDeleted(key?: string | null): void {
   if (clean) global.__DELETED_RO_KEYS__.add(clean);
 }
 
-export async function deleteRequestOrder(id: string, actorName?: string): Promise<boolean> {
+export async function deleteRequestOrder(
+  id: string,
+  actorName?: string,
+  reason?: string
+): Promise<boolean> {
   const admin = getAdminClient();
   const cachedOrder =
     (global.__RO_CACHE__?.items || []).find((r: RequestOrder) => r.id === id || r.ro_number === id) ||
@@ -2711,7 +2715,7 @@ export async function deleteRequestOrder(id: string, actorName?: string): Promis
           { key: roNumber, display: roNumber },
           { key: rawRoId, display: roNumber },
         ],
-        { reason: 'Dihapus manual dari dashboard', createdBy: actorName }
+        { reason: reason || 'Dihapus manual dari dashboard', createdBy: actorName }
       );
       if (saved === 0) {
         console.warn('[Supabase deleteRequestOrder] Tombstone tidak tersimpan untuk', roNumber);

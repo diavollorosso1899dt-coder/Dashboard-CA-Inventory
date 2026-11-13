@@ -1208,9 +1208,19 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       const targetRawId = selectedRoForProcess.raw_ro_id;
       const targetKey = normalizeRoKey(targetRawId || targetRoNo);
 
-      await fetch(`/api/distribution/ro?id=${encodeURIComponent(targetId || targetRoNo)}`, {
+      const params = new URLSearchParams();
+      const deleteId = targetId || targetRoNo;
+      if (deleteId) params.set('id', deleteId);
+      const reason = rejectReasonText.trim();
+      if (reason) params.set('reason', reason);
+
+      const res = await fetch(`/api/distribution/ro?${params.toString()}`, {
         method: 'DELETE',
       });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error || json?.message || `Gagal menghapus RO (HTTP ${res.status})`);
+      }
 
       setOrders(prev => prev.filter(o => {
         if (targetId && o.id === targetId) return false;
@@ -1230,9 +1240,9 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       setRejectReasonText('');
       setToast({ type: 'info', message: `Dokumen ${selectedRoForProcess.ro_number} berhasil dibatalkan dan otomatis terhapus dari aplikasi.` });
       setSelectedRoForProcess(null);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      setToast({ type: 'error', message: 'Gagal menghapus RO dari aplikasi' });
+      setToast({ type: 'error', message: e?.message || 'Gagal menghapus RO dari aplikasi' });
     } finally {
       setIsSubmitting(false);
     }
@@ -2512,7 +2522,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       {/* MODAL KONFIRMASI TOLAK / BATALKAN RO */}
       {/* ========================================================= */}
       {rejectReasonModalOpen && selectedRoForProcess && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="spring-pop panel-card w-full max-w-md p-5 space-y-4 border border-rose-200 dark:border-rose-900 rounded-2xl bg-white dark:bg-[#1e1f20] shadow-2xl">
             <div className="flex items-center gap-2.5 text-rose-600 dark:text-rose-400">
               <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800">
@@ -3391,7 +3401,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
       {/* ========================================================= */}
       {previewImage && (
         <div 
-          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
           onClick={() => setPreviewImage(null)}
         >
           <div 
