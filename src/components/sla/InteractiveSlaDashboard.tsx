@@ -31,9 +31,11 @@ import AreaFilterPills from '@/components/ui/AreaFilterPills';
 import ColumnVisibilityPicker, { ColumnItem } from '@/components/ui/ColumnVisibilityPicker';
 import { StandardRegion, matchesRegion, normalizeRegion } from '@/lib/utils/region-helper';
 import { formatDateSlash, formatLeadTime } from '@/lib/utils/date-formatter';
+import { RoDateField, getRoDateByField, matchesRoDateRange } from '@/lib/distribution/ro-date-filter';
 import BranchReadinessCards from '@/components/sla/BranchReadinessCards';
 import CriticalH3AlertBanner, { CriticalEntity } from '@/components/sla/CriticalH3AlertBanner';
 import OutletMultiSelect from '@/components/sla/OutletMultiSelect';
+import MultiSelectFilter, { MultiSelectOption } from '@/components/sla/MultiSelectFilter';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
 import { buildDistributionQueueKeys, resolveReceivedQuantity } from '@/lib/distribution/received-qty';
 
@@ -71,6 +73,10 @@ interface EnrichedRO {
   slaCategory: 'OVERDUE' | 'CRITICAL' | 'ON_TIME' | 'COMPLETED';
   diffDays: number; // positive = days overdue, negative = days remaining
   slaLabel: string;
+  /** True bila RO sudah selesai tetapi diterima melewati target permintaan. */
+  isLateCompletion: boolean;
+  /** Selisih hari tanggal diterima vs target (positif = terlambat). */
+  completionDiffDays?: number | null;
 }
 
 interface EnrichedSlaItem {
@@ -93,6 +99,8 @@ interface EnrichedSlaItem {
   slaCategory: 'OVERDUE' | 'CRITICAL' | 'ON_TIME' | 'COMPLETED';
   diffDays: number;
   slaLabel: string;
+  /** True bila item sudah diterima tetapi melewati target permintaan. */
+  isLateCompletion: boolean;
   isFulfilled: boolean;
   parentRo: EnrichedRO;
   // SLA Distribusi: Tanggal Kirim Surat Jalan vs Tanggal Permintaan
@@ -116,13 +124,19 @@ function isRoClosedForFollowUp(ro: Pick<EnrichedRO, 'status' | 'current_stage'>)
 }
 
 /**
+ * Item dari RO yang dibatalkan/ditolak tidak dihitung dalam total maupun KPI.
+ */
+function isItemCancelled(it: Pick<EnrichedSlaItem, 'stock_source' | 'parentRo'>): boolean {
+  return it.stock_source === 'CANCELLED' || isRoClosedForFollowUp(it.parentRo);
+}
+
+/**
  * Item dianggap selesai untuk keperluan follow-up bila sudah dibatalkan,
  * sudah diterima seluruhnya di outlet, atau RO-nya sudah dibatalkan.
  * Item yang baru terpenuhi sebagian tetap masuk antrean.
  */
 function isItemClosedForFollowUp(it: EnrichedSlaItem): boolean {
-  if (it.stock_source === 'CANCELLED') return true;
-  if (isRoClosedForFollowUp(it.parentRo)) return true;
+  if (isItemCancelled(it)) return true;
   if (it.isFulfilled) return true;
   if (it.received_quantity >= it.quantity_ordered) return true;
   if (it.transfer_status === 'RECEIVED') return true;
@@ -134,6 +148,7 @@ const SLA_RO_COLUMNS: ColumnItem[] = [
   { id: 'branch_name', label: 'Cabang Outlet' },
   { id: 'request_date', label: 'Tanggal Order' },
   { id: 'target_delivery_date', label: 'Target Permintaan' },
+  { id: 'received_date', label: 'Tgl Diterima Outlet' },
   { id: 'sla_status', label: 'Status SLA & Deadline' },
   { id: 'fulfillment', label: 'Pemenuhan Item' },
   { id: 'stage', label: 'Tahap Alur' },
@@ -156,23 +171,25 @@ const SLA_ITEM_COLUMNS: ColumnItem[] = [
   { id: 'actions', label: 'Detail RO', alwaysVisible: true },
 ];
 
+const STOCK_SOURCE_OPTIONS: MultiSelectOption[] = [
+  { value: 'GUDANG_SCGA', label: 'Gudang SCGA (Ready Stock)' },
+  { value: 'PR_VENDOR', label: 'PR Vendor (Belum Tersedia)' },
+  { value: 'ON_PROSES', label: 'On Proses (Default)' },
+  { value: 'CANCELLED', label: 'Dibatalkan' },
+];
+
+function stockSourceLabel(value: string): string {
+  return STOCK_SOURCE_OPTIONS.find((option) => option.value === value)?.label || value;
+}
+
 function toSortTime(value?: string | null): number | null {
   if (!value) return null;
   const time = Date.parse(value);
   return Number.isNaN(time) ? null : time;
 }
 
-function formatMonthYear(ym: string): string {
-  const parts = ym.split('-');
-  if (parts.length < 2) return ym;
-  const year = parts[0];
-  const month = parts[1];
-  const monthNames = [
-    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-  ];
-  const idx = parseInt(month, 10) - 1;
-  return `${monthNames[idx] || month} ${year}`;
+function toYmd(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 export default function InteractiveSlaDashboard({
@@ -191,9 +208,11 @@ export default function InteractiveSlaDashboard({
 
   // Column Level Filters
   const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
-  const [selectedStage, setSelectedStage] = useState<string>('ALL');
-  const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
-  const [selectedStockSource, setSelectedStockSource] = useState<string>('ALL');
+  const [selectedStage, setSelectedStage] = useState<string[]>([]);
+  const [dateField, setDateField] = useState<RoDateField>('order_date');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [selectedStockSource, setSelectedStockSource] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<SlaStatusFilter>('ALL');
   const [search, setSearch] = useState('');
   
@@ -208,6 +227,7 @@ export default function InteractiveSlaDashboard({
       branch_name: true,
       request_date: true,
       target_delivery_date: true,
+      received_date: true,
       sla_status: true,
       fulfillment: true,
       stage: true,
@@ -241,6 +261,14 @@ export default function InteractiveSlaDashboard({
   const [selectedRoDetail, setSelectedRoDetail] = useState<EnrichedRO | null>(null);
   const [receivedQtyMap, setReceivedQtyMap] = useState<Record<string, number>>({});
 
+  // Item yang dibatalkan per item tidak ditampilkan/dihitung di detail RO.
+  const selectedRoDetailItems = selectedRoDetail?.items || [];
+  const selectedRoDetailActiveItems = selectedRoDetailItems.filter(
+    (it) => it.stock_source !== 'CANCELLED'
+  );
+  const selectedRoDetailCancelledCount =
+    selectedRoDetailItems.length - selectedRoDetailActiveItems.length;
+
   useEffect(() => {
     const syncReceivedQtyMap = () => {
       try {
@@ -265,12 +293,38 @@ export default function InteractiveSlaDashboard({
 
   const today = useMemo(() => new Date(), []);
 
+  const applyDatePreset = (preset: 'today' | '7days' | 'month' | 'clear') => {
+    if (preset === 'clear') {
+      setStartDate('');
+      setEndDate('');
+      setCurrentPage(1);
+      return;
+    }
+    const now = new Date();
+    const todayStr = toYmd(now);
+    if (preset === 'today') {
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (preset === '7days') {
+      const d7 = new Date(now);
+      d7.setDate(now.getDate() - 6);
+      setStartDate(toYmd(d7));
+      setEndDate(todayStr);
+    } else if (preset === 'month') {
+      setStartDate(toYmd(new Date(now.getFullYear(), now.getMonth(), 1)));
+      setEndDate(todayStr);
+    }
+    setCurrentPage(1);
+  };
+
   // 1. Process & Enrich RO data with SLA and target delivery calculations
   const enrichedOrders: EnrichedRO[] = useMemo(() => {
     return initialRoOrders.map((ro) => {
       const items = ro.items || [];
-      const totalQtyOrdered = items.reduce((sum, it) => sum + (it.quantity_ordered || 0), 0);
-      const totalQtyFulfilled = items.reduce((sum, it) => sum + (it.quantity_fulfilled || 0), 0);
+      // Item yang dibatalkan per item tidak dihitung sebagai item yang diajukan.
+      const activeItems = items.filter((it) => it.stock_source !== 'CANCELLED');
+      const totalQtyOrdered = activeItems.reduce((sum, it) => sum + (it.quantity_ordered || 0), 0);
+      const totalQtyFulfilled = activeItems.reduce((sum, it) => sum + (it.quantity_fulfilled || 0), 0);
       const fulfillmentPct = totalQtyOrdered > 0 ? Math.round((totalQtyFulfilled / totalQtyOrdered) * 100) : 0;
 
       const isCompleted = ro.status === 'COMPLETED' || ro.current_stage === 'SELESAI';
@@ -279,6 +333,8 @@ export default function InteractiveSlaDashboard({
       let slaCategory: 'OVERDUE' | 'CRITICAL' | 'ON_TIME' | 'COMPLETED' = 'ON_TIME';
       let diffDays = 0;
       let slaLabel = 'Sesuai Target';
+      let isLateCompletion = false;
+      let completionDiffDays: number | null = null;
 
       if (isCompleted) {
         slaCategory = 'COMPLETED';
@@ -288,8 +344,10 @@ export default function InteractiveSlaDashboard({
           const doneDate = ro.arrival_datetime ? new Date(ro.arrival_datetime) : targetDate;
           const diff = Math.round((doneDate.getTime() - targetDate.getTime()) / (1000 * 60 * 60 * 24));
           diffDays = diff;
+          completionDiffDays = diff;
           if (diff > 0) {
-            slaLabel = `Selesai (+${diff} hari)`;
+            isLateCompletion = true;
+            slaLabel = `Selesai Terlambat (+${diff} hari)`;
           } else {
             slaLabel = 'Selesai Tepat Waktu';
           }
@@ -342,6 +400,8 @@ export default function InteractiveSlaDashboard({
         slaCategory,
         diffDays,
         slaLabel,
+        isLateCompletion,
+        completionDiffDays,
       };
     });
   }, [initialRoOrders, today]);
@@ -407,30 +467,40 @@ export default function InteractiveSlaDashboard({
         
         let itemSlaCategory = ro.slaCategory;
         let itemSlaLabel = ro.slaLabel;
+        let itemDiffDays = ro.diffDays;
+        let isLateCompletion = false;
 
         if (isTransferredAndReceived || isFulfilled) {
-          if (ro.target_delivery_date && shippingDate) {
-            const targetTime = new Date(ro.target_delivery_date).getTime();
-            const shipTime = new Date(shippingDate).getTime();
-            const diffTarget = Math.round((shipTime - targetTime) / (1000 * 60 * 60 * 24));
-            if (diffTarget <= 0) {
-              itemSlaCategory = 'ON_TIME';
-              itemSlaLabel = `Tepat Target (${slaLeadTimeDays !== null ? slaLeadTimeDays + 'h Kirim' : 'Sesuai Target'})`;
-            } else {
-              itemSlaCategory = 'OVERDUE';
-              itemSlaLabel = `Kirim Terlambat (+${diffTarget} Hari)`;
-            }
-          } else if (slaLeadTimeDays !== null) {
-            if (slaLeadTimeDays <= 7) {
-              itemSlaCategory = 'ON_TIME';
-              itemSlaLabel = `Tepat SLA (${slaLeadTimeDays} Hari)`;
-            } else {
-              itemSlaCategory = 'OVERDUE';
-              itemSlaLabel = `Lewat SLA (${slaLeadTimeDays} Hari)`;
-            }
-          } else {
+          // Acuan SLA = target permintaan. Item baru dihitung terlambat bila
+          // tanggal diterima di outlet melewati target, bukan tanggal kirim SJ.
+          const targetTime = toSortTime(ro.target_delivery_date);
+          const receivedTime = toSortTime(receivedDate || shippingDate);
+
+          if (targetTime !== null && receivedTime !== null) {
+            const diffTarget = Math.round((receivedTime - targetTime) / (1000 * 60 * 60 * 24));
+            itemDiffDays = diffTarget;
             itemSlaCategory = 'COMPLETED';
-            itemSlaLabel = 'Diterima di Outlet';
+            isLateCompletion = diffTarget > 0;
+            itemSlaLabel = isLateCompletion
+              ? `Diterima Terlambat (+${diffTarget} Hari)`
+              : `Tepat Target (${slaLeadTimeDays !== null ? slaLeadTimeDays + 'h Kirim' : 'Sesuai Target'})`;
+          } else {
+            // Tanpa target: pakai SLA standar 14 hari dari tanggal order.
+            const requestTime = toSortTime(ro.request_date);
+            if (requestTime !== null && receivedTime !== null) {
+              const diffStandard = Math.round(
+                (receivedTime - (requestTime + 14 * 24 * 60 * 60 * 1000)) / (1000 * 60 * 60 * 24)
+              );
+              itemDiffDays = diffStandard;
+              itemSlaCategory = 'COMPLETED';
+              isLateCompletion = diffStandard > 0;
+              itemSlaLabel = isLateCompletion
+                ? `Diterima Lewat SLA 14 Hari (+${diffStandard} Hari)`
+                : 'Tepat SLA Standar 14 Hari';
+            } else {
+              itemSlaCategory = 'COMPLETED';
+              itemSlaLabel = 'Diterima di Outlet';
+            }
           }
         } else if (ro.slaCategory === 'COMPLETED' && !isFulfilled) {
           itemSlaCategory = 'CRITICAL';
@@ -476,8 +546,9 @@ export default function InteractiveSlaDashboard({
           stock_source: resolvedStockSource,
           pr_vendor_name: it.pr_vendor_name,
           slaCategory: itemSlaCategory,
-          diffDays: ro.diffDays,
+          diffDays: itemDiffDays,
           slaLabel: itemSlaLabel,
+          isLateCompletion,
           isFulfilled,
           parentRo: ro,
           shipping_date: shippingDate,
@@ -519,31 +590,21 @@ export default function InteractiveSlaDashboard({
     return Array.from(set).sort();
   }, [regionOrders]);
 
-  const monthOptions = useMemo(() => {
-    const set = new Set<string>();
-    regionOrders.forEach((o) => {
-      if (o.request_date && o.request_date.length >= 7) {
-        set.add(o.request_date.slice(0, 7));
-      }
-    });
-    return Array.from(set).sort().reverse();
-  }, [regionOrders]);
-
   // 4. Base Filtered Orders & Items
   const baseFilteredOrders = useMemo(() => {
     const q = search.toLowerCase().trim();
     return enrichedOrders.filter((o) => {
       if (!matchesRegion(o.region, selectedRegion)) return false;
       if (selectedBranches.length > 0 && !selectedBranches.includes((o.branch_name || '').trim())) return false;
-      if (selectedStage !== 'ALL') {
+      if (selectedStage.length > 0) {
         const st = o.current_stage || o.status;
-        if (st !== selectedStage) return false;
+        if (!selectedStage.includes(st)) return false;
       }
-      if (selectedMonth !== 'ALL') {
-        if (!o.request_date || !o.request_date.startsWith(selectedMonth)) return false;
-      }
-      if (selectedStockSource !== 'ALL') {
-        const hasMatchingStock = o.items.some((it) => (it.stock_source || 'ON_PROSES') === selectedStockSource);
+      if (!matchesRoDateRange(getRoDateByField(o, dateField), startDate, endDate)) return false;
+      if (selectedStockSource.length > 0) {
+        const hasMatchingStock = o.items.some((it) =>
+          selectedStockSource.includes(it.stock_source || 'ON_PROSES')
+        );
         if (!hasMatchingStock) return false;
       }
       if (q) {
@@ -554,22 +615,20 @@ export default function InteractiveSlaDashboard({
       }
       return true;
     });
-  }, [enrichedOrders, selectedRegion, selectedBranches, selectedStage, selectedMonth, selectedStockSource, search]);
+  }, [enrichedOrders, selectedRegion, selectedBranches, selectedStage, dateField, startDate, endDate, selectedStockSource, search]);
 
   const baseFilteredItems = useMemo(() => {
     const q = search.toLowerCase().trim();
     return enrichedItems.filter((it) => {
       if (!matchesRegion(it.region, selectedRegion)) return false;
       if (selectedBranches.length > 0 && !selectedBranches.includes((it.branch_name || '').trim())) return false;
-      if (selectedStage !== 'ALL') {
+      if (selectedStage.length > 0) {
         const st = it.current_stage || it.status;
-        if (st !== selectedStage) return false;
+        if (!selectedStage.includes(st)) return false;
       }
-      if (selectedMonth !== 'ALL') {
-        if (!it.request_date || !it.request_date.startsWith(selectedMonth)) return false;
-      }
-      if (selectedStockSource !== 'ALL') {
-        if ((it.stock_source || 'ON_PROSES') !== selectedStockSource) return false;
+      if (!matchesRoDateRange(getRoDateByField(it, dateField), startDate, endDate)) return false;
+      if (selectedStockSource.length > 0) {
+        if (!selectedStockSource.includes(it.stock_source || 'ON_PROSES')) return false;
       }
       if (q) {
         const matchItem = it.item_name.toLowerCase().includes(q);
@@ -580,7 +639,7 @@ export default function InteractiveSlaDashboard({
       }
       return true;
     });
-  }, [enrichedItems, selectedRegion, selectedBranches, selectedStage, selectedMonth, selectedStockSource, search]);
+  }, [enrichedItems, selectedRegion, selectedBranches, selectedStage, dateField, startDate, endDate, selectedStockSource, search]);
 
   // 5. Final Displayed Lists (applying Status Filter)
   const finalFilteredOrders = useMemo(() => {
@@ -603,16 +662,17 @@ export default function InteractiveSlaDashboard({
     return baseFilteredItems.filter((it) => it.slaCategory === statusFilter);
   }, [baseFilteredItems, statusFilter]);
 
-  // 6. DYNAMIC KPI STATS: mengikuti filter aktif DAN kategori status yang dipilih user
+  // 6. DYNAMIC KPI STATS: mengikuti filter wilayah/outlet/tanggal/stok/pencarian.
+  // Pill status hanya memfilter tabel, tidak mengubah angka KPI.
+  // RO yang dibatalkan/ditolak tidak dihitung sebagai total RO.
   const kpiStats = useMemo(() => {
-    // Saat user memilih pill kategori (Terlambat/Kritis/Tepat/Selesai), seluruh
-    // angka kartu KPI dihitung dari daftar yang sedang tampil agar konsisten.
-    const scopeOrders = finalFilteredOrders;
-    const scopeItems = finalFilteredItems;
+    const processedOrders = baseFilteredOrders.filter((o) => !isRoClosedForFollowUp(o));
+    const processedItems = baseFilteredItems.filter((it) => !isItemCancelled(it));
 
-    // Context counts
-    const contextTotalRO = scopeOrders.length;
+    // Context counts (hanya RO/item yang masih diproses, tanpa yang batal)
+    const contextTotalRO = processedOrders.length;
     let completedRoCount = 0;
+    let completedRoOnTimeCount = 0;
     let overdueRoCount = 0;
     let criticalRoCount = 0;
     let onTimeRoCount = 0;
@@ -621,15 +681,17 @@ export default function InteractiveSlaDashboard({
     let leadTimeDaysSum = 0;
     let leadTimeCount = 0;
 
-    scopeOrders.forEach((o) => {
+    processedOrders.forEach((o) => {
       totalItemsOrdered += o.totalQtyOrdered;
       totalItemsFulfilled += o.totalQtyFulfilled;
 
-      if (o.slaCategory === 'COMPLETED') completedRoCount++;
-      else if (o.slaCategory === 'OVERDUE') {
-        if (!isRoClosedForFollowUp(o)) overdueRoCount++;
+      if (o.slaCategory === 'COMPLETED') {
+        completedRoCount++;
+        if (!o.isLateCompletion) completedRoOnTimeCount++;
+      } else if (o.slaCategory === 'OVERDUE') {
+        overdueRoCount++;
       } else if (o.slaCategory === 'CRITICAL') {
-        if (!isRoClosedForFollowUp(o)) criticalRoCount++;
+        criticalRoCount++;
       } else onTimeRoCount++;
 
       if (o.request_date && (o.target_delivery_date || o.arrival_datetime)) {
@@ -644,55 +706,64 @@ export default function InteractiveSlaDashboard({
     });
 
     // Item-level counts in scoped list
-    const contextTotalItems = scopeItems.length;
+    const contextTotalItems = processedItems.length;
     let completedItemCount = 0;
+    let completedItemOnTimeCount = 0;
     let overdueItemCount = 0;
     let criticalItemCount = 0;
     let onTimeItemCount = 0;
 
-    scopeItems.forEach((it) => {
-      if (it.slaCategory === 'COMPLETED') completedItemCount++;
-      else if (it.slaCategory === 'OVERDUE') {
-        if (!isItemClosedForFollowUp(it)) overdueItemCount++;
+    processedItems.forEach((it) => {
+      if (it.slaCategory === 'COMPLETED') {
+        completedItemCount++;
+        if (!it.isLateCompletion) completedItemOnTimeCount++;
+      } else if (it.slaCategory === 'OVERDUE') {
+        overdueItemCount++;
       } else if (it.slaCategory === 'CRITICAL') {
-        if (!isItemClosedForFollowUp(it)) criticalItemCount++;
+        criticalItemCount++;
       } else onTimeItemCount++;
     });
 
-    const onTimeRoTotal = completedRoCount + onTimeRoCount;
-    const roFulfillmentRatePct = contextTotalRO > 0 ? Math.round((onTimeRoTotal / contextTotalRO) * 1000) / 10 : 0;
-    
-    const onTimeItemTotal = completedItemCount + onTimeItemCount;
+    // KPI ketepatan waktu hanya menghitung yang sudah diterima outlet.
+    // Item/RO yang masih berjalan tidak masuk numerator maupun denominator.
+    const onTimeRoTotal = completedRoOnTimeCount;
+    const roFulfillmentRatePct = completedRoCount > 0 ? Math.round((completedRoOnTimeCount / completedRoCount) * 1000) / 10 : 0;
+
+    const onTimeItemTotal = completedItemOnTimeCount;
     const itemFulfillmentRatePct = totalItemsOrdered > 0 ? Math.round((totalItemsFulfilled / totalItemsOrdered) * 1000) / 10 : 0;
-    const itemOnTimeRatePct = contextTotalItems > 0 ? Math.round((onTimeItemTotal / contextTotalItems) * 1000) / 10 : 0;
+    const itemOnTimeRatePct = completedItemCount > 0 ? Math.round((completedItemOnTimeCount / completedItemCount) * 1000) / 10 : 0;
 
     const avgLeadTimeDays = leadTimeCount > 0 ? Math.round((leadTimeDaysSum / leadTimeCount) * 10) / 10 : metrics.avg_lead_time_days;
 
     return {
       // RO metrics
-      totalRO: finalFilteredOrders.length,
+      totalRO: processedOrders.length,
       contextTotalRO,
       completedRoCount,
+      completedRoOnTimeCount,
       overdueRoCount,
       criticalRoCount,
       onTimeRoCount,
+      onTimeRoTotal,
       roFulfillmentRatePct,
 
       // Item metrics
-      totalItems: finalFilteredItems.length,
+      totalItems: processedItems.length,
       contextTotalItems,
       totalItemsOrdered,
       totalItemsFulfilled,
       completedItemCount,
+      completedItemOnTimeCount,
       overdueItemCount,
       criticalItemCount,
       onTimeItemCount,
+      onTimeItemTotal,
       itemFulfillmentRatePct,
       itemOnTimeRatePct,
 
       avgLeadTimeDays,
     };
-  }, [finalFilteredOrders, finalFilteredItems, metrics.avg_lead_time_days]);
+  }, [baseFilteredOrders, baseFilteredItems, metrics.avg_lead_time_days]);
 
   // Overdue Items from Asset Requests (> 14 days and still not completed)
   const overdueAssetItems = useMemo(() => {
@@ -753,9 +824,16 @@ export default function InteractiveSlaDashboard({
         return da - db;
       },
       sla_status: (a: any, b: any) => {
-        // Urutkan dari yang paling kritis: Terlambat → Kritis → Tepat → Selesai.
-        const rank: Record<string, number> = { OVERDUE: 0, CRITICAL: 1, ON_TIME: 2, COMPLETED: 3 };
-        return (rank[a.slaCategory] ?? 4) - (rank[b.slaCategory] ?? 4);
+        // Urutkan dari yang paling kritis: Terlambat → Kritis → Selesai terlambat → Tepat → Selesai.
+        const rank = (row: any) => {
+          if (row.slaCategory === 'OVERDUE') return 0;
+          if (row.slaCategory === 'CRITICAL') return 1;
+          if (row.slaCategory === 'COMPLETED' && row.isLateCompletion) return 2;
+          if (row.slaCategory === 'ON_TIME') return 3;
+          if (row.slaCategory === 'COMPLETED') return 4;
+          return 5;
+        };
+        return rank(a) - rank(b);
       },
       quantity: (a: any, b: any) => (Number(a.quantity_ordered) || 0) - (Number(b.quantity_ordered) || 0),
       stock_source: (a: any, b: any) =>
@@ -783,20 +861,23 @@ export default function InteractiveSlaDashboard({
     return (
       selectedRegion !== 'ALL' ||
       selectedBranches.length > 0 ||
-      selectedStage !== 'ALL' ||
-      selectedMonth !== 'ALL' ||
-      selectedStockSource !== 'ALL' ||
+      selectedStage.length > 0 ||
+      startDate !== '' ||
+      endDate !== '' ||
+      selectedStockSource.length > 0 ||
       statusFilter !== 'ALL' ||
       search.trim() !== ''
     );
-  }, [selectedRegion, selectedBranches, selectedStage, selectedMonth, selectedStockSource, statusFilter, search]);
+  }, [selectedRegion, selectedBranches, selectedStage, startDate, endDate, selectedStockSource, statusFilter, search]);
 
   const handleResetFilters = () => {
     setSelectedRegion('ALL');
     setSelectedBranches([]);
-    setSelectedStage('ALL');
-    setSelectedMonth('ALL');
-    setSelectedStockSource('ALL');
+    setSelectedStage([]);
+    setDateField('order_date');
+    setStartDate('');
+    setEndDate('');
+    setSelectedStockSource([]);
     setStatusFilter('ALL');
     setSearch('');
     setCurrentPage(1);
@@ -1068,7 +1149,7 @@ export default function InteractiveSlaDashboard({
           <div className="panel-card p-4 border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1a1c1e] rounded-2xl relative overflow-hidden shadow-xs">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] uppercase tracking-wider">
-                {viewMode === 'ITEM' ? 'Ketepatan Pemenuhan Item' : 'Ketepatan Pemenuhan RO'}
+                {viewMode === 'ITEM' ? 'Ketepatan Waktu Item' : 'Ketepatan Waktu RO'}
               </span>
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                 (viewMode === 'ITEM' ? kpiStats.itemOnTimeRatePct : kpiStats.roFulfillmentRatePct) >= 80 
@@ -1106,8 +1187,8 @@ export default function InteractiveSlaDashboard({
 
             <p className="text-[11px] text-[#747775] dark:text-[#8e918f] mt-2">
               {viewMode === 'ITEM' 
-                ? `${kpiStats.completedItemCount + kpiStats.onTimeItemCount} dari ${kpiStats.contextTotalItems} baris item tepat target`
-                : `${kpiStats.completedRoCount + kpiStats.onTimeRoCount} dari ${kpiStats.contextTotalRO} dokumen RO tepat waktu`
+                ? `${kpiStats.onTimeItemTotal} dari ${kpiStats.completedItemCount} baris item sudah diterima tepat target`
+                : `${kpiStats.onTimeRoTotal} dari ${kpiStats.completedRoCount} dokumen RO sudah diterima tepat waktu`
               }
             </p>
           </div>
@@ -1166,11 +1247,14 @@ export default function InteractiveSlaDashboard({
             </p>
           </div>
 
-          {/* Card 4: Total Dipantau & Rata-rata Lead Time */}
-          <div className="panel-card p-4 border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1a1c1e] rounded-2xl shadow-xs">
+          {/* Card 4: Total Diproses & Rata-rata Lead Time */}
+          <div
+            className="panel-card p-4 border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1a1c1e] rounded-2xl shadow-xs"
+            title="Tidak termasuk RO yang dibatalkan/ditolak"
+          >
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] uppercase tracking-wider">
-                {viewMode === 'ITEM' ? 'Total Item Dipantau' : 'Total RO Dipantau'}
+                {viewMode === 'ITEM' ? 'Total Item Diproses' : 'Total RO Diproses'}
               </span>
               <Package className="h-4 w-4 text-[#0b57d0] dark:text-[#a8c7fa]" />
             </div>
@@ -1180,7 +1264,7 @@ export default function InteractiveSlaDashboard({
                 {viewMode === 'ITEM' ? kpiStats.totalItems : kpiStats.totalRO}
               </span>
               <span className="text-xs text-[#747775] dark:text-[#8e918f]">
-                {viewMode === 'ITEM' ? 'item terfilter' : 'RO terfilter'}
+                {viewMode === 'ITEM' ? 'item diproses' : 'RO diproses'}
               </span>
             </div>
 
@@ -1347,8 +1431,110 @@ export default function InteractiveSlaDashboard({
               </div>
             </div>
 
-            {/* BARIS DROPDOWN FILTER KOLOM: CABANG (MULTI), BULAN, ALOKASI STOK, TAHAP */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t border-[#e0e2ec] dark:border-[#35383a]">
+            {/* FILTER RENTANG TANGGAL: TGL ORDER / TARGET PERMINTAAN */}
+            <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 pt-2 border-t border-[#e0e2ec] dark:border-[#35383a]">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#444746] dark:text-[#c4c7c5]">
+                  <Calendar className="h-3.5 w-3.5 text-[#0b57d0] dark:text-[#a8c7fa]" />
+                  <span>Filter Rentang Tanggal:</span>
+                </div>
+
+                <select
+                  value={dateField}
+                  onChange={(e) => {
+                    setDateField(e.target.value as RoDateField);
+                    setCurrentPage(1);
+                  }}
+                  className="rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] px-2.5 py-1.5 text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
+                  title="Pilih kolom tanggal yang dijadikan acuan filter"
+                >
+                  <option value="order_date">Berdasarkan Tgl Order</option>
+                  <option value="request_date">Berdasarkan Target Permintaan</option>
+                </select>
+
+                <div className="inline-flex items-center gap-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1 text-xs">
+                  <span className="text-[11px] font-medium text-[#747775] dark:text-[#8e918f]">Dari:</span>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => {
+                      setStartDate(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    className="bg-transparent text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] focus:outline-none"
+                  />
+                </div>
+
+                <span className="text-xs text-[#747775] dark:text-[#8e918f] font-bold">s/d</span>
+
+                <div className="inline-flex items-center gap-1.5 rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-[#f0f4f9] dark:bg-[#1e1f20] px-2.5 py-1 text-xs">
+                  <span className="text-[11px] font-medium text-[#747775] dark:text-[#8e918f]">Sampai:</span>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => {
+                      setEndDate(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    className="bg-transparent text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] focus:outline-none"
+                  />
+                </div>
+
+                <div className="inline-flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => applyDatePreset('today')}
+                    className="rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#282a2c] px-2.5 py-1 text-[11px] font-semibold text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#35383a] transition-colors"
+                  >
+                    Hari Ini
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyDatePreset('7days')}
+                    className="rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#282a2c] px-2.5 py-1 text-[11px] font-semibold text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#35383a] transition-colors"
+                  >
+                    7 Hari
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyDatePreset('month')}
+                    className="rounded-lg border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#282a2c] px-2.5 py-1 text-[11px] font-semibold text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#35383a] transition-colors"
+                  >
+                    Bulan Ini
+                  </button>
+                  {(startDate || endDate) && (
+                    <button
+                      type="button"
+                      onClick={() => applyDatePreset('clear')}
+                      className="inline-flex items-center gap-1 rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 text-[11px] font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-100 transition-colors"
+                    >
+                      <X className="h-3 w-3" />
+                      <span>Reset Tanggal</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-[11px] text-[#747775] dark:text-[#8e918f]">
+                {startDate || endDate ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 px-3 py-1 font-semibold text-[#0b57d0] dark:text-[#a8c7fa]">
+                    <span>
+                      Menampilkan <strong>{viewMode === 'ITEM' ? baseFilteredItems.length : baseFilteredOrders.length}</strong>{' '}
+                      {viewMode === 'ITEM' ? 'item' : 'dokumen RO'} ({dateField === 'request_date' ? 'Target Permintaan' : 'Tgl Order'}:{' '}
+                      {startDate ? formatDateSlash(startDate) : 'Awal'} – {endDate ? formatDateSlash(endDate) : 'Akhir'})
+                    </span>
+                  </span>
+                ) : (
+                  <span>
+                    Menampilkan semua tanggal ({viewMode === 'ITEM' ? baseFilteredItems.length : baseFilteredOrders.length}{' '}
+                    {viewMode === 'ITEM' ? 'item' : 'dokumen RO'})
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* BARIS DROPDOWN FILTER KOLOM: CABANG (MULTI), ALOKASI STOK, TAHAP */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-2 border-t border-[#e0e2ec] dark:border-[#35383a]">
               {/* 1. Filter Kolom Cabang Outlet (bisa pilih lebih dari satu) */}
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
@@ -1367,72 +1553,46 @@ export default function InteractiveSlaDashboard({
                 />
               </div>
 
-              {/* 2. Filter Kolom Periode Bulan Order */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
-                  <Calendar className="h-3 w-3 text-[#0b57d0]" />
-                  <span>Filter Bulan Order:</span>
-                </label>
-                <select
-                  value={selectedMonth}
-                  onChange={(e) => {
-                    setSelectedMonth(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] px-3 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-                >
-                  <option value="ALL">Semua Periode Bulan</option>
-                  {monthOptions.map((ym) => (
-                    <option key={ym} value={ym}>
-                      {formatMonthYear(ym)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 3. Filter Kolom Alokasi Stok Item */}
+              {/* 2. Filter Kolom Alokasi Stok Item */}
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
                   <Box className="h-3 w-3 text-[#0b57d0]" />
                   <span>Filter Alokasi Stok:</span>
                 </label>
-                <select
-                  value={selectedStockSource}
-                  onChange={(e) => {
-                    setSelectedStockSource(e.target.value);
+                <MultiSelectFilter
+                  options={STOCK_SOURCE_OPTIONS}
+                  selected={selectedStockSource}
+                  onChange={(next) => {
+                    setSelectedStockSource(next);
                     setCurrentPage(1);
                   }}
-                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] px-3 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-                >
-                  <option value="ALL">Semua Alokasi Stok</option>
-                  <option value="GUDANG_SCGA">Gudang SCGA (Ready Stock)</option>
-                  <option value="PR_VENDOR">PR Vendor (Belum Tersedia)</option>
-                  <option value="ON_PROSES">On Proses (Default)</option>
-                  <option value="CANCELLED">Dibatalkan</option>
-                </select>
+                  allLabel="Semua Alokasi Stok"
+                  noun="Alokasi"
+                  searchPlaceholder="Cari alokasi..."
+                  icon={Box}
+                  ariaLabel="Filter alokasi stok (bisa lebih dari satu)"
+                />
               </div>
 
-              {/* 4. Filter Kolom Tahap Alur Kerja */}
+              {/* 3. Filter Kolom Tahap Alur Kerja */}
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-[#444746] dark:text-[#c4c7c5] flex items-center gap-1">
                   <Truck className="h-3 w-3 text-[#0b57d0]" />
                   <span>Filter Tahap Alur:</span>
                 </label>
-                <select
-                  value={selectedStage}
-                  onChange={(e) => {
-                    setSelectedStage(e.target.value);
+                <MultiSelectFilter
+                  options={stageOptions.map((st) => ({ value: st, label: st }))}
+                  selected={selectedStage}
+                  onChange={(next) => {
+                    setSelectedStage(next);
                     setCurrentPage(1);
                   }}
-                  className="w-full rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] px-3 py-1.5 text-xs text-[#1f1f1f] dark:text-[#e3e3e3] focus:border-[#0b57d0] focus:outline-none"
-                >
-                  <option value="ALL">Semua Tahap Alur</option>
-                  {stageOptions.map((st) => (
-                    <option key={st} value={st}>
-                      {st}
-                    </option>
-                  ))}
-                </select>
+                  allLabel="Semua Tahap Alur"
+                  noun="Tahap"
+                  searchPlaceholder="Cari tahap..."
+                  icon={Truck}
+                  ariaLabel="Filter tahap alur (bisa lebih dari satu)"
+                />
               </div>
             </div>
 
@@ -1514,19 +1674,19 @@ export default function InteractiveSlaDashboard({
                     Outlet ({selectedBranches.length}): {selectedBranches.join(', ')}
                   </span>
                 )}
-                {selectedMonth !== 'ALL' && (
+                {(startDate || endDate) && (
                   <span className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-[#0b57d0] font-semibold border border-blue-200">
-                    Bulan: {formatMonthYear(selectedMonth)}
+                    {dateField === 'request_date' ? 'Target Permintaan' : 'Tgl Order'}: {startDate ? formatDateSlash(startDate) : 'Awal'} – {endDate ? formatDateSlash(endDate) : 'Akhir'}
                   </span>
                 )}
-                {selectedStockSource !== 'ALL' && (
+                {selectedStockSource.length > 0 && (
                   <span className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-[#0b57d0] font-semibold border border-blue-200">
-                    Stok: {selectedStockSource}
+                    Stok ({selectedStockSource.length}): {selectedStockSource.map(stockSourceLabel).join(', ')}
                   </span>
                 )}
-                {selectedStage !== 'ALL' && (
+                {selectedStage.length > 0 && (
                   <span className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-[#0b57d0] font-semibold border border-blue-200">
-                    Tahap: {selectedStage}
+                    Tahap ({selectedStage.length}): {selectedStage.join(', ')}
                   </span>
                 )}
                 {statusFilter !== 'ALL' && (
@@ -1792,6 +1952,13 @@ export default function InteractiveSlaDashboard({
                                   <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
                                   <span>{formatDateSlash(it.received_date)}</span>
                                 </span>
+                              ) : it.shipping_date ? (
+                                <span className="inline-flex flex-col" title="Tanggal diterima outlet belum tercatat; KPI memakai tanggal kirim SJ sebagai fallback">
+                                  <span className="text-amber-600 dark:text-amber-400 italic font-semibold">Belum tercatat</span>
+                                  <span className="text-[10px] text-[#747775] dark:text-[#8e918f]">
+                                    Acuan SJ: {formatDateSlash(it.shipping_date)}
+                                  </span>
+                                </span>
                               ) : (
                                 <span className="text-slate-400 italic">Menunggu Tiba</span>
                               )}
@@ -1815,18 +1982,16 @@ export default function InteractiveSlaDashboard({
                           {visibleItemColumns.sla_status !== false && (
                             <td className="py-3 px-3.5 whitespace-nowrap">
                               <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
-                                it.slaCategory === 'OVERDUE'
+                                it.slaCategory === 'OVERDUE' || (it.slaCategory === 'COMPLETED' && it.isLateCompletion)
                                   ? 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-900'
                                   : it.slaCategory === 'CRITICAL'
                                   ? 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-900'
-                                  : it.slaCategory === 'COMPLETED'
-                                  ? 'bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-900'
                                   : 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-900'
                               }`}>
-                                {it.slaCategory === 'OVERDUE' && <ShieldAlert className="h-3 w-3 shrink-0" />}
+                                {(it.slaCategory === 'OVERDUE' || (it.slaCategory === 'COMPLETED' && it.isLateCompletion)) && <ShieldAlert className="h-3 w-3 shrink-0" />}
                                 {it.slaCategory === 'CRITICAL' && <AlertTriangle className="h-3 w-3 shrink-0" />}
                                 {it.slaCategory === 'ON_TIME' && <CheckCircle2 className="h-3 w-3 shrink-0" />}
-                                {it.slaCategory === 'COMPLETED' && <CheckCircle2 className="h-3 w-3 shrink-0" />}
+                                {it.slaCategory === 'COMPLETED' && !it.isLateCompletion && <CheckCircle2 className="h-3 w-3 shrink-0" />}
                                 <span>{it.slaLabel}</span>
                               </span>
                             </td>
@@ -1960,6 +2125,7 @@ export default function InteractiveSlaDashboard({
                       {visibleRoColumns.branch_name !== false && <th className="py-3 px-3.5">Cabang Outlet</th>}
                       {visibleRoColumns.request_date !== false && <th className="py-3 px-3.5">Tgl Order</th>}
                       {visibleRoColumns.target_delivery_date !== false && <th className="py-3 px-3.5">Target Permintaan</th>}
+                      {visibleRoColumns.received_date !== false && <th className="py-3 px-3.5">Tgl Diterima Outlet</th>}
                       {visibleRoColumns.sla_status !== false && <th className="py-3 px-3.5">Status SLA & Deadline</th>}
                       {visibleRoColumns.fulfillment !== false && <th className="py-3 px-3.5">Pemenuhan Item</th>}
                       {visibleRoColumns.stage !== false && <th className="py-3 px-3.5">Tahap Alur</th>}
@@ -1969,7 +2135,7 @@ export default function InteractiveSlaDashboard({
                   <tbody className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60">
                     {paginatedOrders.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
+                        <td colSpan={9} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
                           <Clock className="h-8 w-8 mx-auto mb-2 opacity-40" />
                           <p className="font-semibold text-sm">Tidak ada dokumen RO yang sesuai kriteria filter aktif</p>
                           <p className="text-xs mt-1">Coba ubah pilihan filter kolom cabang, bulan, atau reset filter</p>
@@ -2030,11 +2196,29 @@ export default function InteractiveSlaDashboard({
                             </td>
                           )}
 
+                          {/* Received Date at Outlet */}
+                          {visibleRoColumns.received_date !== false && (
+                            <td className="py-3 px-3.5 whitespace-nowrap">
+                              {o.arrival_datetime ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-semibold text-[11px] border border-emerald-200 dark:border-emerald-800">
+                                  <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
+                                  <span>{formatDateSlash(o.arrival_datetime)}</span>
+                                </span>
+                              ) : o.slaCategory === 'COMPLETED' ? (
+                                <span className="text-amber-600 dark:text-amber-400 italic font-semibold" title="RO sudah selesai tetapi tanggal diterima outlet tidak tercatat">
+                                  Tgl tidak tercatat
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 italic">Belum Diterima</span>
+                              )}
+                            </td>
+                          )}
+
                           {/* SLA Status Badge */}
                           {visibleRoColumns.sla_status !== false && (
                             <td className="py-3 px-3.5 whitespace-nowrap">
                               <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
-                                o.slaCategory === 'OVERDUE'
+                                o.slaCategory === 'OVERDUE' || (o.slaCategory === 'COMPLETED' && o.isLateCompletion)
                                   ? 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-900'
                                   : o.slaCategory === 'CRITICAL'
                                   ? 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-900'
@@ -2042,10 +2226,10 @@ export default function InteractiveSlaDashboard({
                                   ? 'bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-900'
                                   : 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-900'
                               }`}>
-                                {o.slaCategory === 'OVERDUE' && <ShieldAlert className="h-3 w-3 shrink-0" />}
+                                {(o.slaCategory === 'OVERDUE' || (o.slaCategory === 'COMPLETED' && o.isLateCompletion)) && <ShieldAlert className="h-3 w-3 shrink-0" />}
                                 {o.slaCategory === 'CRITICAL' && <AlertTriangle className="h-3 w-3 shrink-0" />}
                                 {o.slaCategory === 'ON_TIME' && <CheckCircle2 className="h-3 w-3 shrink-0" />}
-                                {o.slaCategory === 'COMPLETED' && <CheckCircle2 className="h-3 w-3 shrink-0" />}
+                                {o.slaCategory === 'COMPLETED' && !o.isLateCompletion && <CheckCircle2 className="h-3 w-3 shrink-0" />}
                                 <span>{o.slaLabel}</span>
                               </span>
                             </td>
@@ -2361,7 +2545,7 @@ export default function InteractiveSlaDashboard({
             </div>
 
             {/* Modal SLA Status Summary */}
-            <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 bg-[#f0f4f9]/50 dark:bg-[#202225] border-b border-[#e0e2ec] dark:border-[#444746] text-xs">
+            <div className="p-4 grid grid-cols-2 sm:grid-cols-5 gap-3 bg-[#f0f4f9]/50 dark:bg-[#202225] border-b border-[#e0e2ec] dark:border-[#444746] text-xs">
               <div>
                 <div className="text-[10px] text-[#747775] uppercase font-bold">Tanggal Input</div>
                 <div className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mt-0.5">
@@ -2372,6 +2556,22 @@ export default function InteractiveSlaDashboard({
                 <div className="text-[10px] text-[#747775] uppercase font-bold">Target Permintaan</div>
                 <div className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mt-0.5">
                   {formatDateSlash(selectedRoDetail.target_delivery_date)}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] text-[#747775] uppercase font-bold">Tgl Diterima Outlet</div>
+                <div className={`font-bold mt-0.5 ${
+                  selectedRoDetail.arrival_datetime
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : selectedRoDetail.slaCategory === 'COMPLETED'
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-[#747775] dark:text-[#8e918f]'
+                }`}>
+                  {selectedRoDetail.arrival_datetime
+                    ? formatDateSlash(selectedRoDetail.arrival_datetime)
+                    : selectedRoDetail.slaCategory === 'COMPLETED'
+                    ? 'Tidak tercatat'
+                    : 'Belum diterima'}
                 </div>
               </div>
               <div>
@@ -2391,10 +2591,15 @@ export default function InteractiveSlaDashboard({
             {/* Modal Items List */}
             <div className="p-4 overflow-y-auto flex-1 space-y-3">
               <h4 className="font-bold text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
-                Daftar Item dalam Dokumen RO ({selectedRoDetail.items.length} Item)
+                Daftar Item dalam Dokumen RO ({selectedRoDetailActiveItems.length} Item)
               </h4>
+              {selectedRoDetailCancelledCount > 0 && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg px-2.5 py-1.5">
+                  {selectedRoDetailCancelledCount} item dibatalkan tidak dihitung dalam total item dan pemenuhan.
+                </p>
+              )}
               <div className="divide-y divide-[#e0e2ec] dark:divide-[#444746]/60 border border-[#e0e2ec] dark:border-[#444746] rounded-xl overflow-hidden text-xs">
-                {selectedRoDetail.items.map((it, idx) => (
+                {selectedRoDetailActiveItems.map((it, idx) => (
                   <div key={it.id || idx} className="p-3 flex items-center justify-between hover:bg-[#f8fafd] dark:hover:bg-[#282a2c]/40">
                     <div>
                       <div className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">{it.item_name}</div>
