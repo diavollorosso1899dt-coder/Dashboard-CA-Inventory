@@ -94,8 +94,10 @@ export async function getAuditLogs(options?: {
   search?: string;
   actionType?: string;
   limit?: number;
+  offset?: number;
 }): Promise<{ data: AuditLogEntry[]; total: number }> {
   const limit = options?.limit || 100;
+  const offset = Math.max(0, options?.offset || 0);
 
   // Try fetching from Supabase first
   try {
@@ -112,18 +114,18 @@ export async function getAuditLogs(options?: {
         query = query.or(`entity_title.ilike.%${s}%,details.ilike.%${s}%,actor_name.ilike.%${s}%`);
       }
       
-      query = query.order('timestamp', { ascending: false }).limit(limit);
+      query = query.order('timestamp', { ascending: false }).range(offset, offset + limit - 1);
       
       const { data, count, error } = await query;
       if (!error) {
         const dbRows = (data || []) as AuditLogEntry[];
-        // Sertakan log yang sempat gagal tersimpan ke DB (fallback memori).
+        // Sertakan log yang sempat gagal tersimpan ke DB (fallback memori) di halaman pertama.
         const seen = new Set(dbRows.map((row) => row.id));
-        const memoryOnly = auditStore.logs.filter((row) => !seen.has(row.id));
+        const memoryOnly = offset === 0 ? auditStore.logs.filter((row) => !seen.has(row.id)) : [];
         const combined = memoryOnly.length > 0
           ? [...dbRows, ...memoryOnly].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, limit)
           : dbRows;
-        return { data: combined, total: (count || dbRows.length) + memoryOnly.length };
+        return { data: combined, total: (count || dbRows.length) + (offset === 0 ? memoryOnly.length : 0) };
       }
       console.error('Gagal ambil audit_logs dari Supabase:', error.message);
     }
@@ -149,7 +151,7 @@ export async function getAuditLogs(options?: {
   }
 
   return {
-    data: list.slice(0, limit),
+    data: list.slice(offset, offset + limit),
     total: list.length,
   };
 }

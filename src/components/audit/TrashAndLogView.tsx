@@ -48,14 +48,19 @@ const LOG_COLUMNS: ColumnItem[] = [
   { id: 'actions', label: 'Aksi', defaultVisible: true, alwaysVisible: true },
 ];
 
+const LOG_FETCH_LIMIT = 1000;
+const LOG_LOAD_MORE_LIMIT = 500;
+
 interface TrashAndLogViewProps {
   initialTrash?: TrashItem[];
   initialLogs?: AuditLogEntry[];
+  initialLogTotal?: number;
 }
 
 export function TrashAndLogView({ 
   initialTrash = [], 
-  initialLogs = [] 
+  initialLogs = [],
+  initialLogTotal,
 }: TrashAndLogViewProps) {
   const router = useRouter();
   const { user } = useAuth();
@@ -73,7 +78,9 @@ export function TrashAndLogView({
 
   // Logs State
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(initialLogs);
+  const [logTotal, setLogTotal] = useState<number>(initialLogTotal ?? initialLogs.length);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [logsLoadingMore, setLogsLoadingMore] = useState(false);
   const [logSearch, setLogSearch] = useState('');
   const [logActionFilter, setLogActionFilter] = useState<string>('ALL');
   const [revertingLog, setRevertingLog] = useState<AuditLogEntry | null>(null);
@@ -124,15 +131,36 @@ export function TrashAndLogView({
   const loadLogs = async () => {
     setLogsLoading(true);
     try {
-      const res = await fetch('/api/audit/logs');
+      const res = await fetch(`/api/audit/logs?limit=${LOG_FETCH_LIMIT}`);
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
         setAuditLogs(json.data);
+        if (typeof json.total === 'number') setLogTotal(json.total);
       }
     } catch {
       // Ignored
     } finally {
       setLogsLoading(false);
+    }
+  };
+
+  // Muat halaman log berikutnya di luar LOG_FETCH_LIMIT pertama.
+  const loadMoreLogs = async () => {
+    setLogsLoadingMore(true);
+    try {
+      const res = await fetch(`/api/audit/logs?limit=${LOG_LOAD_MORE_LIMIT}&offset=${auditLogs.length}`);
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setAuditLogs((prev) => {
+          const seen = new Set(prev.map((log) => log.id));
+          return [...prev, ...json.data.filter((log: AuditLogEntry) => !seen.has(log.id))];
+        });
+        if (typeof json.total === 'number') setLogTotal(json.total);
+      }
+    } catch {
+      // Ignored
+    } finally {
+      setLogsLoadingMore(false);
     }
   };
 
@@ -486,7 +514,7 @@ export function TrashAndLogView({
             <History className="w-3.5 h-3.5" />
             <span>Audit Log Perubahan</span>
             <span className="ml-1 rounded-full bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 text-[10px] font-bold px-2 py-0.2">
-              {auditLogs.length}
+              {logTotal}
             </span>
           </button>
         </div>
@@ -1093,6 +1121,33 @@ export function TrashAndLogView({
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* Jumlah log & muat lebih banyak */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-1 text-[11px] text-[#747775] dark:text-[#8e918f]">
+            <span>
+              Menampilkan <strong className="text-[#1f1f1f] dark:text-[#e3e3e3]">{auditLogs.length}</strong> dari{' '}
+              <strong className="text-[#1f1f1f] dark:text-[#e3e3e3]">{logTotal}</strong> log (retensi 7 hari)
+            </span>
+            {auditLogs.length < logTotal && (
+              <button
+                type="button"
+                onClick={loadMoreLogs}
+                disabled={logsLoadingMore}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-white dark:bg-[#1e1f20] px-3 py-1.5 text-xs font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:bg-[#f0f4f9] dark:hover:bg-[#282a2c] transition-colors disabled:opacity-50"
+              >
+                {logsLoadingMore ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <History className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {logsLoadingMore
+                    ? 'Memuat...'
+                    : `Muat ${Math.min(LOG_LOAD_MORE_LIMIT, logTotal - auditLogs.length)} log lagi`}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       )}

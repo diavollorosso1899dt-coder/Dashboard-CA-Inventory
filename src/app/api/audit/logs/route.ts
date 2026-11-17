@@ -15,8 +15,9 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search') || undefined;
     const actionType = searchParams.get('actionType') || undefined;
     const limit = parseInt(searchParams.get('limit') || '100');
+    const offset = parseInt(searchParams.get('offset') || '0');
 
-    const result = await getAuditLogs({ search, actionType, limit });
+    const result = await getAuditLogs({ search, actionType, limit, offset });
     return NextResponse.json({ success: true, ...result });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
