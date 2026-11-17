@@ -26,6 +26,8 @@ import {
 } from 'lucide-react';
 import { TrashItem, AuditLogEntry, AuditActionType } from '@/lib/supabase/types';
 import { auditLogActionMeta, resolveAuditLogAction } from '@/lib/audit/log-action';
+import { diffChangedItems } from '@/lib/audit/revert-items';
+import { formatValue } from '@/lib/audit/change-summary';
 import { useAuth } from '@/components/auth/AuthContext';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
@@ -50,6 +52,12 @@ const LOG_COLUMNS: ColumnItem[] = [
 
 const LOG_FETCH_LIMIT = 1000;
 const LOG_LOAD_MORE_LIMIT = 500;
+
+function formatStateValue(value: unknown): string {
+  if (value === null || value === undefined) return '-';
+  if (typeof value === 'object') return JSON.stringify(value, null, 2);
+  return String(value);
+}
 
 interface TrashAndLogViewProps {
   initialTrash?: TrashItem[];
@@ -84,8 +92,14 @@ export function TrashAndLogView({
   const [logSearch, setLogSearch] = useState('');
   const [logActionFilter, setLogActionFilter] = useState<string>('ALL');
   const [revertingLog, setRevertingLog] = useState<AuditLogEntry | null>(null);
+  const [selectedRevertItemKeys, setSelectedRevertItemKeys] = useState<string[]>([]);
   const [isReverting, setIsReverting] = useState(false);
   const [logActionLoadingId, setLogActionLoadingId] = useState<string | null>(null);
+
+  const revertChangedItems = useMemo(() => {
+    if (!revertingLog || revertingLog.action_type === 'DELETE_TO_TRASH') return [];
+    return diffChangedItems(revertingLog.previous_state?.items, revertingLog.new_state?.items);
+  }, [revertingLog]);
 
   // Column Visibility for Trash
   const {
@@ -399,6 +413,98 @@ export function TrashAndLogView({
     }
   };
 
+  // -------------------------------------------------------------------
+  // AUDIT LOG REVERT ACTIONS
+  // -------------------------------------------------------------------
+  const openRevertModal = (log: AuditLogEntry) => {
+    const changed =
+      log.action_type === 'DELETE_TO_TRASH'
+        ? []
+        : diffChangedItems(log.previous_state?.items, log.new_state?.items);
+    setSelectedRevertItemKeys(changed.map((item) => item.key));
+    setRevertingLog(log);
+  };
+
+  const toggleRevertItem = (key: string) => {
+    setSelectedRevertItemKeys((prev) =>
+      prev.includes(key) ? prev.filter((itemKey) => itemKey !== key) : [...prev, key]
+    );
+  };
+
+  const toggleAllRevertItems = () => {
+    const allSelected =
+      revertChangedItems.length > 0 &&
+      revertChangedItems.every((item) => selectedRevertItemKeys.includes(item.key));
+    setSelectedRevertItemKeys(allSelected ? [] : revertChangedItems.map((item) => item.key));
+  };
+
+  const handleRevertAll = async () => {
+    if (!revertingLog) return;
+    try {
+      setIsReverting(true);
+      const res = await fetch('/api/audit/logs/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          logId: revertingLog.id,
+          action: 'revert',
+          actorName: user?.full_name || 'Super User',
+          actorRole: user?.role || 'Super User',
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        showFeedback(json.message || `Perubahan pada "${revertingLog.entity_title}" berhasil dikembalikan.`);
+        setRevertingLog(null);
+        setSelectedRevertItemKeys([]);
+        loadLogs();
+        loadTrash();
+        router.refresh();
+      } else {
+        showFeedback(json.error || json.message || 'Gagal mengembalikan perubahan data.', 'error');
+      }
+    } catch (err: any) {
+      showFeedback(`Terjadi kesalahan: ${err.message}`, 'error');
+    } finally {
+      setIsReverting(false);
+    }
+  };
+
+  const handleRevertItems = async () => {
+    if (!revertingLog || selectedRevertItemKeys.length === 0) return;
+    try {
+      setIsReverting(true);
+      const res = await fetch('/api/audit/logs/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          logId: revertingLog.id,
+          action: 'revert-items',
+          itemKeys: selectedRevertItemKeys,
+          actorName: user?.full_name || 'Super User',
+          actorRole: user?.role || 'Super User',
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        showFeedback(
+          json.message || `Item terpilih pada "${revertingLog.entity_title}" berhasil dikembalikan.`
+        );
+        setRevertingLog(null);
+        setSelectedRevertItemKeys([]);
+        loadLogs();
+        loadTrash();
+        router.refresh();
+      } else {
+        showFeedback(json.error || json.message || 'Gagal mengembalikan item terpilih.', 'error');
+      }
+    } catch (err: any) {
+      showFeedback(`Terjadi kesalahan: ${err.message}`, 'error');
+    } finally {
+      setIsReverting(false);
+    }
+  };
+
   // Export logs to CSV
   const handleExportLogsCsv = () => {
     const headers = ['Waktu', 'Aktor', 'Peran', 'Aksi', 'Modul', 'Judul Entitas', 'Rincian'];
@@ -444,6 +550,9 @@ export function TrashAndLogView({
   };
 
   const revertingFromTrash = revertingLog?.action_type === 'DELETE_TO_TRASH';
+  const allRevertItemsSelected =
+    revertChangedItems.length > 0 &&
+    revertChangedItems.every((item) => selectedRevertItemKeys.includes(item.key));
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
@@ -1089,7 +1198,7 @@ export function TrashAndLogView({
                               <button
                                 type="button"
                                 disabled={isLogActing}
-                                onClick={() => setRevertingLog(log)}
+                                onClick={() => openRevertModal(log)}
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:text-indigo-300 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800 text-xs font-bold transition-colors shadow-xs disabled:opacity-50"
                                 title={actionMeta.title}
                               >
@@ -1211,13 +1320,13 @@ export function TrashAndLogView({
       {revertingLog && (
         <div 
           onClick={() => !isReverting && setRevertingLog(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in overflow-y-auto"
         >
           <div 
             onClick={(e) => e.stopPropagation()} 
-            className="w-full max-w-xl bg-white dark:bg-[#1e1f20] rounded-3xl border border-[#e0e2ec] dark:border-[#444746] overflow-hidden shadow-2xl p-6 space-y-4"
+            className="w-full max-w-2xl bg-white dark:bg-[#1e1f20] rounded-3xl border border-[#e0e2ec] dark:border-[#444746] shadow-2xl p-6 flex max-h-[calc(100vh-2rem)] flex-col gap-4 overflow-hidden"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
                   <RotateCcw className="w-5 h-5" />
@@ -1244,6 +1353,7 @@ export function TrashAndLogView({
               </button>
             </div>
 
+            <div className="min-h-0 flex-1 overflow-y-auto space-y-4 pr-1 -mr-1">
             {/* Entitas info */}
             <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs space-y-1">
               <div>Entitas: <strong className="text-[#0b57d0] dark:text-[#a8c7fa]">{revertingLog.entity_title}</strong> <span className="text-[11px] text-slate-500">({revertingLog.entity_type})</span></div>
@@ -1262,31 +1372,136 @@ export function TrashAndLogView({
                 <div className="text-xs font-bold text-[#1f1f1f] dark:text-[#e3e3e3] mb-2">
                   Perbandingan Nilai (Sebelum vs Sesudah):
                 </div>
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                  <div className="grid grid-cols-3 bg-slate-100 dark:bg-slate-800/80 p-2.5 font-bold text-[11px] text-slate-600 dark:text-slate-300 uppercase">
-                    <div>Parameter / Field</div>
-                    <div className="text-emerald-700 dark:text-emerald-400">Nilai Sebelumnya (Dipulihkan)</div>
-                    <div className="text-rose-600 dark:text-rose-400">Nilai Saat Ini (Dibatalkan)</div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden text-xs">
+                  <div className="max-h-72 overflow-y-auto">
+                    <div className="grid grid-cols-3 gap-2 bg-slate-100 dark:bg-slate-800/80 p-2.5 font-bold text-[11px] text-slate-600 dark:text-slate-300 uppercase sticky top-0 z-10">
+                      <div>Parameter / Field</div>
+                      <div className="text-emerald-700 dark:text-emerald-400">Nilai Sebelumnya (Dipulihkan)</div>
+                      <div className="text-rose-600 dark:text-rose-400">Nilai Saat Ini (Dibatalkan)</div>
+                    </div>
+                    <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {Object.entries(revertingLog.previous_state || {})
+                        .filter(([key]) => key !== 'items' || revertChangedItems.length === 0)
+                        .map(([key, oldVal]) => {
+                          const newVal = (revertingLog.new_state || {})[key];
+                          return (
+                            <div key={key} className="grid grid-cols-3 gap-2 p-2.5 items-start">
+                              <div className="min-w-0 break-all font-mono text-slate-600 dark:text-slate-400">{key}</div>
+                              <div className="min-w-0 font-bold text-emerald-700 dark:text-emerald-300">
+                                <pre className="whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed">
+                                  {formatStateValue(oldVal)}
+                                </pre>
+                              </div>
+                              <div className="min-w-0 text-slate-400 line-through">
+                                <pre className="whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed">
+                                  {formatStateValue(newVal)}
+                                </pre>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
                   </div>
-                  {Object.entries(revertingLog.previous_state || {}).map(([key, oldVal]) => {
-                    const newVal = (revertingLog.new_state || {})[key];
+                </div>
+                {revertChangedItems.length > 0 &&
+                  Object.prototype.hasOwnProperty.call(revertingLog.previous_state || {}, 'items') && (
+                    <div className="mt-1.5 text-[10px] text-slate-500">
+                      Perubahan field item dirinci pada daftar pilihan item di bawah.
+                    </div>
+                  )}
+              </div>
+            )}
+
+            {!revertingFromTrash && revertChangedItems.length > 0 && (
+              <div className="rounded-2xl border border-indigo-200 dark:border-indigo-900/60 overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/80 dark:bg-indigo-950/30 px-3.5 py-3 border-b border-indigo-100 dark:border-indigo-900/50">
+                  <div>
+                    <div className="text-xs font-bold text-indigo-900 dark:text-indigo-200">
+                      Pilih Item yang Dikembalikan
+                    </div>
+                    <div className="text-[11px] text-indigo-700/80 dark:text-indigo-300/80">
+                      Hanya field item yang berubah pada log ini yang dipulihkan. Perubahan level RO
+                      (mis. catatan/status) tetap lewat &quot;Kembalikan Semua (RO)&quot;.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={toggleAllRevertItems}
+                    disabled={isReverting}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white/80 dark:bg-indigo-950/40 px-2.5 py-1.5 text-[11px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-white transition-colors disabled:opacity-50"
+                  >
+                    {allRevertItemsSelected ? (
+                      <CheckSquare className="w-4 h-4" />
+                    ) : (
+                      <Square className="w-4 h-4" />
+                    )}
+                    <span>{allRevertItemsSelected ? 'Batal pilih semua' : 'Pilih semua'}</span>
+                  </button>
+                </div>
+                <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                  {revertChangedItems.map((changedItem) => {
+                    const checked = selectedRevertItemKeys.includes(changedItem.key);
                     return (
-                      <div key={key} className="grid grid-cols-3 p-2.5 items-center">
-                        <div className="font-mono text-slate-600 dark:text-slate-400">{key}</div>
-                        <div className="font-bold text-emerald-700 dark:text-emerald-300">
-                          {typeof oldVal === 'object' ? JSON.stringify(oldVal) : String(oldVal ?? '-')}
-                        </div>
-                        <div className="text-slate-400 line-through">
-                          {typeof newVal === 'object' ? JSON.stringify(newVal) : String(newVal ?? '-')}
-                        </div>
-                      </div>
+                      <label
+                        key={changedItem.key}
+                        className={`flex items-start gap-2.5 p-3 cursor-pointer transition-colors ${
+                          checked
+                            ? 'bg-indigo-50/40 dark:bg-indigo-950/20'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-900/60'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={checked}
+                          onChange={() => toggleRevertItem(changedItem.key)}
+                          disabled={isReverting}
+                        />
+                        <span className="mt-0.5 shrink-0">
+                          {checked ? (
+                            <CheckSquare className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                          ) : (
+                            <Square className="w-4 h-4 text-slate-400" />
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-xs font-semibold text-slate-800 dark:text-slate-200">
+                            {changedItem.itemName}
+                          </span>
+                          <span className="mt-1 flex flex-wrap gap-1.5">
+                            {changedItem.fields.slice(0, 3).map((diff) => (
+                              <span
+                                key={diff.field}
+                                className="inline-flex max-w-full items-center gap-1 rounded-lg bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-mono text-slate-600 dark:text-slate-300"
+                              >
+                                <span className="font-bold text-slate-700 dark:text-slate-200">{diff.field}</span>
+                                <span className="text-slate-400">dari</span>
+                                <span className="text-rose-500 line-through">
+                                  {formatValue(diff.field, diff.currentValue)}
+                                </span>
+                                <span className="text-slate-400">→</span>
+                                <span className="text-emerald-600 dark:text-emerald-400">
+                                  {formatValue(diff.field, diff.previousValue)}
+                                </span>
+                              </span>
+                            ))}
+                            {changedItem.fields.length > 3 && (
+                              <span className="text-[10px] text-slate-500">
+                                +{changedItem.fields.length - 3} field lain
+                              </span>
+                            )}
+                          </span>
+                        </span>
+                      </label>
                     );
                   })}
                 </div>
               </div>
             )}
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800 shrink-0">
               <button
                 type="button"
                 disabled={isReverting}
@@ -1295,52 +1510,50 @@ export function TrashAndLogView({
               >
                 Batal
               </button>
-              <button
-                type="button"
-                disabled={isReverting}
-                onClick={async () => {
-                  if (!revertingLog) return;
-                  try {
-                    setIsReverting(true);
-                    const res = await fetch('/api/audit/logs/actions', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        logId: revertingLog.id,
-                        action: 'revert',
-                        actorName: user?.full_name || 'Super User',
-                        actorRole: user?.role || 'Super User',
-                      }),
-                    });
-                    const json = await res.json();
-                    if (json.success) {
-                      showFeedback(json.message || `Perubahan pada "${revertingLog.entity_title}" berhasil dikembalikan.`);
-                      setRevertingLog(null);
-                      loadLogs();
-                      loadTrash();
-                      router.refresh();
-                    } else {
-                      showFeedback(json.error || json.message || 'Gagal mengembalikan perubahan data.', 'error');
-                    }
-                  } catch (err: any) {
-                    showFeedback(`Terjadi kesalahan: ${err.message}`, 'error');
-                  } finally {
-                    setIsReverting(false);
-                  }
-                }}
-                className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors disabled:opacity-50 shadow-sm"
-              >
-                <RotateCcw className={`w-3.5 h-3.5 ${isReverting ? 'animate-spin' : ''}`} />
-                <span>
-                  {isReverting
-                    ? revertingFromTrash
-                      ? 'Memulihkan...'
-                      : 'Mengembalikan...'
-                    : revertingFromTrash
-                      ? 'Ya, Pulihkan dari Tempat Sampah'
-                      : 'Ya, Kembalikan ke Sebelumnya'}
-                </span>
-              </button>
+              {!revertingFromTrash && revertChangedItems.length > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={isReverting}
+                    onClick={handleRevertAll}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-600 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                  >
+                    <RotateCcw className={`w-3.5 h-3.5 ${isReverting ? 'animate-spin' : ''}`} />
+                    <span>Kembalikan Semua (RO)</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isReverting || selectedRevertItemKeys.length === 0}
+                    onClick={handleRevertItems}
+                    className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors disabled:opacity-50 shadow-sm"
+                  >
+                    <RotateCcw className={`w-3.5 h-3.5 ${isReverting ? 'animate-spin' : ''}`} />
+                    <span>
+                      {isReverting
+                        ? 'Memproses...'
+                        : `Pulihkan Item Terpilih (${selectedRevertItemKeys.length})`}
+                    </span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isReverting}
+                  onClick={handleRevertAll}
+                  className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors disabled:opacity-50 shadow-sm"
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 ${isReverting ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isReverting
+                      ? revertingFromTrash
+                        ? 'Memulihkan...'
+                        : 'Mengembalikan...'
+                      : revertingFromTrash
+                        ? 'Ya, Pulihkan dari Tempat Sampah'
+                        : 'Ya, Kembalikan ke Sebelumnya'}
+                  </span>
+                </button>
+              )}
             </div>
           </div>
         </div>

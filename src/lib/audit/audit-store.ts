@@ -1,16 +1,18 @@
-import { TrashItem, AuditLogEntry, AuditEntityType, TrashEntityType, AuditActionType } from '@/lib/supabase/types';
+import { TrashItem, AuditLogEntry, AuditEntityType, TrashEntityType, AuditActionType, ROItem } from '@/lib/supabase/types';
 import {
   deleteAssetTransfer,
   deleteRequestOrder,
   deleteSuratJalan,
   deleteUserProfile,
   getAdminClient,
+  getRequestOrders,
   updateAssetRequest,
   updateAssetTransfer,
   updateRequestOrder,
 } from '@/lib/supabase/server';
 import { removeTombstonesByKeys } from '@/lib/sync-engine/tombstones';
-import { AUDIT_ENTITY_TABLES } from './log-action';
+import { AUDIT_ENTITY_TABLES, resolveAuditLogAction } from './log-action';
+import { diffChangedItems, mergeRevertedItems } from './revert-items';
 
 // In-memory fallback. Data utama selalu disimpan di Supabase (tabel
 // audit_logs & trash_items); memori hanya dipakai bila koneksi DB gagal.
@@ -275,6 +277,150 @@ export async function revertAuditLog(
   } catch (err: any) {
     console.error('Error reverting audit log:', err);
     return { success: false, message: `Terjadi kesalahan saat revert: ${err.message}` };
+  }
+}
+
+/**
+ * Kembalikan hanya item RO yang dipilih dari sebuah log audit.
+ *
+ * Berbeda dengan `revertAuditLog` yang menimpa seluruh array `items`, fungsi ini
+ * hanya menulis ulang field yang berubah pada item terpilih. Progres item lain
+ * dan field yang tidak tercatat berubah pada log tetap dipertahankan.
+ */
+export async function revertAuditLogItems(
+  logId: string,
+  itemKeys: string[],
+  actorName: string,
+  actorRole: string
+): Promise<{
+  success: boolean;
+  message: string;
+  data?: AuditLogEntry;
+  applied?: number;
+  skipped?: number;
+}> {
+  const log = await getAuditLogById(logId);
+  if (!log) {
+    return { success: false, message: 'Catatan log tidak ditemukan.' };
+  }
+
+  if (log.entity_type !== 'RO' || !log.entity_id) {
+    return {
+      success: false,
+      message: 'Pemulihan per item hanya tersedia untuk Request Order (RO).',
+    };
+  }
+
+  if (log.action_type === 'DELETE_TO_TRASH' || resolveAuditLogAction(log) !== 'revert') {
+    return { success: false, message: 'Log ini tidak bisa dikembalikan per item.' };
+  }
+
+  const previousState = log.previous_state;
+  const newState = log.new_state;
+  const previousItems =
+    previousState && typeof previousState === 'object' && !Array.isArray(previousState)
+      ? (previousState as any).items
+      : undefined;
+  const newItems =
+    newState && typeof newState === 'object' && !Array.isArray(newState)
+      ? (newState as any).items
+      : undefined;
+
+  if (!Array.isArray(previousItems) || !Array.isArray(newItems)) {
+    return {
+      success: false,
+      message: 'Log ini tidak menyimpan rincian item yang bisa dikembalikan per item.',
+    };
+  }
+
+  const changedItems = diffChangedItems(previousItems, newItems);
+  if (changedItems.length === 0) {
+    return {
+      success: false,
+      message: 'Tidak ada perubahan item yang bisa dikembalikan dari log ini.',
+    };
+  }
+
+  const selectedKeys = Array.from(
+    new Set((Array.isArray(itemKeys) ? itemKeys : []).filter((key): key is string => typeof key === 'string'))
+  );
+  if (selectedKeys.length === 0) {
+    return { success: false, message: 'Pilih minimal satu item yang ingin dikembalikan.' };
+  }
+
+  const selectedSet = new Set(selectedKeys);
+  const matchedChanges = changedItems.filter((item) => selectedSet.has(item.key));
+  if (matchedChanges.length === 0) {
+    return {
+      success: false,
+      message: 'Item yang dipilih tidak cocok dengan perubahan pada log ini.',
+    };
+  }
+
+  try {
+    const orders = await getRequestOrders(true);
+    const order = orders.find((row) => row.id === log.entity_id || row.ro_number === log.entity_id);
+    if (!order) {
+      return {
+        success: false,
+        message: 'RO tidak ditemukan. Pastikan dokumen RO masih ada sebelum memulihkan item.',
+      };
+    }
+
+    const liveItems = Array.isArray(order.items) ? order.items : [];
+    const merged = mergeRevertedItems(
+      liveItems,
+      changedItems,
+      matchedChanges.map((item) => item.key)
+    );
+
+    if (merged.appliedKeys.length === 0) {
+      return {
+        success: false,
+        message: 'Item yang dipilih sudah tidak ada di RO saat ini, sehingga tidak bisa dipulihkan per item.',
+      };
+    }
+
+    const ok = await updateRequestOrder(log.entity_id, { items: merged.items as ROItem[] });
+    if (!ok) {
+      return {
+        success: false,
+        message: 'Gagal menyimpan pemulihan item ke Supabase. Pastikan dokumen RO masih ada.',
+      };
+    }
+
+    const appliedSet = new Set(merged.appliedKeys);
+    const appliedChanges = changedItems.filter((item) => appliedSet.has(item.key));
+    const names = appliedChanges.map((item) => `"${item.itemName}"`);
+    const nameText =
+      names.length <= 3
+        ? names.join(', ')
+        : `${names.slice(0, 3).join(', ')}, +${names.length - 3} lainnya`;
+
+    const revertEntry = await recordAuditLog(
+      actorName || 'Super User',
+      actorRole || 'Super User',
+      'REVERT',
+      'RO',
+      log.entity_title,
+      `Mengembalikan ${appliedChanges.length} item pada ${log.entity_title} ke kondisi sebelum log #${log.id.slice(-6)}: ${nameText}.`,
+      {
+        entityId: log.entity_id,
+        previousState: { items: liveItems },
+        newState: { items: merged.items },
+      }
+    );
+
+    return {
+      success: true,
+      message: `${appliedChanges.length} item pada "${log.entity_title}" berhasil dikembalikan.`,
+      data: revertEntry,
+      applied: appliedChanges.length,
+      skipped: merged.skippedKeys.length,
+    };
+  } catch (err: any) {
+    console.error('Error reverting audit log items:', err);
+    return { success: false, message: `Terjadi kesalahan saat memulihkan item: ${err.message}` };
   }
 }
 

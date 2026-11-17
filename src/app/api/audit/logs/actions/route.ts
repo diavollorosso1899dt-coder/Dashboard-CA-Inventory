@@ -5,6 +5,7 @@ import {
   getAuditLogById,
   restoreDeletedEntity,
   revertAuditLog,
+  revertAuditLogItems,
 } from '@/lib/audit/audit-store';
 import { resolveAuditLogAction } from '@/lib/audit/log-action';
 import { resolveActor } from '@/lib/auth/actor';
@@ -14,6 +15,7 @@ export const dynamic = 'force-dynamic';
 /**
  * Menjalankan satu opsi tindakan pada Audit Log:
  * - action = "revert" : kembalikan data ke kondisi sebelumnya / pulihkan dari sampah
+ * - action = "revert-items" : kembalikan item RO terpilih saja
  * - action = "delete" : hapus data terkait (CREATE/RESTORE) atau hapus log saja
  *
  * Jenis tindakan ditentukan ulang di server dari isi log, bukan dari klien,
@@ -61,6 +63,33 @@ export async function POST(req: NextRequest) {
         { success: result.success, message: result.message, data: result.data },
         { status: result.success ? 200 : 400 }
       );
+    }
+
+    if (action === 'revert-items') {
+      if (kind !== 'revert') {
+        return NextResponse.json(
+          { success: false, error: 'Log ini tidak bisa dikembalikan. Gunakan opsi Hapus.' },
+          { status: 400 }
+        );
+      }
+
+      if (log.entity_type !== 'RO') {
+        return NextResponse.json(
+          { success: false, error: 'Pemulihan per item hanya tersedia untuk Request Order (RO).' },
+          { status: 400 }
+        );
+      }
+
+      const itemKeys = Array.isArray(body?.itemKeys) ? body.itemKeys : [];
+      if (itemKeys.length === 0) {
+        return NextResponse.json(
+          { success: false, error: 'Pilih minimal satu item yang ingin dikembalikan.' },
+          { status: 400 }
+        );
+      }
+
+      const result = await revertAuditLogItems(log.id, itemKeys, actor.name, actor.role);
+      return NextResponse.json(result, { status: result.success ? 200 : 400 });
     }
 
     if (action === 'delete') {
