@@ -8,9 +8,10 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const items = await getTrashItems();
+    const region = req.nextUrl.searchParams.get('region') || undefined;
+    const items = await getTrashItems({ region });
     return NextResponse.json({ success: true, data: items, total: items.length });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -41,11 +42,12 @@ export async function DELETE(req: NextRequest) {
     const searchParams = req.nextUrl.searchParams;
     const id = searchParams.get('id');
     const emptyAll = searchParams.get('emptyAll') === 'true';
+    const region = searchParams.get('region') || undefined;
     const actorName = searchParams.get('actorName') || 'Super User';
     const actorRole = searchParams.get('actorRole') || 'Super User';
 
     if (emptyAll) {
-      const res = await emptyAllTrash(actorName, actorRole);
+      const res = await emptyAllTrash(actorName, actorRole, region);
       return NextResponse.json({ success: true, ...res });
     }
 

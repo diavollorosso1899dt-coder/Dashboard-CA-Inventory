@@ -11,7 +11,10 @@ export const metadata = {
 
 export default async function TrashPage() {
   const trashItems = await getTrashItems();
-  const { data: auditLogs, total: auditLogTotal } = await getAuditLogs({ limit: 1000 });
+  const { data: auditLogs, total: auditLogTotal } = await getAuditLogs({
+    limit: 1000,
+    withRegion: true,
+  });
 
   return <TrashAndLogView initialTrash={trashItems} initialLogs={auditLogs} initialLogTotal={auditLogTotal} />;
 }

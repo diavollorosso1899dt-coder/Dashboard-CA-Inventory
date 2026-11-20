@@ -512,4 +512,6 @@ export interface AuditLogEntry {
   details: string;
   previous_state?: any;
   new_state?: any;
+  /** Region hasil pemetaan audit (tidak disimpan di tabel audit_logs). */
+  region?: 'JABODETABEK' | 'KALBAR' | null;
 }

@@ -13,6 +13,8 @@ import {
 import { removeTombstonesByKeys } from '@/lib/sync-engine/tombstones';
 import { AUDIT_ENTITY_TABLES, resolveAuditLogAction } from './log-action';
 import { diffChangedItems, mergeRevertedItems } from './revert-items';
+import { attachAuditLogRegions } from './audit-region';
+import { filterAuditLogsByRegion, normalizeKnownAuditRegion } from './audit-region-core';
 
 // In-memory fallback. Data utama selalu disimpan di Supabase (tabel
 // audit_logs & trash_items); memori hanya dipakai bila koneksi DB gagal.
@@ -95,41 +97,83 @@ export async function recordAuditLog(
 export async function getAuditLogs(options?: {
   search?: string;
   actionType?: string;
+  region?: string;
+  withRegion?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<{ data: AuditLogEntry[]; total: number }> {
   const limit = options?.limit || 100;
   const offset = Math.max(0, options?.offset || 0);
+  const regionFilter = normalizeKnownAuditRegion(options?.region);
+  const needsRegion = Boolean(regionFilter || options?.withRegion);
 
   // Try fetching from Supabase first
   try {
     const admin = getAdminClient();
     if (admin) {
-      let query = admin.from('audit_logs').select('*', { count: 'exact' });
-      
-      if (options?.actionType && options.actionType !== 'ALL') {
-        query = query.eq('action_type', options.actionType);
+      const buildQuery = () => {
+        let query = admin.from('audit_logs').select('*', { count: 'exact' });
+
+        if (options?.actionType && options.actionType !== 'ALL') {
+          query = query.eq('action_type', options.actionType);
+        }
+
+        if (options?.search) {
+          const s = options.search;
+          query = query.or(`entity_title.ilike.%${s}%,details.ilike.%${s}%,actor_name.ilike.%${s}%`);
+        }
+
+        return query.order('timestamp', { ascending: false });
+      };
+
+      if (needsRegion) {
+        // Region tidak tersimpan di tabel audit_logs. Ambil semua baris yang
+        // cocok, petakan regionnya, baru filter + paginate agar total akurat.
+        const allRows: AuditLogEntry[] = [];
+        let dbError: { message: string } | null = null;
+
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await buildQuery().range(from, from + 999);
+          if (error) {
+            dbError = error;
+            break;
+          }
+          const page = (data || []) as AuditLogEntry[];
+          allRows.push(...page);
+          if (page.length < 1000) break;
+        }
+
+        if (!dbError) {
+          const seen = new Set(allRows.map((row) => row.id));
+          const memoryOnly = auditStore.logs.filter((row) => !seen.has(row.id));
+          const combined = [...allRows, ...memoryOnly].sort((a, b) =>
+            b.timestamp.localeCompare(a.timestamp)
+          );
+          const withRegions = await attachAuditLogRegions(combined);
+          const filtered = filterAuditLogsByRegion(withRegions, regionFilter);
+
+          return {
+            data: filtered.slice(offset, offset + limit),
+            total: filtered.length,
+          };
+        }
+
+        console.error('Gagal ambil audit_logs dari Supabase:', dbError.message);
+      } else {
+        const { data, count, error } = await buildQuery().range(offset, offset + limit - 1);
+
+        if (!error) {
+          const dbRows = (data || []) as AuditLogEntry[];
+          // Sertakan log yang sempat gagal tersimpan ke DB (fallback memori) di halaman pertama.
+          const seen = new Set(dbRows.map((row) => row.id));
+          const memoryOnly = offset === 0 ? auditStore.logs.filter((row) => !seen.has(row.id)) : [];
+          const combined = memoryOnly.length > 0
+            ? [...dbRows, ...memoryOnly].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, limit)
+            : dbRows;
+          return { data: combined, total: (count || dbRows.length) + (offset === 0 ? memoryOnly.length : 0) };
+        }
+        console.error('Gagal ambil audit_logs dari Supabase:', error.message);
       }
-      
-      if (options?.search) {
-        const s = options.search;
-        query = query.or(`entity_title.ilike.%${s}%,details.ilike.%${s}%,actor_name.ilike.%${s}%`);
-      }
-      
-      query = query.order('timestamp', { ascending: false }).range(offset, offset + limit - 1);
-      
-      const { data, count, error } = await query;
-      if (!error) {
-        const dbRows = (data || []) as AuditLogEntry[];
-        // Sertakan log yang sempat gagal tersimpan ke DB (fallback memori) di halaman pertama.
-        const seen = new Set(dbRows.map((row) => row.id));
-        const memoryOnly = offset === 0 ? auditStore.logs.filter((row) => !seen.has(row.id)) : [];
-        const combined = memoryOnly.length > 0
-          ? [...dbRows, ...memoryOnly].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, limit)
-          : dbRows;
-        return { data: combined, total: (count || dbRows.length) + (offset === 0 ? memoryOnly.length : 0) };
-      }
-      console.error('Gagal ambil audit_logs dari Supabase:', error.message);
     }
   } catch (err) {
     console.warn('Gagal ambil audit_logs dari Supabase, fallback ke memory', err);
@@ -150,6 +194,10 @@ export async function getAuditLogs(options?: {
         l.details.toLowerCase().includes(s) ||
         l.actor_name.toLowerCase().includes(s)
     );
+  }
+
+  if (needsRegion) {
+    list = filterAuditLogsByRegion(await attachAuditLogRegions(list), regionFilter);
   }
 
   return {
@@ -665,7 +713,15 @@ export async function restoreDeletedEntity(
 // -------------------------------------------------------------
 // TRASH / RECYCLE BIN SERVICE
 // -------------------------------------------------------------
-export async function getTrashItems(): Promise<TrashItem[]> {
+export async function getTrashItems(options?: {
+  region?: string;
+}): Promise<TrashItem[]> {
+  const regionFilter = normalizeKnownAuditRegion(options?.region);
+  const filterByRegion = (items: TrashItem[]) =>
+    regionFilter
+      ? items.filter((item) => normalizeKnownAuditRegion(item.region) === regionFilter)
+      : items;
+
   try {
     const admin = getAdminClient();
     if (admin) {
@@ -675,7 +731,7 @@ export async function getTrashItems(): Promise<TrashItem[]> {
         .order('deleted_at', { ascending: false });
         
       if (!error) {
-        return (data || []) as TrashItem[];
+        return filterByRegion((data || []) as TrashItem[]);
       }
       console.error('Gagal ambil trash_items dari Supabase:', error.message);
     }
@@ -683,7 +739,7 @@ export async function getTrashItems(): Promise<TrashItem[]> {
     console.warn('Gagal ambil trash_items dari Supabase, fallback ke memory', err);
   }
 
-  return [...auditStore.trash];
+  return filterByRegion([...auditStore.trash]);
 }
 
 export async function moveItemToTrash(
@@ -911,8 +967,41 @@ export async function permanentDeleteItem(
 
 export async function emptyAllTrash(
   actorName: string = 'Super User',
-  actorRole: string = 'Super User'
+  actorRole: string = 'Super User',
+  region?: string
 ): Promise<{ count: number }> {
+  const regionFilter = normalizeKnownAuditRegion(region);
+
+  if (regionFilter) {
+    const items = await getTrashItems({ region: regionFilter });
+    const ids = items.map((item) => item.id);
+
+    auditStore.trash = auditStore.trash.filter(
+      (item) => normalizeKnownAuditRegion(item.region) !== regionFilter
+    );
+
+    try {
+      const admin = getAdminClient();
+      if (admin && ids.length > 0) {
+        await admin.from('trash_items').delete().in('id', ids);
+      }
+    } catch (err) {
+      console.warn('[emptyAllTrash] Gagal mengosongkan trash_items region di Supabase:', err);
+    }
+
+    const regionLabel = regionFilter === 'JABODETABEK' ? 'JABO' : 'KALBAR';
+    await recordAuditLog(
+      actorName,
+      actorRole,
+      'EMPTY_TRASH',
+      'SYSTEM',
+      `Tempat Sampah ${regionLabel}`,
+      `${actorName} mengosongkan Tempat Sampah region ${regionLabel} (${items.length} item dihapus permanen)`
+    );
+
+    return { count: items.length };
+  }
+
   let totalDeleted = auditStore.trash.length;
   auditStore.trash = [];
 

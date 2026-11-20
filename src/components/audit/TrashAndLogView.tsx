@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { 
   Trash2, 
   History, 
@@ -29,13 +29,16 @@ import { auditLogActionMeta, resolveAuditLogAction } from '@/lib/audit/log-actio
 import { diffChangedItems } from '@/lib/audit/revert-items';
 import { formatValue } from '@/lib/audit/change-summary';
 import { useAuth } from '@/components/auth/AuthContext';
+import AreaFilterPills from '@/components/ui/AreaFilterPills';
 import ColumnVisibilityPicker, { ColumnItem, useColumnVisibility } from '@/components/ui/ColumnVisibilityPicker';
 import { SortableHeader, useTableSort } from '@/components/ui/SortableHeader';
+import { normalizeRegion, StandardRegion } from '@/lib/utils/region-helper';
 
 const TRASH_COLUMNS: ColumnItem[] = [
   { id: 'select', label: 'Pilih', defaultVisible: true, alwaysVisible: true },
   { id: 'item_info', label: 'Nama Item & Keterangan', defaultVisible: true, alwaysVisible: true },
   { id: 'module', label: 'Modul', defaultVisible: true },
+  { id: 'region', label: 'Region', defaultVisible: true },
   { id: 'deleted_by', label: 'Dihapus Oleh', defaultVisible: true },
   { id: 'deleted_at', label: 'Waktu Penghapusan', defaultVisible: true },
   { id: 'actions', label: 'Opsi Tindakan', defaultVisible: true, alwaysVisible: true },
@@ -46,6 +49,7 @@ const LOG_COLUMNS: ColumnItem[] = [
   { id: 'actor', label: 'Aktor Pengubah', defaultVisible: true },
   { id: 'action_type', label: 'Tipe Aksi', defaultVisible: true },
   { id: 'module', label: 'Modul / Entitas', defaultVisible: true },
+  { id: 'region', label: 'Region', defaultVisible: true },
   { id: 'details', label: 'Rincian Perubahan', defaultVisible: true, alwaysVisible: true },
   { id: 'actions', label: 'Aksi', defaultVisible: true, alwaysVisible: true },
 ];
@@ -57,6 +61,32 @@ function formatStateValue(value: unknown): string {
   if (value === null || value === undefined) return '-';
   if (typeof value === 'object') return JSON.stringify(value, null, 2);
   return String(value);
+}
+
+function RegionBadge({ region }: { region?: string | null }) {
+  const normalized = normalizeRegion(region);
+
+  if (normalized === 'JABODETABEK') {
+    return (
+      <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[10px] font-bold text-blue-700 dark:border-blue-800 dark:bg-blue-950/60 dark:text-blue-300">
+        JABO
+      </span>
+    );
+  }
+
+  if (normalized === 'KALBAR') {
+    return (
+      <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+        KALBAR
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+      Global
+    </span>
+  );
 }
 
 interface TrashAndLogViewProps {
@@ -71,7 +101,13 @@ export function TrashAndLogView({
   initialLogTotal,
 }: TrashAndLogViewProps) {
   const router = useRouter();
-  const { user } = useAuth();
+  const searchParams = useSearchParams();
+  const { user, isRegionLocked, allowedRegion } = useAuth();
+
+  const urlRegion = normalizeRegion(searchParams?.get('region'));
+  const activeRegion: StandardRegion = isRegionLocked
+    ? normalizeRegion(allowedRegion)
+    : urlRegion;
 
   const [activeTab, setActiveTab] = useState<'trash' | 'logs'>('trash');
 
@@ -145,7 +181,7 @@ export function TrashAndLogView({
   const loadLogs = async () => {
     setLogsLoading(true);
     try {
-      const res = await fetch(`/api/audit/logs?limit=${LOG_FETCH_LIMIT}`);
+      const res = await fetch(`/api/audit/logs?limit=${LOG_FETCH_LIMIT}&withRegion=1`);
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
         setAuditLogs(json.data);
@@ -162,7 +198,7 @@ export function TrashAndLogView({
   const loadMoreLogs = async () => {
     setLogsLoadingMore(true);
     try {
-      const res = await fetch(`/api/audit/logs?limit=${LOG_LOAD_MORE_LIMIT}&offset=${auditLogs.length}`);
+      const res = await fetch(`/api/audit/logs?limit=${LOG_LOAD_MORE_LIMIT}&offset=${auditLogs.length}&withRegion=1`);
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
         setAuditLogs((prev) => {
@@ -186,6 +222,8 @@ export function TrashAndLogView({
   // Filtered Trash Items
   const filteredTrash = useMemo(() => {
     return trashItems.filter((item) => {
+      const matchRegion =
+        activeRegion === 'ALL' || normalizeRegion(item.region) === activeRegion;
       const matchType = trashFilterType === 'ALL' || item.entity_type === trashFilterType;
       const s = trashSearch.toLowerCase();
       const matchSearch =
@@ -193,13 +231,15 @@ export function TrashAndLogView({
         item.title.toLowerCase().includes(s) ||
         (item.subtitle && item.subtitle.toLowerCase().includes(s)) ||
         item.deleted_by.toLowerCase().includes(s);
-      return matchType && matchSearch;
+      return matchRegion && matchType && matchSearch;
     });
-  }, [trashItems, trashFilterType, trashSearch]);
+  }, [trashItems, trashFilterType, trashSearch, activeRegion]);
 
   // Filtered Audit Logs
   const filteredLogs = useMemo(() => {
     return auditLogs.filter((log) => {
+      const matchRegion =
+        activeRegion === 'ALL' || normalizeRegion(log.region) === activeRegion;
       const matchAction = logActionFilter === 'ALL' || log.action_type === logActionFilter;
       const s = logSearch.toLowerCase();
       const matchSearch =
@@ -207,9 +247,9 @@ export function TrashAndLogView({
         log.entity_title.toLowerCase().includes(s) ||
         log.details.toLowerCase().includes(s) ||
         log.actor_name.toLowerCase().includes(s);
-      return matchAction && matchSearch;
+      return matchRegion && matchAction && matchSearch;
     });
-  }, [auditLogs, logActionFilter, logSearch]);
+  }, [auditLogs, logActionFilter, logSearch, activeRegion]);
 
   const customTrashSortFns = useMemo(
     () => ({
@@ -217,6 +257,8 @@ export function TrashAndLogView({
         (a.title || '').localeCompare(b.title || '', 'id', { sensitivity: 'base' }),
       module: (a: TrashItem, b: TrashItem) =>
         (a.entity_type || '').localeCompare(b.entity_type || '', 'id'),
+      region: (a: TrashItem, b: TrashItem) =>
+        normalizeRegion(a.region).localeCompare(normalizeRegion(b.region), 'id'),
       deleted_by: (a: TrashItem, b: TrashItem) =>
         (a.deleted_by || '').localeCompare(b.deleted_by || '', 'id'),
       deleted_at: (a: TrashItem, b: TrashItem) => {
@@ -248,6 +290,8 @@ export function TrashAndLogView({
         (a.action_type || '').localeCompare(b.action_type || '', 'id'),
       module: (a: AuditLogEntry, b: AuditLogEntry) =>
         (a.entity_type || '').localeCompare(b.entity_type || '', 'id'),
+      region: (a: AuditLogEntry, b: AuditLogEntry) =>
+        normalizeRegion(a.region).localeCompare(normalizeRegion(b.region), 'id'),
       details: (a: AuditLogEntry, b: AuditLogEntry) =>
         `${a.entity_title} ${a.details}`.localeCompare(`${b.entity_title} ${b.details}`, 'id'),
     }),
@@ -321,19 +365,27 @@ export function TrashAndLogView({
   };
 
   const handleEmptyTrash = async () => {
-    if (trashItems.length === 0) return;
-    if (!confirm(`PERINGATAN BAHAYA!\n\nAnda akan MENGOSONGKAN SELURUH TEMPAT SAMPAH (${trashItems.length} item).\nSemua data di sampah akan dimusnahkan secara permanen dan tidak bisa dikembalikan.\n\nLanjutkan?`)) {
+    const regionLabel = activeRegion === 'JABODETABEK' ? 'JABO' : 'KALBAR';
+    const scopeLabel = activeRegion === 'ALL' ? 'SELURUH TEMPAT SAMPAH' : `TEMPAT SAMPAH REGION ${regionLabel}`;
+    const targetCount = activeRegion === 'ALL' ? trashItems.length : filteredTrash.length;
+    if (targetCount === 0) return;
+    if (!confirm(`PERINGATAN BAHAYA!\n\nAnda akan MENGOSONGKAN ${scopeLabel} (${targetCount} item).\nSemua data tersebut akan dimusnahkan secara permanen dan tidak bisa dikembalikan.\n\nLanjutkan?`)) {
       return;
     }
 
     try {
-      const res = await fetch(`/api/audit/trash?emptyAll=true&actorName=${encodeURIComponent(user?.full_name || 'Super User')}&actorRole=${encodeURIComponent(user?.role || 'Super User')}`, {
+      const regionParam = activeRegion === 'ALL' ? '' : `&region=${activeRegion}`;
+      const res = await fetch(`/api/audit/trash?emptyAll=true${regionParam}&actorName=${encodeURIComponent(user?.full_name || 'Super User')}&actorRole=${encodeURIComponent(user?.role || 'Super User')}`, {
         method: 'DELETE',
       });
       const json = await res.json();
       if (json.success) {
-        showFeedback(`Tempat Sampah berhasil dikosongkan (${json.count} item dimusnahkan).`);
-        setTrashItems([]);
+        showFeedback(`Tempat Sampah ${activeRegion === 'ALL' ? '' : `region ${regionLabel} `}berhasil dikosongkan (${json.count} item dimusnahkan).`);
+        setTrashItems((prev) =>
+          activeRegion === 'ALL'
+            ? []
+            : prev.filter((item) => normalizeRegion(item.region) !== activeRegion)
+        );
         setSelectedTrashIds([]);
         loadLogs();
       }
@@ -507,13 +559,14 @@ export function TrashAndLogView({
 
   // Export logs to CSV
   const handleExportLogsCsv = () => {
-    const headers = ['Waktu', 'Aktor', 'Peran', 'Aksi', 'Modul', 'Judul Entitas', 'Rincian'];
+    const headers = ['Waktu', 'Aktor', 'Peran', 'Aksi', 'Modul', 'Region', 'Judul Entitas', 'Rincian'];
     const rows = filteredLogs.map((l) => [
       `"${new Date(l.timestamp).toLocaleString('id-ID')}"`,
       `"${l.actor_name}"`,
       `"${l.actor_role}"`,
       `"${l.action_type}"`,
       `"${l.entity_type}"`,
+      `"${l.region === 'JABODETABEK' ? 'JABO' : l.region === 'KALBAR' ? 'KALBAR' : 'Global'}"`,
       `"${l.entity_title.replace(/"/g, '""')}"`,
       `"${l.details.replace(/"/g, '""')}"`,
     ]);
@@ -608,7 +661,7 @@ export function TrashAndLogView({
             <Trash2 className="w-3.5 h-3.5" />
             <span>Tempat Sampah</span>
             <span className="ml-1 rounded-full bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 text-[10px] font-bold px-2 py-0.2">
-              {trashItems.length}
+              {filteredTrash.length}
             </span>
           </button>
 
@@ -623,10 +676,25 @@ export function TrashAndLogView({
             <History className="w-3.5 h-3.5" />
             <span>Audit Log Perubahan</span>
             <span className="ml-1 rounded-full bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 text-[10px] font-bold px-2 py-0.2">
-              {logTotal}
+              {activeRegion === 'ALL' ? logTotal : filteredLogs.length}
             </span>
           </button>
         </div>
+      </div>
+
+      {/* Region Filter */}
+      <div className="flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <AreaFilterPills label="Filter Region" showIcon />
+          <span className="text-[11px] text-[#747775] dark:text-[#8e918f]">
+            {activeRegion === 'ALL'
+              ? 'Menampilkan data JABO dan KALBAR'
+              : `Hanya menampilkan data ${activeRegion === 'JABODETABEK' ? 'JABO' : 'KALBAR'}`}
+          </span>
+        </div>
+        <span className="text-[11px] text-[#747775] dark:text-[#8e918f]">
+          Log global/SYSTEM hanya muncul di Semua.
+        </span>
       </div>
 
       {/* ================================================================= */}
@@ -642,7 +710,7 @@ export function TrashAndLogView({
                 <Trash2 className="w-4 h-4 text-rose-500" />
               </div>
               <div className="mt-2 text-2xl font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">
-                {trashItems.length} <span className="text-xs font-normal text-slate-500">item</span>
+                {filteredTrash.length} <span className="text-xs font-normal text-slate-500">item</span>
               </div>
               <p className="mt-1 text-[11px] text-slate-500">Dapat dipulihkan kapan saja ke tabel utama</p>
             </div>
@@ -721,12 +789,20 @@ export function TrashAndLogView({
               {/* Danger Action: Empty Trash */}
               <button
                 onClick={handleEmptyTrash}
-                disabled={trashItems.length === 0}
+                disabled={filteredTrash.length === 0}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950 border border-rose-200 dark:border-rose-900 text-xs font-bold disabled:opacity-40 transition-colors"
-                title="Hapus seluruh item di tempat sampah secara permanen"
+                title={
+                  activeRegion === 'ALL'
+                    ? 'Hapus seluruh item di tempat sampah secara permanen'
+                    : `Hapus permanen item region ${activeRegion === 'JABODETABEK' ? 'JABO' : 'KALBAR'}`
+                }
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Kosongkan Sampah</span>
+                <span>
+                  {activeRegion === 'ALL'
+                    ? 'Kosongkan Sampah'
+                    : `Kosongkan ${activeRegion === 'JABODETABEK' ? 'JABO' : 'KALBAR'}`}
+                </span>
               </button>
             </div>
           </div>
@@ -805,6 +881,17 @@ export function TrashAndLogView({
                         />
                       </th>
                     )}
+                    {isTrashColVisible('region') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Region"
+                          field="region"
+                          currentSortField={trashSortField}
+                          currentSortDirection={trashSortDirection}
+                          onSort={handleTrashSort}
+                        />
+                      </th>
+                    )}
                     {isTrashColVisible('deleted_by') && (
                       <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
                         <SortableHeader
@@ -836,10 +923,12 @@ export function TrashAndLogView({
                       <td colSpan={trashColCount} className="py-16 text-center text-slate-400">
                         <Trash2 className="w-10 h-10 mx-auto opacity-30 mb-2 text-rose-500" />
                         <div className="font-semibold text-sm text-slate-600 dark:text-slate-300">
-                          Tempat Sampah Bersih
+                          {trashItems.length === 0 ? 'Tempat Sampah Bersih' : 'Tidak Ada Item di Region Ini'}
                         </div>
                         <p className="text-xs text-slate-400 mt-0.5">
-                          Tidak ada data yang dihapus saat ini.
+                          {trashItems.length === 0
+                            ? 'Tidak ada data yang dihapus saat ini.'
+                            : 'Coba pilih region lain atau tampilkan Semua.'}
                         </p>
                       </td>
                     </tr>
@@ -898,6 +987,12 @@ export function TrashAndLogView({
                               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
                                 {item.entity_type}
                               </span>
+                            </td>
+                          )}
+
+                          {isTrashColVisible('region') && (
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <RegionBadge region={item.region} />
                             </td>
                           )}
 
@@ -1102,6 +1197,17 @@ export function TrashAndLogView({
                         />
                       </th>
                     )}
+                    {isLogColVisible('region') && (
+                      <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-3 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
+                        <SortableHeader
+                          label="Region"
+                          field="region"
+                          currentSortField={logSortField}
+                          currentSortDirection={logSortDirection}
+                          onSort={handleLogSort}
+                        />
+                      </th>
+                    )}
                     {isLogColVisible('details') && (
                       <th className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#282a2c] py-3.5 px-4 shadow-[inset_0_-1px_0_0_#e0e2ec] dark:shadow-[inset_0_-1px_0_0_#444746]">
                         <SortableHeader
@@ -1122,10 +1228,12 @@ export function TrashAndLogView({
                       <td colSpan={logColCount} className="py-16 text-center text-slate-400">
                         <History className="w-10 h-10 mx-auto opacity-30 mb-2 text-[#0b57d0]" />
                         <div className="font-semibold text-sm text-slate-600 dark:text-slate-300">
-                          Tidak Ada Catatan Log
+                          {activeRegion === 'ALL' ? 'Tidak Ada Catatan Log' : 'Tidak Ada Log di Region Ini'}
                         </div>
                         <p className="text-xs text-slate-400 mt-0.5">
-                          Belum ada aktivitas yang sesuai dengan filter pencarian.
+                          {activeRegion === 'ALL'
+                            ? 'Belum ada aktivitas yang sesuai dengan filter pencarian.'
+                            : 'Coba pilih region lain atau tampilkan Semua.'}
                         </p>
                       </td>
                     </tr>
@@ -1184,6 +1292,12 @@ export function TrashAndLogView({
                           </td>
                         )}
 
+                        {isLogColVisible('region') && (
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <RegionBadge region={log.region} />
+                          </td>
+                        )}
+
                         {isLogColVisible('details') && (
                           <td className="py-3 px-4">
                             <p className="text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
@@ -1235,8 +1349,18 @@ export function TrashAndLogView({
           {/* Jumlah log & muat lebih banyak */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-1 text-[11px] text-[#747775] dark:text-[#8e918f]">
             <span>
-              Menampilkan <strong className="text-[#1f1f1f] dark:text-[#e3e3e3]">{auditLogs.length}</strong> dari{' '}
-              <strong className="text-[#1f1f1f] dark:text-[#e3e3e3]">{logTotal}</strong> log (retensi 7 hari)
+              {activeRegion === 'ALL' ? (
+                <>
+                  Menampilkan <strong className="text-[#1f1f1f] dark:text-[#e3e3e3]">{auditLogs.length}</strong> dari{' '}
+                  <strong className="text-[#1f1f1f] dark:text-[#e3e3e3]">{logTotal}</strong> log (retensi 7 hari)
+                </>
+              ) : (
+                <>
+                  Menampilkan <strong className="text-[#1f1f1f] dark:text-[#e3e3e3]">{filteredLogs.length}</strong> log
+                  region <strong className="text-[#1f1f1f] dark:text-[#e3e3e3]">{activeRegion === 'JABODETABEK' ? 'JABO' : 'KALBAR'}</strong>{' '}
+                  (retensi 7 hari)
+                </>
+              )}
             </span>
             {auditLogs.length < logTotal && (
               <button
