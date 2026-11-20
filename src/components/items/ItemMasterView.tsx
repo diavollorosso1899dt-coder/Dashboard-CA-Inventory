@@ -28,7 +28,9 @@ import {
   X,
   ZoomIn,
   Upload,
-  FileEdit
+  FileEdit,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { MasterAssetItem } from '@/lib/supabase/server';
 import { TableSkeleton, CardGridSkeleton } from '@/components/ui/Skeleton';
@@ -86,6 +88,36 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
   const [selectedPreviewImage, setSelectedPreviewImage] = useState<{ url: string; name: string } | null>(null);
   const [uploadModalTarget, setUploadModalTarget] = useState<{ itemName: string; currentImageUrl?: string | null } | null>(null);
   const [editingSpecItem, setEditingSpecItem] = useState<MasterAssetItem | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<MasterAssetItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDeleteItem = async () => {
+    if (!itemToDelete) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch('/api/items/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemName: itemToDelete.item_name }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setItems((prev) =>
+          prev.filter(
+            (it) => it.item_name.toLowerCase().trim() !== itemToDelete.item_name.toLowerCase().trim()
+          )
+        );
+        setSyncFeedback(`Item "${itemToDelete.item_name}" berhasil dihapus dari Master Aset.`);
+        setItemToDelete(null);
+      } else {
+        alert(data.error || 'Gagal menghapus item.');
+      }
+    } catch (err: any) {
+      alert('Gagal menghubungi server: ' + err.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Column Visibility
   const { visibleColumns, setVisibleColumns, isVisible } = useColumnVisibility(
@@ -505,6 +537,16 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
                         <span>Foto</span>
                       </button>
                       <span>&bull;</span>
+                      <button
+                        type="button"
+                        onClick={() => setItemToDelete(item)}
+                        className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold hover:underline flex items-center gap-1"
+                        title={`Hapus item "${item.item_name}"`}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Hapus</span>
+                      </button>
+                      <span>&bull;</span>
                       <span>{item.is_new_item ? 'Item Baru' : 'Standar CA'}</span>
                     </div>
                   </div>
@@ -575,7 +617,7 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
                       />
                     </th>
                   )}
-                  {isVisible('actions') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center w-28 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi</th>}
+                  {isVisible('actions') && <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800 py-3.5 px-4 text-center w-44 shadow-[inset_0_-1px_0_0_#e2e8f0] dark:shadow-[inset_0_-1px_0_0_#334155]">Aksi</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -637,7 +679,17 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
                         )}
                         {isVisible('item_name') && (
                           <td className="py-3 px-4">
-                            <div className="font-bold text-slate-900 dark:text-white">{it.item_name}</div>
+                            <div className="flex items-center justify-between gap-2 group/itemname">
+                              <span className="font-bold text-slate-900 dark:text-white">{it.item_name}</span>
+                              <button
+                                type="button"
+                                onClick={() => setItemToDelete(it)}
+                                className="interactive-tap p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition opacity-0 group-hover/itemname:opacity-100 shrink-0"
+                                title={`Hapus item "${it.item_name}"`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                              </button>
+                            </div>
                           </td>
                         )}
                         {isVisible('unit') && (
@@ -706,15 +758,26 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
                         )}
                         {isVisible('actions') && (
                           <td className="py-3 px-4 text-center whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => setEditingSpecItem(it)}
-                              className="interactive-tap inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-amber-500 hover:text-amber-600 text-[11px] font-medium transition shadow-2xs"
-                              title="Edit spesifikasi teknis item ini"
-                            >
-                              <FileEdit className="w-3 h-3 text-amber-500" />
-                              <span>Edit Spek</span>
-                            </button>
+                            <div className="inline-flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditingSpecItem(it)}
+                                className="interactive-tap inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-amber-500 hover:text-amber-600 text-[11px] font-medium transition shadow-2xs"
+                                title="Edit spesifikasi teknis item ini"
+                              >
+                                <FileEdit className="w-3 h-3 text-amber-500" />
+                                <span>Edit Spek</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setItemToDelete(it)}
+                                className="interactive-tap inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-200 dark:border-rose-900/50 bg-white dark:bg-slate-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:border-rose-300 text-[11px] font-medium transition shadow-2xs"
+                                title={`Hapus item "${it.item_name}"`}
+                              >
+                                <Trash2 className="w-3 h-3 text-rose-500" />
+                                <span>Hapus</span>
+                              </button>
+                            </div>
                           </td>
                         )}
                       </tr>
@@ -906,6 +969,68 @@ export default function ItemMasterView({ initialItems }: ItemMasterViewProps) {
           photoUrl={getPrimaryPhotoUrl(editingSpecItem.photo_url, editingSpecItem.item_name)}
           onSuccess={handleSpecSuccess}
         />
+      )}
+
+      {/* Modal Konfirmasi Hapus Item Master Aset */}
+      {itemToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 dark:text-white text-base">Hapus Item Master Aset</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Item akan dihapus dari katalog referensi Master Aset.</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-2 text-xs">
+              <div className="flex justify-between items-start gap-2">
+                <span className="text-slate-500 shrink-0">Nama Item:</span>
+                <span className="font-bold text-slate-900 dark:text-white text-right break-words">{itemToDelete.item_name}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Klasifikasi:</span>
+                <span className="font-medium text-slate-700 dark:text-slate-300">{itemToDelete.classification || '-'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Satuan:</span>
+                <span className="font-mono text-slate-700 dark:text-slate-300">{itemToDelete.unit || 'unit'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Status:</span>
+                <span className={`font-semibold ${itemToDelete.is_new_item ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  {itemToDelete.is_new_item ? 'Item Baru' : 'Standar CA'}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-rose-600 dark:text-rose-400 font-medium">
+              Item yang dihapus tidak akan muncul lagi di tabel Master Aset maupun form pembuatan dokumen.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setItemToDelete(null)}
+                disabled={isDeleting}
+                className="px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition text-xs disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteItem}
+                disabled={isDeleting}
+                className="interactive-tap inline-flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-semibold shadow-xs transition text-xs disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeleting ? 'Menghapus...' : 'Ya, Hapus Item'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

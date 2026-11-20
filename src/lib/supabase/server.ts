@@ -43,6 +43,7 @@ import {
 } from '../distribution/ro-sheet-columns';
 import {
   RO_TOMBSTONE_SOURCE,
+  MASTER_ASSET_TOMBSTONE_SOURCE,
   addTombstones,
   canonicalTombstoneKey,
   loadTombstoneKeys,
@@ -4317,11 +4318,18 @@ export async function syncMasterAssetCatalogFromSheet(
       if (!line.trim()) continue;
       const cols = parseRoCsvLine(line);
 
-      const rawName = cols[7]?.trim();
-      if (!rawName) continue;
-
-      const unit = cols[8]?.trim() || 'unit';
+      let rawName = cols[7]?.trim();
+      let unit = cols[8]?.trim() || 'unit';
       let akun = cols[9]?.trim() || 'General';
+
+      // Guard shifted columns (seperti nomor urut "1" masuk ke nama barang)
+      if (rawName && /^\d+$/.test(rawName) && cols[9] && cols[9].trim().length > 1) {
+        rawName = cols[9].trim();
+        unit = cols[10]?.trim() || 'unit';
+        akun = cols[11]?.trim() || 'General';
+      }
+
+      if (!rawName) continue;
       const akunLower = akun.toLowerCase();
       if (akunLower === 'perlengkapan tetap') akun = 'Perlengkapan Tetap';
       else if (akunLower === 'peralatan') akun = 'Peralatan';
@@ -4568,29 +4576,103 @@ export async function getMasterAssetCatalog(): Promise<MasterAssetItem[]> {
   }
 
   const additions = await getActiveMasterAssetAdditions();
-  if (additions.length === 0) return base;
+  let fullList = base;
+  if (additions.length > 0) {
+    const missing = selectCatalogAdditions(base, additions);
+    if (missing.length > 0) {
+      const extra: MasterAssetItem[] = missing.map((draft, index) => ({
+        id: `mat-add-${index + 1}`,
+        item_name: draft.item_name,
+        system_item_name: draft.item_name,
+        unit: draft.unit,
+        classification: draft.classification,
+        specification:
+          draft.specification || getItemSpecification(draft.item_name) || '',
+        photo_url: draft.photo_url || getItemImageUrl(draft.item_name) || null,
+        standard_rab_price: 0,
+        total_requests: 0,
+        total_units_needed: 0,
+        is_new_item: true,
+      }));
+      fullList = [...base, ...extra];
+    }
+  }
 
-  const missing = selectCatalogAdditions(base, additions);
-  if (missing.length === 0) return base;
+  // Filter item yang telah dihapus manual (tombstone)
+  const admin = getAdminClient();
+  if (admin) {
+    try {
+      const tombstoneKeys = await loadTombstoneKeys(admin, MASTER_ASSET_TOMBSTONE_SOURCE);
+      if (tombstoneKeys && tombstoneKeys.size > 0) {
+        fullList = fullList.filter(
+          (it) => !tombstoneKeys.has(canonicalTombstoneKey(it.item_name, MASTER_ASSET_TOMBSTONE_SOURCE))
+        );
+      }
+    } catch (tombErr) {
+      console.warn('Gagal membaca tombstone master assets:', tombErr);
+    }
+  }
 
-  const extra: MasterAssetItem[] = missing.map((draft, index) => ({
-    id: `mat-add-${index + 1}`,
-    item_name: draft.item_name,
-    system_item_name: draft.item_name,
-    unit: draft.unit,
-    classification: draft.classification,
-    specification:
-      draft.specification || getItemSpecification(draft.item_name) || '',
-    photo_url: draft.photo_url || getItemImageUrl(draft.item_name) || null,
-    standard_rab_price: 0,
-    total_requests: 0,
-    total_units_needed: 0,
-    is_new_item: true,
-  }));
-
-  return [...base, ...extra].sort((a, b) =>
+  return fullList.sort((a, b) =>
     a.item_name.localeCompare(b.item_name)
   );
+}
+
+export async function deleteMasterAssetItem(itemName: string): Promise<{ success: boolean; message: string }> {
+  if (!itemName) return { success: false, message: 'Nama item tidak boleh kosong.' };
+  const cleanName = itemName.trim();
+  const admin = getAdminClient();
+
+  // 1. Hapus dari master_asset_additions bila ada
+  if (admin) {
+    try {
+      await admin
+        .from('master_asset_additions')
+        .delete()
+        .ilike('item_name', cleanName);
+    } catch (err: any) {
+      console.warn('Gagal menghapus dari master_asset_additions:', err?.message);
+    }
+
+    // 2. Tambahkan ke sync_tombstones agar tetap terhapus saat sheet sync berjalan
+    try {
+      await addTombstones(
+        admin,
+        MASTER_ASSET_TOMBSTONE_SOURCE,
+        [{ key: cleanName, display: cleanName }],
+        { reason: 'Dihapus manual dari Master Aset', entityTable: 'master_assets' }
+      );
+    } catch (tombErr: any) {
+      console.warn('Gagal mencatat tombstone master asset:', tombErr?.message);
+    }
+  }
+
+  // 3. Bersihkan dari cache memori
+  if (cachedMasterCatalog) {
+    const key = canonicalTombstoneKey(cleanName, MASTER_ASSET_TOMBSTONE_SOURCE);
+    cachedMasterCatalog = cachedMasterCatalog.filter(
+      (it) => canonicalTombstoneKey(it.item_name, MASTER_ASSET_TOMBSTONE_SOURCE) !== key
+    );
+  }
+
+  // 4. Catat Audit Log
+  if (admin) {
+    try {
+      await admin.from('audit_logs').insert({
+        actor_name: 'Administrator',
+        actor_role: 'Master Aset',
+        action_type: 'PERMANENT_DELETE',
+        entity_type: 'ITEM',
+        entity_title: `Hapus Item Master Aset: ${cleanName}`,
+        details: `Item "${cleanName}" telah dihapus dari katalog Master Aset.`,
+        entity_id: cleanName,
+      });
+    } catch (auditErr: any) {
+      console.warn('Gagal mencatat audit log hapus master asset:', auditErr?.message);
+    }
+  }
+
+  return { success: true, message: `Item "${cleanName}" berhasil dihapus dari Master Aset.` };
 }
 
 export function updateCachedMasterItem(

@@ -12,6 +12,7 @@
  */
 
 export const RO_TOMBSTONE_SOURCE = 'request-orders';
+export const MASTER_ASSET_TOMBSTONE_SOURCE = 'master-assets';
 
 /** Cache singkat supaya sync tidak query tabel ini untuk setiap baris. */
 const CACHE_TTL_MS = 30_000;
@@ -43,11 +44,13 @@ interface TombstoneDb {
 const cache = new Map<string, { keys: Set<string>; at: number }>();
 
 /**
- * Normalkan nomor RO menjadi kunci kanonik: buang prefix `RO`, titik ribuan,
- * dan jadikan huruf kecil. `RO-0005` -> `0005`, `RO-1.458` -> `1458`.
+ * Normalkan nomor RO atau nama Master Aset menjadi kunci kanonik.
  */
-export function canonicalTombstoneKey(raw?: string | null): string {
+export function canonicalTombstoneKey(raw?: string | null, sourceKey: string = RO_TOMBSTONE_SOURCE): string {
   if (!raw) return '';
+  if (sourceKey === MASTER_ASSET_TOMBSTONE_SOURCE) {
+    return String(raw).trim().toLowerCase().replace(/\s+/g, ' ');
+  }
   let id = String(raw).trim().replace(/^RO[-_\s]*/i, '');
   if (/^[\d.]+$/.test(id) && id.includes('.')) {
     id = id.replace(/\./g, '');
@@ -89,7 +92,7 @@ export async function loadTombstoneKeys(
 
     const keys = new Set<string>(
       (data || [])
-        .map((row: any) => canonicalTombstoneKey(row?.row_key))
+        .map((row: any) => canonicalTombstoneKey(row?.row_key, sourceKey))
         .filter((key: string) => Boolean(key))
     );
     cache.set(sourceKey, { keys, at: now });
@@ -111,7 +114,7 @@ export async function addTombstones(
 
   const unique = new Map<string, string | null>();
   for (const entry of entries) {
-    const key = canonicalTombstoneKey(entry.key);
+    const key = canonicalTombstoneKey(entry.key, sourceKey);
     if (!key) continue;
     const display = (entry.display || entry.key || '').toString().trim() || null;
     if (!unique.has(key) || (!unique.get(key) && display)) {
