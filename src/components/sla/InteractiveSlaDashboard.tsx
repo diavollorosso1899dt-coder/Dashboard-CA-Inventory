@@ -1779,7 +1779,9 @@ export default function InteractiveSlaDashboard({
                             <td className="py-3 px-3.5">
                               <div className="font-bold text-[#1f1f1f] dark:text-[#e3e3e3]">{it.item_name}</div>
                               {it.specification && (
-                                <div className="text-[10px] text-[#747775] line-clamp-1">{it.specification}</div>
+                                <div className="mt-0.5 max-w-xs whitespace-normal break-words text-xs text-slate-700 dark:text-slate-300">
+                                  {it.specification}
+                                </div>
                               )}
                             </td>
                           )}

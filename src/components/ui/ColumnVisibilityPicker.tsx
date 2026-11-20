@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useId, useRef } from 'react';
 import { Columns3, Eye, EyeOff, Check, RotateCcw } from 'lucide-react';
 
 export interface ColumnItem {
@@ -29,6 +29,8 @@ export function ColumnVisibilityPicker({
 }: ColumnVisibilityPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
 
   // Close on outside click
   useEffect(() => {
@@ -90,11 +92,23 @@ export function ColumnVisibilityPicker({
   const hiddenCount = columns.filter((c) => !c.alwaysVisible && visibleColumns[c.id] === false).length;
 
   return (
-    <div className="relative inline-block text-left" ref={dropdownRef}>
+    <div
+      className="relative inline-block text-left"
+      ref={dropdownRef}
+      onKeyDown={(event) => {
+        if (!isOpen || event.key !== 'Escape') return;
+        event.stopPropagation();
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }}
+    >
       <button
+        ref={triggerRef}
         type="button"
+        aria-controls={isOpen ? panelId : undefined}
+        aria-expanded={isOpen}
         onClick={() => setIsOpen((prev) => !prev)}
-        className={`interactive-tap inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl border transition shadow-xs select-none ${
+        className={`interactive-tap inline-flex min-h-11 items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl border transition shadow-xs select-none ${
           hiddenCount > 0
             ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
             : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-750'
@@ -112,7 +126,8 @@ export function ColumnVisibilityPicker({
 
       {isOpen && (
         <div
-          className={`absolute z-40 mt-1.5 w-60 rounded-2xl bg-white dark:bg-slate-900 p-2.5 shadow-xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 ${
+          id={panelId}
+          className={`absolute z-40 mt-1.5 w-60 rounded-2xl bg-white dark:bg-slate-900 p-2.5 shadow-xl border border-slate-200 dark:border-slate-800 ${
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >
@@ -152,13 +167,14 @@ export function ColumnVisibilityPicker({
                   key={col.id}
                   type="button"
                   disabled={isLocked}
+                  aria-pressed={isVisible}
                   onClick={() => toggleColumn(col.id)}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition text-left select-none ${
+                  className={`min-h-11 w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition text-left select-none ${
                     isLocked
                       ? 'opacity-50 cursor-not-allowed bg-slate-50 dark:bg-slate-800/40 text-slate-500'
                       : isVisible
                       ? 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200'
-                      : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500'
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300'
                   }`}
                 >
                   <div className="flex items-center gap-2 truncate pr-2">
@@ -171,7 +187,7 @@ export function ColumnVisibilityPicker({
                     >
                       {isVisible && <Check className="w-2.5 h-2.5 stroke-[3]" />}
                     </div>
-                    <span className={isVisible ? 'font-medium' : 'line-through opacity-75'}>
+                    <span className={isVisible ? 'font-medium' : 'line-through'}>
                       {col.label}
                     </span>
                   </div>

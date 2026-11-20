@@ -49,11 +49,11 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-[#f8fafd] dark:bg-[#131314] text-[#1f1f1f] dark:text-[#e3e3e3] transition-colors">
-      <div className="w-full max-w-5xl rounded-3xl bg-white dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[620px]">
+    <main className="min-h-dvh w-full flex items-start sm:items-center justify-center p-4 sm:p-6 lg:p-8 bg-[#f8fafd] dark:bg-[#131314] text-[#1f1f1f] dark:text-[#e3e3e3]">
+      <div className="w-full max-w-md lg:max-w-5xl rounded-2xl bg-white dark:bg-[#1e1f20] border border-[#e0e2ec] dark:border-[#444746] overflow-hidden grid grid-cols-1 lg:grid-cols-12 lg:min-h-[620px]">
         
         {/* LEFT COLUMN: HERO ILLUSTRATION & LOGISTICS BRANDING (APPLICATION BLUE THEME) */}
-        <div className="lg:col-span-7 bg-gradient-to-br from-[#eff6ff] via-[#f0f4f9] to-[#dbeafe]/40 dark:from-[#1b2230] dark:via-[#181a1d] dark:to-[#0f172a] p-6 sm:p-10 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-[#e0e2ec] dark:border-[#444746] relative overflow-hidden">
+        <div className="hidden lg:flex lg:col-span-7 bg-[#eff6ff] dark:bg-[#1b2230] p-10 flex-col justify-between border-r border-[#e0e2ec] dark:border-[#444746] relative overflow-hidden">
           
           {/* Subtle Ambient Background Accents */}
           <div className="absolute -top-24 -left-24 w-80 h-80 rounded-full bg-[#0b57d0]/10 dark:bg-[#a8c7fa]/10 blur-3xl pointer-events-none" />
@@ -62,7 +62,6 @@ export default function LoginPage() {
           {/* Top Header Badge */}
           <div className="relative z-10 space-y-3">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/90 dark:bg-[#282a2c] border border-[#c2e7ff] dark:border-[#004a77] shadow-xs">
-              <span className="w-2 h-2 rounded-full bg-[#0b57d0] dark:bg-[#a8c7fa] animate-pulse" />
               <span className="text-[11px] font-bold uppercase tracking-wider text-[#0b57d0] dark:text-[#a8c7fa]">
                 Sistem Logistik &amp; Distribusi Aset Terpadu
               </span>
@@ -150,7 +149,7 @@ export default function LoginPage() {
           {/* Form Area */}
           <div className="space-y-4">
             {errorMsg && (
-              <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/50 flex items-start gap-2.5 text-xs text-rose-700 dark:text-rose-300 animate-in fade-in">
+              <div role="alert" className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/50 flex items-start gap-2.5 text-xs text-rose-700 dark:text-rose-300">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
                 <span>{errorMsg}</span>
               </div>
@@ -158,40 +157,45 @@ export default function LoginPage() {
 
             <form onSubmit={handleManualLogin} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-[#444746] dark:text-[#c4c7c5] uppercase tracking-wider mb-1.5">
+                <label htmlFor="login-identifier" className="block text-sm font-semibold text-[#444746] dark:text-[#c4c7c5] mb-1.5">
                   Email / Username
                 </label>
                 <div className="relative">
                   <UserCheck className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#747775]" />
                   <input
+                    id="login-identifier"
+                    autoComplete="username"
                     type="text"
                     required
                     placeholder="nama@coffee-arabica.co.id"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] text-[#1f1f1f] dark:text-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0b57d0]/20 focus:border-[#0b57d0] dark:focus:border-[#a8c7fa] transition font-medium"
+                    className="min-h-11 w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-500 bg-[#f8fafd] dark:bg-[#282a2c] text-[#1f1f1f] dark:text-white text-base sm:text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0b57d0] dark:focus-visible:outline-[#a8c7fa]"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[#444746] dark:text-[#c4c7c5] uppercase tracking-wider mb-1.5">
+                <label htmlFor="login-password" className="block text-sm font-semibold text-[#444746] dark:text-[#c4c7c5] mb-1.5">
                   Kata Sandi (Password)
                 </label>
                 <div className="relative">
                   <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#747775]" />
                   <input
+                    id="login-password"
+                    autoComplete="current-password"
                     type={showPassword ? 'text' : 'password'}
                     required
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] text-[#1f1f1f] dark:text-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0b57d0]/20 focus:border-[#0b57d0] dark:focus:border-[#a8c7fa] transition font-medium"
+                    className="min-h-11 w-full pl-10 pr-12 py-2.5 rounded-xl border border-slate-500 bg-[#f8fafd] dark:bg-[#282a2c] text-[#1f1f1f] dark:text-white text-base sm:text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0b57d0] dark:focus-visible:outline-[#a8c7fa]"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#747775] hover:text-[#1f1f1f] dark:hover:text-white transition-colors"
+                    aria-label={showPassword ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'}
+                    className="absolute right-0 top-0 grid h-full min-h-11 w-11 place-items-center rounded-r-xl text-slate-600 hover:text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#0b57d0] dark:text-slate-300 dark:hover:text-white dark:focus-visible:outline-[#a8c7fa]"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -254,6 +258,6 @@ export default function LoginPage() {
         </div>
 
       </div>
-    </div>
+    </main>
   );
 }

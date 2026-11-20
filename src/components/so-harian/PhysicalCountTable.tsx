@@ -130,7 +130,7 @@ const PhysicalCountRow = React.memo(function PhysicalCountRow({
       <td className="py-2.5 px-3">
         <div className="font-bold text-slate-900 dark:text-white text-xs">{item.nama_barang}</div>
         {item.lokasi && (
-          <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{item.lokasi}</div>
+          <div className="mt-0.5 text-xs text-slate-700 dark:text-slate-200">{item.lokasi}</div>
         )}
       </td>
       {show('kode') && (

@@ -128,9 +128,12 @@ export function Navbar() {
       <div className="flex items-center gap-2 sm:gap-3">
         {/* Mobile Hamburger Menu Toggle */}
         <button
+          id="mobile-menu-button"
           onClick={toggleMobile}
-          className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] md:hidden transition-colors"
+          className="flex h-11 w-11 items-center justify-center rounded-xl text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e9eef6] dark:hover:bg-[#282a2c] md:hidden transition-colors"
           aria-label={isMobileOpen ? 'Tutup menu' : 'Buka menu'}
+          aria-controls="app-sidebar"
+          aria-expanded={isMobileOpen}
           title="Menu Navigasi"
         >
           {isMobileOpen ? <X className="h-5 w-5 text-[#0b57d0] dark:text-[#a8c7fa]" /> : <Menu className="h-5 w-5" />}

@@ -77,29 +77,24 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* Banner Akses Fitur Baru: Stock Opname Harian */}
-      <div className="bg-gradient-to-r from-sky-600 via-indigo-600 to-indigo-800 text-white rounded-2xl p-4 sm:p-5 shadow-sm hover:shadow-md transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900 sm:flex-row sm:items-center">
         <div className="flex items-center gap-3.5">
-          <div className="p-3 bg-white/20 backdrop-blur-md rounded-xl text-white shrink-0">
-            <ClipboardCheck className="w-6 h-6" />
+          <div className="rounded-lg bg-slate-100 p-2.5 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            <ClipboardCheck aria-hidden="true" className="size-5" />
           </div>
           <div>
-            <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-emerald-400/20 text-emerald-200 rounded-full text-[10px] font-bold uppercase tracking-wider mb-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>Fitur Baru Terintegrasi</span>
-            </div>
-            <h2 className="text-base font-bold">Stock Opname Harian (SO Harian)</h2>
-            <p className="text-xs text-sky-100 max-w-xl">
-              Rekonsiliasi mutasi harian RO, Penerimaan, dan cek fisik rak (Peralatan &amp; Perlengkapan Tetap) dengan scanner barcode kamera HP/PC.
+            <h2 className="text-base font-semibold">Stock Opname Harian</h2>
+            <p className="mt-0.5 max-w-xl text-sm text-slate-600 dark:text-slate-300">
+              Cocokkan stok fisik dengan mutasi RO dan penerimaan. Pindai barcode dengan kamera perangkat.
             </p>
           </div>
         </div>
         <Link
           href="/stock-opname"
-          className="px-4 py-2.5 bg-white text-indigo-700 hover:bg-sky-50 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 shrink-0"
+          className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg border border-blue-200 px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:border-blue-800 dark:text-blue-200 dark:hover:bg-blue-950 dark:focus-visible:outline-blue-300"
         >
-          <span>Buka Modul SO</span>
-          <ArrowRight className="w-4 h-4" />
+          <span>Buka Stock Opname</span>
+          <ArrowRight aria-hidden="true" className="size-4" />
         </Link>
       </div>
 

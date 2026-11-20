@@ -706,7 +706,7 @@ export default function PrintSuratJalanPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 print:grid-cols-3 gap-6 sm:gap-6 pt-4 border-t border-slate-300 text-center text-xs">
           <div>
             <p className="font-semibold text-slate-700">Yang Menyerahkan,</p>
-            <p className="text-slate-400 text-[10px]">Gudang Logistik Pusat</p>
+            <p className="mt-0.5 text-xs text-slate-700">Gudang Logistik Pusat</p>
             <div className="h-14 sm:h-20 flex items-end justify-center">
               <div className="w-full max-w-[16rem] border-b border-slate-900 font-semibold pb-1 break-words">
                 ( {pengirimNama || 'Staff Gudang Pusat'} )
@@ -716,7 +716,7 @@ export default function PrintSuratJalanPage() {
 
           <div>
             <p className="font-semibold text-slate-700">Yang Membawa,</p>
-            <p className="text-slate-400 text-[10px]">Driver / Ekspedisi</p>
+            <p className="mt-0.5 text-xs text-slate-700">Driver / Ekspedisi</p>
             <div className="h-14 sm:h-20 flex items-end justify-center">
               <div className="w-full max-w-[16rem] border-b border-slate-900 font-semibold pb-1 break-words">
                 ( {driverNama || 'Pengemudi'} )
@@ -726,7 +726,7 @@ export default function PrintSuratJalanPage() {
 
           <div>
             <p className="font-semibold text-slate-700">Yang Menerima,</p>
-            <p className="text-slate-400 text-[10px]">Store / Outlet Manager</p>
+            <p className="mt-0.5 text-xs text-slate-700">Store / Outlet Manager</p>
             <div className="h-14 sm:h-20 flex items-end justify-center">
               <div className="w-full max-w-[16rem] border-b border-slate-900 font-semibold pb-1 break-words">
                 ( {penerimaNama || 'Kepala Toko / PIC'} )

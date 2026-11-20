@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useId, useRef } from 'react';
 import { X, MessageSquare, Check } from 'lucide-react';
 import { SOItem } from '@/lib/so-harian/inventoryEngine';
 
@@ -13,6 +13,22 @@ interface NotesModalProps {
 
 export default function NotesModal({ isOpen, onClose, item, onSaveNote }: NotesModalProps) {
   const [noteText, setNoteText] = useState('');
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const noteId = useId();
+  const showDialog = isOpen && item !== null;
+
+  useEffect(() => {
+    if (!showDialog) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const trigger = document.activeElement;
+    dialog.showModal();
+    return () => {
+      dialog.close();
+      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus();
+    };
+  }, [showDialog]);
 
   useEffect(() => {
     if (item) {
@@ -37,8 +53,15 @@ export default function NotesModal({ isOpen, onClose, item, onSaveNote }: NotesM
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 dark:bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white dark:bg-slate-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-700">
+    <dialog
+      ref={dialogRef}
+      aria-labelledby={titleId}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      className="fixed inset-0 m-auto max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-xl backdrop:bg-slate-900/60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:backdrop:bg-black/80"
+    >
         {/* Header */}
         <div className="px-5 py-4 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
@@ -46,13 +69,15 @@ export default function NotesModal({ isOpen, onClose, item, onSaveNote }: NotesM
               <MessageSquare className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-slate-800 dark:text-white text-sm">Catatan / Alasan Selisih</h3>
+              <h3 id={titleId} className="font-bold text-slate-800 dark:text-white text-sm">Catatan / Alasan Selisih</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">{item.kode_barang} - {item.nama_barang}</p>
             </div>
           </div>
           <button
+            type="button"
+            aria-label="Tutup catatan selisih"
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+            className="grid size-11 shrink-0 place-items-center rounded-lg text-slate-600 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:text-slate-300 dark:hover:bg-slate-700 dark:focus-visible:outline-sky-400"
           >
             <X className="w-4 h-4" />
           </button>
@@ -86,7 +111,7 @@ export default function NotesModal({ isOpen, onClose, item, onSaveNote }: NotesM
 
           {/* Quick Select Preset Buttons */}
           <div>
-            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300 block mb-2">Pilih Alasan Cepat:</label>
+            <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2">Pilih Alasan Cepat:</p>
             <div className="flex flex-wrap gap-1.5">
               {quickReasons.map((reason, idx) => (
                 <button
@@ -103,8 +128,9 @@ export default function NotesModal({ isOpen, onClose, item, onSaveNote }: NotesM
 
           {/* Text Area */}
           <div>
-            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300 block mb-1.5">Keterangan Tambahan / Penjelasan:</label>
+            <label htmlFor={noteId} className="text-xs font-semibold text-slate-600 dark:text-slate-300 block mb-1.5">Keterangan Tambahan / Penjelasan:</label>
             <textarea
+              id={noteId}
               rows={3}
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
@@ -130,7 +156,6 @@ export default function NotesModal({ isOpen, onClose, item, onSaveNote }: NotesM
             <span>Simpan Catatan</span>
           </button>
         </div>
-      </div>
-    </div>
+    </dialog>
   );
 }

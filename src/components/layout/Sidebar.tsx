@@ -162,11 +162,19 @@ export function Sidebar() {
 
       {/* Responsive Sidebar */}
       <aside
-        className={`fixed left-0 top-16 z-50 md:z-20 flex h-[calc(100vh-4rem)] w-72 md:w-64 flex-col border-r border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#131314] p-3 shadow-2xl md:shadow-none transition-transform duration-200 ease-in-out ${
-          isMobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        id="app-sidebar"
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape' || !isMobileOpen) return;
+          const trigger = document.getElementById('mobile-menu-button');
+          if (!trigger?.getClientRects().length) return;
+          closeMobile();
+          trigger.focus();
+        }}
+        className={`fixed left-0 top-16 z-50 md:z-20 h-[calc(100dvh-4rem)] w-72 max-w-full md:w-64 flex-col border-r border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#131314] p-3 shadow-2xl md:shadow-none ${
+          isMobileOpen ? 'flex' : 'hidden md:flex'
         }`}
       >
-        <nav className="flex-1 space-y-3 overflow-y-auto pr-1">
+        <nav aria-label="Navigasi utama" className="flex-1 space-y-3 overflow-y-auto pr-1">
           {/* Region filter for phones (header segmented control is hidden below sm) */}
           <div className="rounded-2xl border border-[#e0e2ec] bg-white p-2.5 dark:border-[#444746] dark:bg-[#1e1f20] sm:hidden">
             <div className="px-1 text-[10px] font-bold uppercase tracking-wider text-[#747775] dark:text-[#8e918f]">

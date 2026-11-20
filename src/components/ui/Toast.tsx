@@ -17,48 +17,48 @@ interface ToastProps {
 
 export function Toast({ toast, onClose, duration = 4000 }: ToastProps) {
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || toast.type === 'error') return;
     const timer = setTimeout(() => {
       onClose();
     }, duration);
     return () => clearTimeout(timer);
   }, [toast, onClose, duration]);
 
-  if (!toast) return null;
-
-  const isSuccess = toast.type === 'success';
-  const isError = toast.type === 'error';
+  const isSuccess = toast?.type === 'success';
+  const isError = toast?.type === 'error';
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-5 duration-200">
-      <div
-        className={`flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl border text-xs font-semibold backdrop-blur-md transition-all ${
-          isSuccess
-            ? 'bg-emerald-50/95 dark:bg-emerald-950/90 text-emerald-900 dark:text-emerald-200 border-emerald-300 dark:border-emerald-800'
-            : isError
-            ? 'bg-rose-50/95 dark:bg-rose-950/90 text-rose-900 dark:text-rose-200 border-rose-300 dark:border-rose-800'
-            : 'bg-blue-50/95 dark:bg-blue-950/90 text-blue-900 dark:text-blue-200 border-blue-300 dark:border-blue-800'
-        }`}
-      >
-        {isSuccess ? (
-          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-        ) : isError ? (
-          <AlertCircle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0" />
-        ) : (
-          <Info className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
-        )}
-
-        <span className="max-w-xs sm:max-w-sm break-words leading-relaxed">{toast.message}</span>
-
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors ml-1"
-          aria-label="Tutup"
+    <>
+      <div role="alert" className="sr-only">{isError ? toast.message : ''}</div>
+      <div role="status" className="sr-only">{toast && !isError ? toast.message : ''}</div>
+      {toast && (
+        <div
+          className={`fixed inset-x-4 bottom-4 z-50 flex items-start gap-2 rounded-xl border p-3 text-sm shadow-lg sm:bottom-6 sm:left-auto sm:right-6 sm:w-96 ${
+            isSuccess
+              ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'
+              : isError
+              ? 'border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200'
+              : 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200'
+          }`}
         >
-          <X className="h-3.5 w-3.5 opacity-60 hover:opacity-100" />
-        </button>
-      </div>
-    </div>
+          {isSuccess ? (
+            <CheckCircle2 aria-hidden="true" className="mt-2 size-4 shrink-0" />
+          ) : isError ? (
+            <AlertCircle aria-hidden="true" className="mt-2 size-4 shrink-0" />
+          ) : (
+            <Info aria-hidden="true" className="mt-2 size-4 shrink-0" />
+          )}
+          <p aria-hidden="true" className="min-w-0 flex-1 break-words py-1.5 leading-relaxed">{toast.message}</p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid size-11 shrink-0 place-items-center rounded-lg hover:bg-black/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current dark:hover:bg-white/10"
+            aria-label="Tutup notifikasi"
+          >
+            <X aria-hidden="true" className="size-4" />
+          </button>
+        </div>
+      )}
+    </>
   );
 }

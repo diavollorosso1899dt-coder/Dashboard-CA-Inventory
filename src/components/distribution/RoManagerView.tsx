@@ -16,7 +16,6 @@ import {
   FileSpreadsheet,
   UploadCloud,
   Layers,
-  ArrowRight,
   GitMerge,
   RotateCcw,
   Sparkles,
@@ -94,18 +93,15 @@ type StageKey =
 
 interface StageDefinition {
   key: StageKey;
-  stepNum: number;
   label: string;
   sub: string;
-  color: string;
-  shape: 'pill' | 'rect' | 'diamond';
 }
 
 const WORKFLOW_STAGES: StageDefinition[] = [
-  { key: 'REQUEST_ORDER', stepNum: 1, label: 'On Proses', sub: 'Order Masuk', color: 'border-blue-400 bg-blue-50 text-blue-900 dark:border-blue-600 dark:bg-blue-950/50 dark:text-blue-200', shape: 'pill' },
-  { key: 'INPUT_DATA', stepNum: 2, label: 'Input Sistem', sub: 'Record Sheet', color: 'border-indigo-300 bg-indigo-50 text-indigo-900 dark:border-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-200', shape: 'rect' },
-  { key: 'PILIH_PROSES', stepNum: 3, label: 'Pilih Proses', sub: 'Stok vs PR?', color: 'border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-500 dark:bg-amber-950/50 dark:text-amber-200', shape: 'diamond' },
-  { key: 'DIBATALKAN', stepNum: 0, label: 'Dibatalkan', sub: 'RO Ditolak', color: 'border-rose-400 bg-rose-50 text-rose-950 dark:border-rose-600 dark:bg-rose-950/50 dark:text-rose-200', shape: 'pill' },
+  { key: 'REQUEST_ORDER', label: 'Dalam Proses', sub: 'Pesanan masuk' },
+  { key: 'INPUT_DATA', label: 'Input Sistem', sub: 'Tercatat di spreadsheet' },
+  { key: 'PILIH_PROSES', label: 'Pilih Proses', sub: 'Alokasi stok atau PR' },
+  { key: 'DIBATALKAN', label: 'Dibatalkan', sub: 'RO ditolak' },
 ];
 
 const STAGE_BADGE_LABEL: Record<string, string> = {
@@ -250,6 +246,10 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
   const [dateField, setDateField] = useState<RoDateField>('order_date');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+  const hasActiveFilters = Boolean(
+    search.trim() || selectedStage !== 'ALL' || smartFilter !== 'ALL' ||
+    selectedSource !== 'ALL' || startDate || endDate
+  );
   const [isSyncing, setIsSyncing] = useState(false);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
@@ -531,7 +531,6 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
     };
   });
 
-  const visibleColCount = RO_COLUMNS.filter((c) => visibleColumns[c.id] !== false).length;
 
   // Modals state
   const [isRoModalOpen, setIsRoModalOpen] = useState(false);
@@ -1621,21 +1620,18 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-bold text-xs md:text-sm text-[#1f1f1f] dark:text-[#e3e3e3]">
-                  Alur Operasional RO (Pipeline 9-Tahap)
+                  Tahap Request Order
                 </h3>
                 {selectedStage !== 'ALL' ? (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-[#001d35] dark:bg-[#004a77] dark:text-[#c2e7ff]">
                     Tahap: {WORKFLOW_STAGES.find((s) => s.key === selectedStage)?.label || selectedStage}
                   </span>
                 ) : (
-                  <span className="text-[11px] text-[#747775] dark:text-[#8e918f] hidden md:inline">
-                    • Semua Tahap Aktif
+                  <span className="text-xs text-slate-600 dark:text-slate-300">
+                    Semua tahap
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-[#747775] dark:text-[#8e918f] truncate">
-                {showPipelineStepper ? 'Klik kotak tahapan untuk memfilter tabel' : 'Klik tombol di kanan untuk membuka visual diagram alur'}
-              </p>
             </div>
           </div>
 
@@ -1644,16 +1640,17 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
               <button
                 type="button"
                 onClick={() => setSelectedStage('ALL')}
-                className="text-xs font-semibold text-[#0b57d0] dark:text-[#a8c7fa] hover:underline"
+                className="min-h-11 rounded-lg px-2 text-xs font-semibold text-[#0b57d0] hover:underline dark:text-[#a8c7fa]"
               >
-                Reset Filter
+                Reset tahap
               </button>
             )}
 
             <button
               type="button"
               onClick={() => setShowPipelineStepper(!showPipelineStepper)}
-              className="interactive-tap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#e0e2ec] dark:border-[#444746] bg-[#f8fafd] dark:bg-[#282a2c] text-xs font-semibold text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-[#e9eef6] dark:hover:bg-[#35383a] transition-all shadow-2xs"
+              aria-expanded={showPipelineStepper}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-[#e0e2ec] bg-[#f8fafd] px-3 text-xs font-semibold text-[#1f1f1f] hover:bg-[#e9eef6] dark:border-[#444746] dark:bg-[#282a2c] dark:text-[#e3e3e3] dark:hover:bg-[#35383a]"
             >
               <span>{showPipelineStepper ? 'Sembunyikan Alur' : 'Buka Diagram Alur'}</span>
               <ChevronDown
@@ -1667,41 +1664,30 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
         {/* Collapsible Stepper Content */}
         {showPipelineStepper && (
-          <div className="overflow-x-auto pt-3 mt-3 border-t border-[#e0e2ec] dark:border-[#35383a] custom-scrollbar animate-in fade-in duration-200">
-            <div className="min-w-[980px] flex items-center justify-between gap-2 py-1">
-              {WORKFLOW_STAGES.map((st, idx) => {
-                const isActive = selectedStage === st.key;
-                const count = stageCounts[st.key] || 0;
-                const isPill = st.shape === 'pill';
-                const isDiamond = st.shape === 'diamond';
+          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 dark:border-slate-700 lg:grid-cols-4">
+            {WORKFLOW_STAGES.map((stage) => {
+              const isActive = selectedStage === stage.key;
 
-                return (
-                  <React.Fragment key={st.key}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedStage(isActive ? 'ALL' : st.key)}
-                      className={`interactive-tap group relative flex flex-col items-center justify-center p-2 transition-all cursor-pointer text-center shrink-0 border-2 ${st.color} ${
-                        isPill ? 'rounded-full px-3 py-1.5' : isDiamond ? 'rounded-lg w-[84px] h-[64px]' : 'rounded-xl w-[92px] h-[64px]'
-                      } ${isActive ? 'ring-3 ring-blue-500 shadow-md scale-105' : 'hover:scale-102 hover:shadow-xs'}`}
-                    >
-                      <div className="flex items-center gap-1 font-bold text-[10px] leading-tight">
-                        <span>{st.label}</span>
-                      </div>
-                      <div className="text-[9px] opacity-75">{st.sub}</div>
-                      <span className="mt-0.5 inline-flex items-center justify-center px-1.5 rounded-full text-[9px] font-bold bg-slate-800 dark:bg-white text-white dark:text-slate-900">
-                        {count}
-                      </span>
-                    </button>
-
-                    {idx < WORKFLOW_STAGES.length - 1 && (
-                      <div className="flex items-center justify-center text-[#c4c7c5] dark:text-[#444746] shrink-0">
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </div>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </div>
+              return (
+                <button
+                  key={stage.key}
+                  type="button"
+                  aria-pressed={isActive}
+                  onClick={() => setSelectedStage(isActive ? 'ALL' : stage.key)}
+                  className={`flex min-h-11 min-w-0 items-start justify-between gap-1.5 rounded-lg border px-2 py-2 text-left text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:focus-visible:outline-blue-300 ${isActive
+                    ? 'border-blue-600 bg-blue-50 text-blue-900 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-100'
+                    : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800'}`}
+                >
+                  <span className="min-w-0">
+                    <span className="block font-semibold">{stage.label}</span>
+                    <span className="block text-slate-600 dark:text-slate-300">{stage.sub}</span>
+                  </span>
+                  <span className="shrink-0 rounded bg-slate-100 px-1.5 font-semibold tabular-nums text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                    {stageCounts[stage.key] || 0}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -1922,6 +1908,30 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
 
       {/* 3. RO DATA TABLE */}
       <div className="panel-card overflow-hidden border border-[#e0e2ec] dark:border-[#444746] rounded-2xl bg-white dark:bg-[#1a1c1e]">
+        {!isLoading && filteredOrders.length === 0 ? (
+          <div className="space-y-2 px-4 py-10 text-center">
+            <p role="status" className="text-sm text-slate-700 dark:text-slate-200">
+              {hasActiveFilters
+                ? 'Tidak ada Request Order yang cocok dengan filter aktif.'
+                : 'Belum ada Request Order untuk wilayah ini.'}
+            </p>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch('');
+                  setSelectedStage('ALL');
+                  setSmartFilter('ALL');
+                  setSelectedSource('ALL');
+                  applyDatePreset('clear');
+                }}
+                className="min-h-11 rounded-lg px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:text-blue-200 dark:hover:bg-blue-950 dark:focus-visible:outline-blue-300"
+              >
+                Reset filter
+              </button>
+            )}
+          </div>
+        ) : (
         <div className="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto relative scrollbar-thin">
           <table className="w-full text-left text-xs text-[#1f1f1f] dark:text-[#e3e3e3]">
             <thead className="sticky top-0 z-20 bg-[#f0f4f9] dark:bg-[#202225] text-[11px] font-bold uppercase tracking-wider text-[#444746] dark:text-[#c4c7c5] shadow-xs">
@@ -2018,12 +2028,6 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
                     {visibleColumns.actions !== false && <td className="py-4 px-4 text-right"><div className="h-7 w-24 bg-slate-200 dark:bg-slate-700/60 rounded-full ml-auto"></div></td>}
                   </tr>
                 ))
-              ) : filteredOrders.length === 0 ? (
-                <tr>
-                  <td colSpan={visibleColCount} className="py-12 text-center text-[#747775] dark:text-[#8e918f]">
-                    Tidak ada dokumen Request Order (RO) yang cocok dengan filter aktif.
-                  </td>
-                </tr>
               ) : (
                 paginatedOrders.map((o) => {
                   const isCancelled = o.status === 'REJECTED' || (o.status as string) === 'CANCELLED' || o.current_stage === 'DIBATALKAN';
@@ -2223,6 +2227,7 @@ export function RoManagerView({ initialOrders = [], outlets = [] }: RoManagerVie
             </tbody>
           </table>
         </div>
+        )}
 
         {/* PAGINATION BAR */}
         {filteredOrders.length > 0 && (
