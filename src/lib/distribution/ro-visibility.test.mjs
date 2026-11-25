@@ -46,6 +46,53 @@ test('RO yang sudah Aset Sampai disembunyikan dari daftar aktif', () => {
   );
 });
 
+test('RO Aset Sampai dengan item ON_PROSES tetap tampil sampai dialokasikan', () => {
+  assert.equal(
+    isRoFinalizedForActiveList({
+      status: 'CHECKLIST_DONE',
+      current_stage: 'ASET_SAMPAI',
+      items: [
+        { stock_source: 'GUDANG_SCGA' },
+        { stock_source: 'ON_PROSES', quantity_fulfilled: 0 },
+      ],
+    }),
+    false
+  );
+});
+
+test('RO final dengan item ON_PROSES tetap tampil untuk pembersihan', () => {
+  assert.equal(
+    isRoFinalizedForActiveList({
+      status: 'COMPLETED',
+      current_stage: 'SELESAI',
+      items: [{ stock_source: 'ON_PROSES' }],
+    }),
+    false
+  );
+});
+
+test('RO Aset Sampai yang hanya menyisakan item PR tetap disembunyikan', () => {
+  assert.equal(
+    isRoFinalizedForActiveList({
+      status: 'CHECKLIST_DONE',
+      current_stage: 'ASET_SAMPAI',
+      items: [{ stock_source: 'PR_VENDOR' }],
+    }),
+    true
+  );
+});
+
+test('RO batal tetap disembunyikan walau masih ada item ON_PROSES', () => {
+  assert.equal(
+    isRoFinalizedForActiveList({
+      status: 'CANCELLED',
+      current_stage: 'DIBATALKAN',
+      items: [{ stock_source: 'ON_PROSES' }],
+    }),
+    true
+  );
+});
+
 test('RO tahap checklist/update SLA juga keluar dari daftar aktif', () => {
   assert.equal(
     isRoFinalizedForActiveList({

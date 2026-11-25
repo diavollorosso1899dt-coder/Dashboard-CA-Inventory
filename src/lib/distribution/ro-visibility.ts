@@ -2,10 +2,12 @@
  * Menentukan apakah sebuah RO masih ditampilkan di daftar Kelola RO.
  *
  * RO yang itemnya sudah dialokasikan (Ready Stock / PR Vendor) tetap harus
- * terlihat supaya data alokasinya tidak "hilang" dari Kelola RO. Yang
- * disembunyikan adalah RO yang sudah sampai di outlet (Aset Sampai, Checklist,
- * Update SLA) karena proses gudang sudah selesai, ditambah RO yang benar-benar
- * selesai atau dibatalkan.
+ * terlihat supaya data alokasinya tidak "hilang" dari Kelola RO.
+ *
+ * RO yang sudah sampai di outlet (Aset Sampai, Checklist, Update SLA) keluar
+ * dari daftar aktif karena proses gudang sudah selesai, kecuali masih ada item
+ * ON_PROSES: item itu hanya bisa dialokasikan dari Kelola RO, jadi RO harus
+ * tetap tampil sampai benar-benar diproses. RO batal/selesai tetap keluar.
  */
 export interface RoVisibilityInput {
   status?: string | null;
@@ -32,19 +34,35 @@ const FINAL_STAGES = new Set([
   'REJECTED',
   'CANCELLED',
 ]);
+const CANCELLED_STAGES = new Set(['DIBATALKAN', 'REJECTED', 'CANCELLED']);
 const UNPROCESSED_STAGES = new Set(['INPUT_SYSTEM', 'REQUEST_ORDER']);
 
 export function isRoFinalizedForActiveList(ro: RoVisibilityInput): boolean {
-  const stage = ro.current_stage || ro.status;
-  if (stage && FINAL_STAGES.has(String(stage))) return true;
-  if (ro.status && FINAL_STAGES.has(String(ro.status))) return true;
-
   const items = Array.isArray(ro.items) ? ro.items : [];
+  const stage = ro.current_stage || ro.status;
+
+  // RO batal tetap keluar dari daftar aktif, apa pun isi itemnya.
+  if (CANCELLED_STAGES.has(String(stage)) || CANCELLED_STAGES.has(String(ro.status))) {
+    return true;
+  }
   if (items.length > 0 && items.every((it) => it.stock_source === 'CANCELLED')) {
     return true;
   }
 
-  return false;
+  // Konfirmasi surat jalan menandai RO ASET_SAMPAI/CHECKLIST_DONE walaupun
+  // sebagian item masih ON_PROSES. Item seperti ini hanya bisa dialokasikan
+  // dari Kelola RO, jadi RO harus tetap tampil sampai itemnya diproses.
+  const hasUnallocatedItem = items.some(
+    (it) =>
+      it.stock_source !== 'CANCELLED' &&
+      (!it.stock_source || it.stock_source === 'ON_PROSES')
+  );
+  if (hasUnallocatedItem) return false;
+
+  return Boolean(
+    (stage && FINAL_STAGES.has(String(stage))) ||
+      (ro.status && FINAL_STAGES.has(String(ro.status)))
+  );
 }
 
 /**
